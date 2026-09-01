@@ -1,5 +1,7 @@
 # Kế hoạch nâng cấp Tinix dựa trên nghiên cứu Postiz
 
+> Trạng thái triển khai: các giai đoạn 0-7 đã được hiện thực hóa trong `1.0.0-rc.1`. Các adapter mạng xã hội được giữ ở `review_required` cho tới khi dry-run trên account/UI thực; VPS adapters bên ngoài local PC vẫn là bước triển khai có điều kiện, được báo rõ bởi `/api/runtime`.
+
 Ngày nghiên cứu: 2026-09-01  
 Postiz upstream đã kiểm tra: `gitroomhq/postiz-app`, nhánh `main`, commit `342f7003c447c30801a1e1f10f9ead9ccddca378`.
 

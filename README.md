@@ -1,8 +1,8 @@
 # Tinix Social Studio
 
-Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch và đăng nội dung lên Facebook Page bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
+Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 
-> Bản `0.9.0` là Facebook MVP release candidate. Publisher đã có cơ chế dry-run, commit point và xác minh kết quả, nhưng selector Facebook vẫn cần được kiểm tra thủ công trên account/Page cụ thể trước lần đăng thật đầu tiên.
+> Bản `1.0.0-rc.1` hoàn tất roadmap nội bộ từ benchmark Postiz. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
 
 ## Cài đặt và chạy
 
@@ -39,16 +39,16 @@ TINIX_AI_MAX_RETRIES=2
 
 API key chỉ được đọc ở backend, không gửi xuống frontend. Logging có bộ lọc redaction để loại key nếu một lỗi vô tình chứa key trong message.
 
-## Quy trình Facebook MVP
+## Quy trình Chrome publishing
 
 ### 1. Account và đăng nhập
 
 1. Mở tab **Tài khoản & Page**.
-2. Thêm account Facebook.
+2. Thêm account Facebook, Instagram, TikTok hoặc YouTube.
 3. Chọn **Mở Chrome**.
-4. Đăng nhập Facebook thủ công trong Chrome đó. Đây là profile riêng của Tinix, không phải profile Chrome cá nhân.
+4. Đăng nhập nền tảng thủ công trong Chrome đó. Đây là profile riêng của Tinix, không phải profile Chrome cá nhân.
 5. Chọn **Kiểm tra login**.
-6. Chọn **Đồng bộ Page** sau khi trạng thái là “Đã đăng nhập”.
+6. Chọn **Đồng bộ Page/kênh** sau khi trạng thái là “Đã đăng nhập”.
 
 Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa account hoặc xóa account khác.
 
@@ -65,7 +65,7 @@ Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa accou
 2. Chọn content, account và Page chính xác.
 3. Giữ bật **Dry-run an toàn**.
 4. Worker mở composer, điền caption/media và dừng trước nút **Đăng**.
-5. Kiểm tra Chrome thủ công. Job phải kết thúc ở `dry_run_ready`.
+5. Kiểm tra Chrome thủ công. Job phải kết thúc ở `dry_run_ready`; không có automated test nào phát hành lên mạng xã hội.
 
 Dry-run không bấm nút Đăng.
 
@@ -149,9 +149,15 @@ Không có automated test nào gọi AI thật hoặc đăng mạng xã hội:
 
 Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, target parsing, content/revision/approval, media safety/dedupe, MockAI, API, Chrome-only publishers và Playwright frontend smoke.
 
-## Phạm vi MVP
+## Phạm vi release candidate
 
-Facebook Page text, nhiều ảnh và video dùng cùng composer flow. Facebook Reel chưa được coi là ổn định cho đến khi luồng text/ảnh/video đã qua kiểm thử thủ công. Instagram, TikTok và YouTube hiện là explicit unsupported adapters, không giả thành công.
+- Facebook Page: post ảnh/nhiều ảnh/video qua composer Web.
+- Instagram Web: image và carousel; Reel/Story vẫn khóa.
+- TikTok Studio Web: một short video; photo post vẫn khóa.
+- YouTube Studio Web: video và Short; community post vẫn khóa.
+- Calendar, posting slots, release control center, Media Library, UI-scraped analytics, local API v1, webhooks và CLI.
+
+Năng lực `review_required` nghĩa là code và safety gate đã có nhưng selector cần được xác nhận bằng dry-run trên UI/account thực. Adapter không được chuyển một format bị khóa thành thành công giả.
 
 Khung đa nền tảng và ma trận năng lực được mô tả tại [docs/PLATFORM_ARCHITECTURE.md](docs/PLATFORM_ARCHITECTURE.md). WebUI đọc cùng catalog qua `GET /api/platforms`, vì vậy phần tổng quan phản ánh đúng trạng thái code thay vì ngụ ý mọi nền tảng đã hoạt động.
 

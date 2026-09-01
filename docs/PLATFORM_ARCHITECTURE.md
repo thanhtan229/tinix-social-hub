@@ -1,6 +1,6 @@
 # Khung kiến trúc đa nền tảng
 
-Tài liệu này dùng để duyệt hướng đi. Các mục đánh dấu **scaffold** chưa phải tính năng vận hành và tuyệt đối không được báo đăng thành công.
+Tài liệu này mô tả trạng thái release candidate. Các mục `review_required` đã có adapter nhưng cần dry-run trên UI thực; format bị khóa tuyệt đối không được báo đăng thành công.
 
 ## Quyết định cố định: Chrome-only publishing
 
@@ -28,18 +28,18 @@ Queue, retry, cancellation, approval, idempotency, artifact và browser ownershi
 | Nền tảng | Nội dung | Session/target | Dry-run | Đăng/xác minh |
 |---|---|---|---|---|
 | Facebook | Có | Có | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
-| Instagram | Có variant | Scaffold | Scaffold | Chưa làm |
-| TikTok | Có variant | Scaffold | Scaffold | Chưa làm |
-| YouTube | Có variant | Scaffold | Scaffold | Chưa làm |
+| Instagram | Image/carousel | Chrome profile + profile discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
+| TikTok | Short video | Chrome profile + channel discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
+| YouTube | Video/Short | Chrome profile + channel discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
 
 Instagram, TikTok và YouTube có Chrome adapters versioned, login detector, target discovery, composer, commit point và UI verifier. Các format đã mở lần lượt là Instagram image/carousel, TikTok short video và YouTube video/Short; Reel, Story, photo post và community post vẫn trả `unsupported`. Mọi adapter mặc định dry-run và tuyệt đối không gọi API đăng bài của nền tảng.
 
-## Thứ tự triển khai đề xuất sau khi duyệt
+## Gate vận hành còn lại
 
-1. Chốt Facebook MVP bằng dry-run và một bài test có giám sát.
-2. Chọn một nền tảng tiếp theo dựa trên nhu cầu nội dung thực tế.
-3. Làm session + target discovery và fixture parser trước.
-4. Làm dry-run composer, bổ sung test mock và kiểm thử thủ công.
-5. Chỉ sau đó mới mở real publish và verifier.
+1. Mở Chrome profile và đăng nhập thủ công cho đúng account.
+2. Đồng bộ target rồi chạy dry-run với media đại diện.
+3. Ghi nhận selector/version lỗi nếu UI đã thay đổi.
+4. Chỉ tạo real schedule sau khi revision đã duyệt và dry-run thành công.
+5. Sau commit point, mọi kết quả chưa xác định phải đối soát thay vì retry.
 
-YouTube sẽ đi qua YouTube Studio bằng Chrome automation. Instagram/TikTok vẫn cần chốt format MVP đầu tiên; không nên triển khai đồng thời mọi định dạng.
+Không mở Reel, Story, TikTok photo post hay YouTube community post cho tới khi có page object và verifier riêng.

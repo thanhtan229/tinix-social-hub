@@ -1,73 +1,45 @@
-# Tổng quan dự án để duyệt
+# Tổng quan Tinix Social Studio 1.0 RC
 
-## Mục tiêu sản phẩm
+## Mục tiêu và quyết định cố định
 
-Tinix Social Studio là ứng dụng desktop-local, PC-first để quản lý account, xây dựng và duyệt nội dung, lập lịch, chạy Chrome automation có kiểm soát và lưu lịch sử phát hành bền vững. Facebook Page là MVP đầu tiên. Instagram, TikTok và YouTube hiện chỉ có khung tích hợp.
+Tinix là ứng dụng desktop-local, PC-first cho một người dùng: quản lý nội dung, approval, lịch phát hành, Chrome profiles, đối soát và automation nội bộ. Tinix không dùng API của Facebook, Instagram, TikTok hoặc YouTube để đăng; cookie/session ở nguyên trong profile Chrome và người dùng đăng nhập thủ công.
 
-Quyết định sản phẩm: không dùng API của nền tảng để đăng. Toàn bộ publishing dùng Chrome automation và đăng nhập thủ công trong profile riêng.
-
-## Luồng chính
+## Luồng dữ liệu
 
 ```text
-WebUI
-  -> FastAPI routes
-    -> content / approval / scheduling services
-      -> repositories -> SQLite + media
-      -> durable jobs -> scheduler -> worker
-        -> platform publisher
-          -> Chrome profile riêng -> composer -> commit point -> verifier
+WebUI / CLI / local API v1
+  -> content revision + approval
+  -> publication plan -> frozen release per target
+  -> durable job -> scheduler -> worker
+  -> versioned Chrome adapter -> composer -> commit point -> UI verifier
+  -> release metrics (UI Chrome) + notifications + webhook outbox
 ```
 
-AI chỉ tạo structured draft. Approval và scheduling là bước riêng. Publisher không được tự suy diễn quyền đăng thật.
+## Khối chức năng
 
-## Các khối đã có
+| Khối | Trạng thái 1.0 RC |
+|---|---|
+| Calendar/composer | Week/month/list, range loading, timezone, posting slots, schema-driven settings |
+| Content/approval | Revisions, variants, current-revision approval, AI structured drafts |
+| Media Library | Streaming upload, SHA-256 dedupe, dimensions, alt/tags, references, orphan safety |
+| Release control | Plans/releases, attempts/events/artifacts, retry preview, commit safety, manual finalize |
+| Chrome providers | Facebook post; Instagram image/carousel; TikTok short video; YouTube video/Short |
+| Analytics | Manual connect, DOM collection, provenance/timezone, idempotent snapshots, 7/30/90 comparison |
+| Automation | Authenticated `/api/v1`, scoped DPAPI token, CLI, signed durable webhooks |
+| Runtime | SQLite/local storage/DPAPI/managed Chrome behind explicit contracts; standalone worker supported |
 
-| Khối | Vai trò | Trạng thái |
-|---|---|---|
-| WebUI 7 tab | Tổng quan, AI, content, lịch, job, account, settings | Có |
-| Content domain | Revision, variant, media, approval | Có |
-| Queue local | Scheduling, retry, cancellation, restart recovery | Có |
-| Chrome manager | Profile riêng, ownership, debug port, shutdown an toàn | Có |
-| Facebook adapter | Login detector, Page discovery, composer, verifier | Code xong; cần kiểm thử thật |
-| Platform catalog | Capability/roadmap cho 4 nền tảng | Có |
-| Instagram/TikTok/YouTube | Metadata, content variant, account/target schema, publisher stub | Scaffold |
-| Backup/maintenance | SQLite backup/restore/integrity, retention | Có |
+## Safety gates
 
-## Phần dùng chung và phần riêng
+- Dry-run is the default and stops before the publish click.
+- Real publishing requires approval of the current revision.
+- Commit point is recorded before a non-idempotent click.
+- Crash/timeout after commit becomes `unknown_result`; no automatic retry.
+- Media and settings are frozen into each release snapshot.
+- Unsupported analytics is distinct from a numeric zero.
+- Network publishing remains Chrome-only; the only API surface is Tinix's loopback API.
 
-Dùng chung cho mọi nền tảng:
+## Operational status
 
-- Account identity và Chrome profile UUID.
-- Publishing target/group schema.
-- Content revision, platform variant, media và approval.
-- Durable job, event, attempt, retry, cancellation và artifact.
-- Commit-point rule và `unknown_result` safety rule.
+Automated tests never log into or publish to a social network. All Chrome adapters remain `review_required` until a user performs dry-run against the current real UI for that account. VPS contracts exist, but `GET /api/runtime` correctly reports blockers and does not claim the local build is VPS-deployable.
 
-Phải viết riêng theo từng nền tảng:
-
-- Login/checkpoint detector.
-- Target discovery/parser.
-- Selector và Page Object.
-- Composer, media constraints và verifier.
-- Quy tắc URL/canonical external ID.
-
-## Những gì scaffold hiện cho phép
-
-- Tạo account record cho Instagram, TikTok hoặc YouTube để xem mô hình dữ liệu.
-- Sinh và lưu content variant riêng qua AI/content domain.
-- Hiển thị capability và milestone trong dashboard.
-- Resolve publisher placeholder thành `unsupported`, không giả thành công.
-
-Scaffold chưa cho phép sync Profile/Channel, dry-run composer thực tế, lập lịch qua form hay đăng thật.
-
-## Các quyết định cần duyệt trước giai đoạn tiếp theo
-
-1. Nền tảng thứ hai: Instagram, TikTok hay YouTube.
-2. Format MVP đầu tiên của nền tảng đó; chỉ chọn một luồng nhỏ.
-3. Có tiếp tục mô hình một Chrome profile cho mỗi account hay cho phép dùng chung session trong cùng hệ sinh thái.
-4. Tiêu chí xác minh thành công tối thiểu và cách xử lý checkpoint.
-5. Mức ưu tiên giữa đăng chéo cùng nội dung và tối ưu variant riêng.
-
-Ma trận chi tiết nằm tại [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md).
-
-Kế hoạch nâng cấp sau khi benchmark Postiz nằm tại [POSTIZ_BENCHMARK_PLAN.md](POSTIZ_BENCHMARK_PLAN.md).
+Detailed references: [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md), [LOCAL_AUTOMATION.md](LOCAL_AUTOMATION.md), [VPS_READINESS.md](VPS_READINESS.md), and [POSTIZ_BENCHMARK_PLAN.md](POSTIZ_BENCHMARK_PLAN.md).
