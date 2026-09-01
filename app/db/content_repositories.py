@@ -103,6 +103,10 @@ class ContentRepository:
             result["media"] = [dict(item) for item in connection.execute(
                 "SELECT * FROM content_media WHERE content_id=? ORDER BY sort_order,created_at", (content_id,)
             )]
+            approval = connection.execute(
+                "SELECT * FROM content_approvals WHERE content_id=? ORDER BY requested_at DESC LIMIT 1", (content_id,)
+            ).fetchone()
+            result["latest_approval"] = dict(approval) if approval else None
             return result
 
     def list(self, limit: int = 50, offset: int = 0, search: str | None = None, status: str | None = None) -> list[dict[str, Any]]:

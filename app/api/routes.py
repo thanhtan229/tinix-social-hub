@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+import psutil
 
 from app import __version__
 
@@ -59,6 +60,9 @@ async def health(request: Request) -> dict[str, Any]:
     integrity = await asyncio.to_thread(svc.database.ping)
     usage = shutil.disk_usage(svc.settings.data_dir)
     chrome = await asyncio.to_thread(svc.chrome.status)
+    memory = psutil.virtual_memory()
+    process_memory = psutil.Process().memory_info().rss
+    maintenance = getattr(svc, "maintenance", None)
     return {
         "status": "ok" if integrity["ok"] else "degraded",
         "version": __version__,
@@ -66,9 +70,17 @@ async def health(request: Request) -> dict[str, Any]:
         "worker": {"state": svc.worker.state, "active_jobs": svc.worker.active_count},
         "scheduler": svc.scheduler.state,
         "database": integrity,
-        "chrome": {"running": len(chrome), "limit": svc.settings.max_chrome},
+        "chrome": {
+            "running": len(chrome), "limit": svc.settings.max_chrome,
+            "hung": sum(1 for item in chrome if item.get("hung")),
+        },
         "disk": {"free_bytes": usage.free, "total_bytes": usage.total},
+        "memory": {"available_bytes": memory.available, "total_bytes": memory.total, "process_bytes": process_memory},
         "ai_configured": svc.ai.configured,
+        "maintenance": {
+            "state": getattr(maintenance, "state", "unavailable"),
+            "last_result": getattr(maintenance, "last_result", None),
+        },
     }
 
 
@@ -270,3 +282,11 @@ async def restore_backup(body: RestoreRequest, request: Request) -> dict[str, bo
         finally:
             svc.worker.resume()
     return {"restored": True}
+
+
+@router.post("/maintenance/run")
+async def run_maintenance(request: Request) -> dict[str, Any]:
+    maintenance = getattr(services(request), "maintenance", None)
+    if not maintenance:
+        raise HTTPException(503, "Maintenance service không khả dụng.")
+    return await asyncio.to_thread(maintenance.run_once)

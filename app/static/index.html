@@ -4,38 +4,93 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Tinix Social Studio</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <div><span class="brand-mark">T</span><strong>Tinix Social Studio</strong><small> PC-first</small></div>
-    <div id="backendBadge" class="badge muted">Đang kết nối…</div>
-  </header>
+  <aside class="sidebar">
+    <div class="logo"><span>T</span><div><strong>Tinix Social</strong><small>Studio <b id="version">—</b></small></div></div>
+    <nav id="nav">
+      <button data-tab="overview" class="active">Tổng quan</button>
+      <button data-tab="ai">AI Content Studio</button>
+      <button data-tab="content">Kho nội dung</button>
+      <button data-tab="compose">Soạn & Lập lịch</button>
+      <button data-tab="jobs">Hàng đợi & Lịch sử</button>
+      <button data-tab="accounts">Tài khoản & Page</button>
+      <button data-tab="settings">Cài đặt</button>
+    </nav>
+    <div id="connection" class="connection">Đang kết nối…</div>
+  </aside>
+
   <main>
-    <section class="hero">
-      <div><p class="eyebrow">LOCAL CONTROL CENTER</p><h1>Đăng nội dung từ máy tính,<br><em>rõ ràng và bền vững.</em></h1></div>
-      <button class="primary" onclick="openCreateJob()">+ Tạo job mới</button>
+    <section id="tab-overview" class="tab active">
+      <div class="page-head"><div><p class="eyebrow">LOCAL CONTROL CENTER</p><h1>Tổng quan vận hành</h1></div><button class="primary" data-go="compose">+ Lập lịch</button></div>
+      <div id="stats" class="stats"></div>
+      <div class="grid two">
+        <article class="panel"><div class="panel-head"><h2>Job gần đây</h2><button data-go="jobs">Xem tất cả</button></div><div id="overviewJobs"></div></article>
+        <article class="panel"><div class="panel-head"><h2>Trạng thái hệ thống</h2></div><div id="systemStatus" class="status-list"></div></article>
+      </div>
     </section>
-    <section id="stats" class="stats"></section>
-    <div class="grid">
-      <section class="panel wide">
-        <div class="panel-head"><div><p class="eyebrow">DURABLE QUEUE</p><h2>Hàng đợi gần đây</h2></div><button onclick="refreshAll()">Làm mới</button></div>
-        <div class="table-wrap"><table><thead><tr><th>Loại</th><th>Account</th><th>Trạng thái</th><th>Thời gian</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><div><p class="eyebrow">CHROME PROFILES</p><h2>Tài khoản</h2></div><div><button onclick="closeAllChrome()">Đóng tất cả</button> <button onclick="openAccount()">+ Thêm</button></div></div>
-        <div id="accounts" class="account-list"></div>
-      </section>
-    </div>
-    <section class="panel database">
-      <div><p class="eyebrow">DATA SAFETY</p><h2>SQLite & Backup</h2><p id="dbText" class="muted-text">Đang kiểm tra…</p></div>
-      <div class="actions"><button onclick="checkIntegrity()">Kiểm tra integrity</button><button onclick="restoreLatest()">Khôi phục gần nhất</button><button class="primary" onclick="backup()">Tạo backup</button></div>
+
+    <section id="tab-ai" class="tab">
+      <div class="page-head"><div><p class="eyebrow">STRUCTURED CONTENT</p><h1>AI Content Studio</h1><p>AI luôn tạo bản nháp, không tự lập lịch hay đăng.</p></div></div>
+      <div class="grid two">
+        <form id="aiForm" class="panel form-grid">
+          <label>Thao tác<select id="aiOperation"><option value="write">Viết mới</option><option value="rewrite">Viết lại</option><option value="shorten">Rút gọn</option><option value="expand">Mở rộng</option><option value="hook">Tạo hook</option><option value="cta">Tạo CTA</option><option value="hashtags">Tạo hashtag</option><option value="variants">Nhiều phiên bản</option><option value="cross_platform">Chuyển đa nền tảng</option><option value="video_script">Video script</option></select></label>
+          <label>Brand Profile<select id="aiBrand"><option value="">Không chọn</option></select></label>
+          <label class="full">Brief<textarea id="aiBrief" rows="9" required placeholder="Mục tiêu, sản phẩm, khách hàng và thông điệp..."></textarea></label>
+          <label class="check"><input id="aiFacebook" type="checkbox" checked> Facebook</label>
+          <label class="check"><input id="aiInstagram" type="checkbox"> Instagram</label>
+          <label class="check"><input id="aiTiktok" type="checkbox"> TikTok</label>
+          <label class="check"><input id="aiYoutube" type="checkbox"> YouTube</label>
+          <button class="primary full" type="submit">Tạo bản nháp</button>
+        </form>
+        <article class="panel"><div class="panel-head"><h2>Kết quả structured</h2></div><pre id="aiResult" class="result-box">Chưa có kết quả.</pre></article>
+      </div>
+    </section>
+
+    <section id="tab-content" class="tab">
+      <div class="page-head"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>Kho nội dung</h1></div><button id="newContent" class="primary">+ Tạo bài</button></div>
+      <div class="toolbar"><input id="contentSearch" placeholder="Tìm tiêu đề hoặc caption"><select id="contentStatus"><option value="">Mọi trạng thái</option><option value="draft">Bản nháp</option><option value="pending_approval">Chờ duyệt</option><option value="approved">Đã duyệt</option></select><button id="refreshContent">Làm mới</button></div>
+      <div id="contentList" class="card-grid"></div>
+    </section>
+
+    <section id="tab-compose" class="tab">
+      <div class="page-head"><div><p class="eyebrow">COMPOSE & SCHEDULE</p><h1>Soạn & Lập lịch</h1></div></div>
+      <form id="scheduleForm" class="panel form-grid">
+        <label>Nội dung<select id="scheduleContent" required></select></label>
+        <label>Facebook account<select id="scheduleAccount" required></select></label>
+        <label class="full">Facebook Pages<select id="scheduleTargets" multiple size="6" required></select></label>
+        <label>Ngày giờ<input id="scheduleAt" type="datetime-local"></label>
+        <label>Job bị lỡ<select id="missedPolicy"><option value="confirm">Chờ xác nhận</option><option value="publish">Đăng bù</option><option value="skip">Bỏ qua</option></select></label>
+        <label>Delay giữa Page (giây)<input id="delaySeconds" type="number" min="0" value="0"></label>
+        <label>Delay ngẫu nhiên tối đa<input id="randomDelay" type="number" min="0" value="0"></label>
+        <label class="check full"><input id="dryRun" type="checkbox" checked><span><strong>Dry-run an toàn</strong><small>Dừng trước nút Đăng. Bỏ chọn chỉ khi đã duyệt và dry-run thành công.</small></span></label>
+        <div id="realWarning" class="warning full hidden">Bạn đang chọn ĐĂNG THẬT. Job chỉ chạy nếu revision hiện tại đã được duyệt.</div>
+        <button class="primary full" type="submit">Lưu lịch</button>
+      </form>
+    </section>
+
+    <section id="tab-jobs" class="tab">
+      <div class="page-head"><div><p class="eyebrow">DURABLE QUEUE</p><h1>Hàng đợi & Lịch sử</h1></div><button id="refreshJobs">Làm mới</button></div>
+      <div class="table-wrap panel"><table><thead><tr><th>Loại</th><th>Account</th><th>Trạng thái</th><th>Chế độ</th><th>Thời gian</th><th></th></tr></thead><tbody id="jobsTable"></tbody></table></div>
+    </section>
+
+    <section id="tab-accounts" class="tab">
+      <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Facebook Page</h1></div><button id="newAccount" class="primary">+ Thêm account</button></div>
+      <div class="grid two"><article class="panel"><div class="panel-head"><h2>Accounts</h2><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div id="accountList"></div></article><article class="panel"><div class="panel-head"><h2>Facebook Pages</h2><input id="targetSearch" placeholder="Tìm Page"></div><div id="targetList"></div></article></div>
+    </section>
+
+    <section id="tab-settings" class="tab">
+      <div class="page-head"><div><p class="eyebrow">LOCAL SETTINGS</p><h1>Cài đặt & Dữ liệu</h1><p>API key chỉ đọc từ file .env và không hiển thị tại đây.</p></div></div>
+      <div class="grid two"><article class="panel"><h2>Database</h2><p id="databaseText"></p><div class="actions"><button id="integrity">Integrity check</button><button id="backup" class="primary">Tạo backup</button><button id="restore">Khôi phục gần nhất</button></div></article><article class="panel"><h2>Bảo trì</h2><p id="maintenanceText">Dọn screenshot và file tạm theo retention.</p><button id="maintenance">Chạy dọn ngay</button></article></div>
     </section>
   </main>
 
-  <dialog id="accountDialog"><form method="dialog" onsubmit="createAccount(event)"><h2>Thêm tài khoản</h2><label>Tên hiển thị<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option>facebook</option><option>instagram</option><option>tiktok</option><option>youtube</option></select></label><div class="dialog-actions"><button value="cancel">Hủy</button><button class="primary" value="default">Tạo</button></div></form></dialog>
-  <dialog id="jobDialog"><form method="dialog" onsubmit="createJob(event)"><h2>Tạo job</h2><label>Loại<select id="jobKind" onchange="toggleJobFields()"><option value="publish">Đăng bài (preview adapter)</option><option value="ai_content">Tạo nội dung bằng AI</option></select></label><label id="accountField">Tài khoản<select id="jobAccount"></select></label><label>Nội dung / prompt<textarea id="jobText" required rows="5"></textarea></label><label>Lên lịch (không bắt buộc)<input id="jobSchedule" type="datetime-local"></label><div class="dialog-actions"><button value="cancel">Hủy</button><button class="primary" value="default">Xếp hàng</button></div></form></dialog>
+  <dialog id="accountDialog"><form id="accountForm"><h2>Thêm tài khoản</h2><label>Tên<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option></select></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Tạo</button></div></form></dialog>
+  <dialog id="contentDialog"><form id="contentForm"><h2 id="contentDialogTitle">Tạo nội dung</h2><input id="contentId" type="hidden"><label>Tiêu đề<input id="contentTitle" required maxlength="200"></label><label>Caption<textarea id="contentCaption" rows="7"></textarea></label><label>Hashtag, cách nhau bằng dấu cách<input id="contentHashtags"></label><label>CTA<input id="contentCta"></label><label>Ảnh/video<input id="contentMedia" type="file" accept="image/*,video/*" multiple></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Lưu bản nháp</button></div></form></dialog>
+  <dialog id="jobDialog"><div><h2>Lịch sử trạng thái</h2><div id="jobEvents"></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <div id="toast"></div>
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>
