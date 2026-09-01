@@ -1,5 +1,7 @@
 # Tinix Social Studio
 
+Hướng dẫn thao tác đầy đủ: [docs/HUONG_DAN_SU_DUNG.md](docs/HUONG_DAN_SU_DUNG.md).
+
 Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 
 > Bản `1.0.0-rc.1` hoàn tất roadmap nội bộ từ benchmark Postiz. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
