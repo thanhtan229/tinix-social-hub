@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Tinix Social Studio</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.0-rc.2-ui1">
 </head>
 <body>
   <aside class="sidebar">
@@ -101,6 +101,7 @@
 
     <section id="tab-accounts" class="tab">
       <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Kênh</h1><p>Mỗi account dùng Chrome profile riêng; đăng nhập được thực hiện thủ công trong Chrome.</p></div><button id="newAccount" class="primary">+ Thêm account</button></div>
+      <article class="panel profile-manager"><div><h2>Quản lý Chrome profile</h2><p id="profileHelp" class="muted">Chọn account để sao chép, xuất hoặc khôi phục phiên đăng nhập.</p></div><div class="profile-manager-actions"><select id="profileAccount" aria-label="Account quản lý profile"></select><button data-profile-action="import">Import profile</button><button data-profile-action="export">Export profile</button><button data-profile-action="backup">Backup</button><button data-profile-action="restore">Khôi phục</button></div></article>
       <div class="grid two"><article class="panel"><div class="panel-head"><h2>Accounts</h2><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div id="accountList"></div></article><article class="panel"><div class="panel-head"><h2>Page / Kênh đã đồng bộ</h2><input id="targetSearch" placeholder="Tìm Page hoặc kênh"></div><div id="targetList"></div></article></div>
     </section>
 
@@ -121,6 +122,6 @@
   <dialog id="contentDialog"><form id="contentForm"><h2 id="contentDialogTitle">Tạo nội dung</h2><input id="contentId" type="hidden"><label>Tiêu đề<input id="contentTitle" required maxlength="200"></label><label>Caption<textarea id="contentCaption" rows="7"></textarea></label><label>Hashtag, cách nhau bằng dấu cách<input id="contentHashtags"></label><label>CTA<input id="contentCta"></label><label>Ảnh/video<input id="contentMedia" type="file" accept="image/*,video/*" multiple></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Lưu bản nháp</button></div></form></dialog>
   <dialog id="jobDialog"><div><h2>Release detail</h2><div id="jobSummary"></div><h3>Attempts & events</h3><div id="jobEvents"></div><h3>Artifacts</h3><div id="jobArtifacts" class="status-list"></div><div id="jobFinalize" class="form-grid compact hidden"><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận thất bại</button><button id="finalizeSuccess" class="primary">Xác nhận thành công</button></div></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.0-rc.2-ui1"></script>
 </body>
 </html>
