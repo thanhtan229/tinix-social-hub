@@ -16,6 +16,7 @@ class PlatformCatalogTests(unittest.TestCase):
         operational = [platform.id for platform in PLATFORM_CATALOG if platform.operational]
         self.assertEqual(operational, ["facebook"])
         for platform in PLATFORM_CATALOG:
+            self.assertEqual(platform.publication_transport, "chrome")
             if platform.id != "facebook":
                 self.assertEqual(platform.capabilities.publishing, "not_started")
                 self.assertEqual(platform.capabilities.result_verification, "not_started")

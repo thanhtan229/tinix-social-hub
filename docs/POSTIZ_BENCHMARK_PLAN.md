@@ -7,6 +7,13 @@ Postiz upstream đã kiểm tra: `gitroomhq/postiz-app`, nhánh `main`, commit `
 
 Tinix nên trở thành một **local social publishing control plane lấy cảm hứng từ Postiz**, không trở thành bản sao Postiz.
 
+### Quyết định cố định của Tinix
+
+- Không dùng API của mạng xã hội để đăng bài.
+- Không triển khai OAuth/access token/refresh token cho publishing.
+- Mọi nền tảng dùng Chrome automation, đăng nhập thủ công và profile riêng.
+- API nội bộ local của Tinix vẫn có thể được xây dựng để WebUI, CLI hoặc automation điều khiển Tinix; API này không thay đổi cơ chế Chrome-only ở phía nền tảng.
+
 Giữ nguyên:
 
 - PC-first, một người vận hành, FastAPI + SQLite + worker local.
@@ -15,7 +22,7 @@ Giữ nguyên:
 
 Học từ Postiz:
 
-- Provider contract có schema cấu hình và validation riêng.
+- Browser provider contract có schema cấu hình và validation riêng.
 - Calendar ngày/tuần/tháng/danh sách cùng posting slots.
 - Một nội dung gốc, có override theo từng kênh.
 - Media library dùng lại được, có metadata đầy đủ.
@@ -29,13 +36,11 @@ Chưa mang vào Tinix:
 - Organization, team, billing, marketplace và client approval link công khai.
 - Hàng chục provider cùng lúc, AI video, RSS autopost và performance plugs.
 
-Postiz dùng AGPL-3.0. Kế hoạch này chỉ học mô hình sản phẩm và pattern kiến trúc; không sao chép mã nguồn vào Tinix nếu chưa chấp nhận hệ quả giấy phép.
-
 ## Những phát hiện đáng áp dụng
 
 ### 1. Provider là capability contract, không chỉ là hàm `publish`
 
-Postiz provider gom authentication/refresh, settings DTO, giới hạn nội dung, validation media, post, pending status, finalize, analytics và dynamic tools. Tinix hiện có manifest năng lực và publisher interface, nhưng validation/schemas vẫn nằm rải rác và Facebook service còn đặc thù.
+Postiz provider gom authentication/refresh, settings DTO, giới hạn nội dung, validation media, post, pending status, finalize, analytics và dynamic tools. Tinix chỉ học cách gom capability; phần OAuth/token/post API được thay bằng session detector, Page Object và thao tác Chrome. Tinix hiện có manifest năng lực và publisher interface, nhưng validation/schemas vẫn nằm rải rác và Facebook service còn đặc thù.
 
 Khuyến nghị: mở rộng `PlatformDefinition` thành manifest tĩnh + runtime adapter, nhưng không để manifest tự mở khóa tính năng.
 
@@ -44,17 +49,19 @@ PlatformAdapter
   manifest()
   settings_schema(format)
   validate(draft, settings, media)
-  connect_or_open_session(account)
-  discover_targets(account)
-  prepare_preview(release)
-  publish(release)
-  check_status(pending_data)
-  finalize(pending_data)
-  verify(result)
-  analytics(target_or_release)  # optional
+  open_browser_session(account)
+  detect_login(page)
+  discover_targets(page, account)
+  open_composer(page, release)
+  prepare_preview(page, release)
+  commit(page, release)
+  check_ui_status(page, pending_data)
+  finalize_ui(page, pending_data)
+  verify_from_ui(page, result)
+  collect_visible_metrics(page, target_or_release)  # optional
 ```
 
-Mỗi method phải khai báo `transport = api | browser | hybrid`, capability state và idempotency class.
+Transport được cố định là `chrome`. Mỗi mutation vẫn phải khai báo capability state, commit point, idempotency class và selector version.
 
 ### 2. Cần tách nội dung, kế hoạch phát hành và release
 
@@ -92,13 +99,13 @@ Mỗi format có fields và validation khác nhau. Thay vì hard-code form riên
 - Field: type, label, required, default, options, visibility condition.
 - Constraint: character count, media count/type/size/aspect/duration.
 - Preview model và warning/error.
-- Dynamic options: playlist, privacy, Page/Profile/Channel, thumbnail, first comment.
+- Dynamic options lấy từ UI: playlist, privacy, Page/Profile/Channel, thumbnail, first comment.
 
 Validation phải chạy cả frontend và backend; backend là nguồn quyết định cuối.
 
 ### 5. Workflow bất đồng bộ cần `pending -> check -> finalize`
 
-Một số nền tảng nhận upload nhưng chưa hoàn tất. Tinix nên bổ sung kết quả publisher:
+Một số giao diện nhận upload nhưng còn xử lý video/media trên trang. Tinix nên bổ sung kết quả publisher:
 
 - `completed`: có release ID/URL.
 - `pending`: lưu opaque pending data rồi chỉ poll bằng read-only call.
@@ -111,7 +118,7 @@ Tinix đã có commit point và `unknown_result`; đây là nền tốt. Phần 
 
 Lưu `external_release_id`, canonical URL, published time và verification method cho từng release. Nếu bài đã đăng nhưng thiếu ID, cần workflow đối soát thủ công:
 
-1. Adapter liệt kê bài gần đây nếu hỗ trợ.
+1. Adapter mở trang quản lý và đọc danh sách bài gần đây nếu UI cho phép.
 2. Người dùng chọn bài đúng.
 3. Gắn external ID vào release.
 4. Sau đó mới bật analytics.
@@ -142,7 +149,7 @@ Lưu `external_release_id`, canonical URL, published time và verification metho
 Mục tiêu: tạo nền để UI và worker không phụ thuộc Facebook.
 
 - Tạo `PlatformAdapter`/`ProviderRegistry` thống nhất.
-- Thêm settings schema, constraints, transport và idempotency class vào catalog.
+- Thêm settings schema, constraints, selector version và idempotency class vào catalog; transport luôn là Chrome.
 - Tạo `publication_plans` và `publication_releases`.
 - Freeze `content_revision_id`, target, settings và media snapshot khi schedule.
 - Chuyển job thành execution record tham chiếu release; vẫn đọc job cũ để tương thích.
@@ -210,17 +217,17 @@ Gate nghiệm thu:
 
 ### Giai đoạn 4 — Provider thứ hai: Instagram theo phạm vi hẹp
 
-Khuyến nghị chọn Instagram Feed image/carousel trước vì gần mô hình Facebook và tận dụng content/media hiện có. Đây là suy luận kiến trúc, cần xác nhận nhu cầu sản phẩm và phương thức tích hợp.
+Khuyến nghị chọn Instagram Feed image/carousel trước vì gần mô hình Facebook và tận dụng content/media hiện có. Đây là suy luận kiến trúc, cần xác nhận nhu cầu sản phẩm.
 
-- Ưu tiên official API/OAuth nếu phù hợp; browser automation chỉ là fallback có cảnh báo.
+- Chỉ dùng Instagram Web qua Chrome profile riêng; người dùng đăng nhập thủ công.
 - Feed image trước, carousel sau; Reel/Story hoãn.
-- Login/refresh hoặc session detector, profile discovery, constraints, preview, publish, verifier.
-- Mock API/HTML fixtures và dry-run thủ công trước real publish.
+- Session detector, profile discovery, constraints, selectors, preview, commit và verifier.
+- HTML/DOM fixtures và Playwright mock; dry-run thủ công trước real publish.
 
 Sau Instagram:
 
-- TikTok: một video, privacy/comment/duet/stitch settings, pending upload processing.
-- YouTube: video/Short, title/description/privacy/playlist/thumbnail; quyết định API hay Studio automation trước.
+- TikTok Web: một video, privacy/comment/duet/stitch settings, pending upload processing.
+- YouTube Studio: video/Short, title/description/privacy/playlist/thumbnail và trạng thái xử lý upload.
 
 Không triển khai ba provider đồng thời.
 
@@ -228,7 +235,7 @@ Không triển khai ba provider đồng thời.
 
 Mục tiêu: đo hiệu quả mà không làm sai danh tính bài đăng.
 
-- `release_metrics` theo metric key/date/value/source.
+- `release_metrics` theo metric key/date/value/source; source là dữ liệu nhìn thấy trên UI.
 - Snapshot account/channel và post-level.
 - Dashboard range 7/30/90 ngày, so sánh kỳ trước.
 - Manual connect cho release thiếu external ID.
@@ -245,7 +252,7 @@ Gate nghiệm thu:
 Mục tiêu: cho phép n8n/CLI/agent điều khiển Tinix có giới hạn.
 
 - `/api/v1` ổn định: platforms, accounts, slots, media, content, plans, releases, jobs.
-- Local API token lưu qua Windows Credential Manager/DPAPI, scope read/write/publish.
+- Local API token của riêng Tinix lưu qua Windows Credential Manager/DPAPI, scope read/write/publish.
 - Publish thật cần scope riêng và approval rule; không dùng token để bỏ qua duyệt.
 - Webhook outbox bền vững với signature, retry và delivery log.
 - CLI mỏng xuất JSON; MCP chỉ làm sau khi API contract ổn định.
@@ -260,7 +267,7 @@ Gate nghiệm thu:
 
 Chỉ bắt đầu khi PC MVP ổn định và có nhu cầu chạy liên tục:
 
-- Tách storage, credential store và database interfaces.
+- Tách storage, local secret store và database interfaces.
 - Cho worker chạy process riêng nhưng dùng cùng durable state contract.
 - PostgreSQL/object storage là adapter tùy chọn.
 - Multi-user/auth/team để sau cùng.
@@ -277,9 +284,9 @@ Các migration phải append-only và có pre-migration backup.
 | v7 | `notifications`, pending/finalize data, provider concurrency policy |
 | v8 | `media_assets`, `media_tags`, content-media references |
 | v9 | `release_metrics`, analytics sync checkpoints, reconciliation events |
-| v10 | API tokens/credential refs, webhook subscriptions/outbox/deliveries |
+| v10 | Local API tokens, webhook subscriptions/outbox/deliveries |
 
-Không lưu OAuth token/API secret dạng rõ trong SQLite. SQLite chỉ giữ credential reference; secret dùng Windows-native protected storage ở PC mode.
+Không có OAuth token/API secret của mạng xã hội. Cookie/session do Chrome quản lý trong profile riêng và không được đọc ra để mô phỏng API. Local API token hoặc AI key dùng Windows-native protected storage khi triển khai credential store.
 
 ## Thay đổi UI đề xuất
 
@@ -312,9 +319,9 @@ AI Studio có thể là action trong Nội dung thay vì một tab riêng khi un
 
 1. Duyệt mô hình `Content -> Plan -> Release -> Job`.
 2. Duyệt Calendar + slot engine là ưu tiên tính năng số một.
-3. Chọn chiến lược official API/browser/hybrid và nơi lưu credential.
+3. Duyệt chính sách một Chrome profile/account hay chia sẻ session theo hệ sinh thái.
 4. Chọn Instagram Feed image là provider/format tiếp theo hay đổi ưu tiên.
-5. Duyệt phạm vi automation API; giữ team/VPS ở backlog.
+5. Duyệt phạm vi API nội bộ local; giữ team/VPS ở backlog.
 
 ## Nguồn nghiên cứu chính
 
@@ -323,4 +330,3 @@ AI Studio có thể là action trong Nội dung thay vì một tab riêng khi un
 - Architecture: https://docs.postiz.com/self-host/architecture
 - Provider guide: https://docs.postiz.com/contributing/create-provider
 - Public API: https://docs.postiz.com/public-api/introduction
-

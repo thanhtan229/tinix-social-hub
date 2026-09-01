@@ -2,6 +2,10 @@
 
 Tài liệu này dùng để duyệt hướng đi. Các mục đánh dấu **scaffold** chưa phải tính năng vận hành và tuyệt đối không được báo đăng thành công.
 
+## Quyết định cố định: Chrome-only publishing
+
+Tinix không dùng API của Facebook, Instagram, TikTok hoặc YouTube để đăng bài. Mọi adapter thực hiện đăng nhập thủ công, chuẩn bị composer, upload, commit và xác minh qua Chrome automation với profile riêng. “API” trong tài liệu Tinix chỉ có thể chỉ API nội bộ chạy local, không phải API phát hành của mạng xã hội.
+
 ## Nguồn sự thật
 
 `app/platforms/catalog.py` là catalog duy nhất mô tả nền tảng, loại account/target, định dạng nội dung, mức sẵn sàng của từng capability và milestone tiếp theo. API `GET /api/platforms` cung cấp catalog cho WebUI. Việc xuất hiện trong catalog không tự mở khóa scheduling hoặc publisher.
@@ -38,4 +42,4 @@ Publisher placeholder của ba nền tảng mới luôn trả `unsupported`; ch�
 4. Làm dry-run composer, bổ sung test mock và kiểm thử thủ công.
 5. Chỉ sau đó mới mở real publish và verifier.
 
-YouTube cần quyết định API chính thức hay Chrome automation trước khi code. Instagram/TikTok cũng cần chốt format MVP đầu tiên; không nên triển khai đồng thời mọi định dạng.
+YouTube sẽ đi qua YouTube Studio bằng Chrome automation. Instagram/TikTok vẫn cần chốt format MVP đầu tiên; không nên triển khai đồng thời mọi định dạng.

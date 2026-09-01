@@ -4,6 +4,8 @@
 
 Tinix Social Studio là ứng dụng desktop-local, PC-first để quản lý account, xây dựng và duyệt nội dung, lập lịch, chạy Chrome automation có kiểm soát và lưu lịch sử phát hành bền vững. Facebook Page là MVP đầu tiên. Instagram, TikTok và YouTube hiện chỉ có khung tích hợp.
 
+Quyết định sản phẩm: không dùng API của nền tảng để đăng. Toàn bộ publishing dùng Chrome automation và đăng nhập thủ công trong profile riêng.
+
 ## Luồng chính
 
 ```text
@@ -62,10 +64,9 @@ Scaffold chưa cho phép sync Profile/Channel, dry-run composer thực tế, l�
 
 1. Nền tảng thứ hai: Instagram, TikTok hay YouTube.
 2. Format MVP đầu tiên của nền tảng đó; chỉ chọn một luồng nhỏ.
-3. Chrome automation hay official API nếu nền tảng cung cấp API phù hợp.
-4. Có tiếp tục mô hình một Chrome profile cho mỗi account hay cần liên kết account cùng hệ sinh thái.
-5. Tiêu chí xác minh thành công tối thiểu và cách xử lý checkpoint.
-6. Mức ưu tiên giữa đăng chéo cùng nội dung và tối ưu variant riêng.
+3. Có tiếp tục mô hình một Chrome profile cho mỗi account hay cho phép dùng chung session trong cùng hệ sinh thái.
+4. Tiêu chí xác minh thành công tối thiểu và cách xử lý checkpoint.
+5. Mức ưu tiên giữa đăng chéo cùng nội dung và tối ưu variant riêng.
 
 Ma trận chi tiết nằm tại [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md).
 

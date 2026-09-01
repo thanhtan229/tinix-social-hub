@@ -28,6 +28,7 @@ class PlatformDefinition:
     content_formats: tuple[str, ...]
     capabilities: PlatformCapabilities
     next_milestone: str
+    publication_transport: str = "chrome"
     operational: bool = False
 
     def to_dict(self) -> dict[str, object]:
@@ -63,7 +64,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         account_label="Google account", target_label="Channel", target_types=("channel",),
         content_formats=("video", "short", "community_post"),
         capabilities=PlatformCapabilities("ready", "scaffold", "scaffold", "scaffold", "not_started", "not_started"),
-        next_milestone="Chọn YouTube Studio automation hay API chính thức trước khi triển khai.",
+        next_milestone="Chốt luồng YouTube Studio cho video/Short và cơ chế xác minh trên UI.",
     ),
 )
 
