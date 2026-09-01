@@ -37,6 +37,7 @@ from app.services.facebook_publisher import FacebookPublisher
 from app.services.publishers import PublisherRegistry
 from app.services.web_platform_publisher import InstagramChromePublisher, TikTokChromePublisher, YouTubeChromePublisher
 from app.services.platform_accounts import PlatformAccountService
+from app.services.profile_transfer import ChromeProfileTransferService
 from app.services.ui_analytics import UIAnalyticsCollector
 from app.services.webhooks import WebhookDispatcher
 from app.core.secrets import SecretProtector
@@ -79,6 +80,7 @@ class Services:
     media: MediaService
     ai_studio: AIContentStudioService
     scheduling: SchedulingService
+    profile_transfer: ChromeProfileTransferService
     application_lock: asyncio.Lock
 
 
@@ -118,6 +120,7 @@ def build_services(settings: Settings) -> Services:
     webhook_dispatcher = WebhookDispatcher(webhooks)
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
     scheduling = SchedulingService(jobs, accounts, targets, contents, publications=publications)
+    profile_transfer = ChromeProfileTransferService(settings, database, accounts)
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
@@ -127,7 +130,8 @@ def build_services(settings: Settings) -> Services:
         maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
         analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher,
         storage=storage, secrets=secret_store, media=media,
-        ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),
+        ai_studio=ai_studio, scheduling=scheduling, profile_transfer=profile_transfer,
+        application_lock=asyncio.Lock(),
     )
 
 
@@ -138,8 +142,11 @@ async def lifespan(application: FastAPI):
     services = build_services(settings)
     application.state.services = services
     changed = await asyncio.to_thread(services.database.initialize)
+    recovered_profile_locks = await asyncio.to_thread(services.accounts.recover_profile_operations)
     await asyncio.to_thread(services.api_tokens.ensure_default)
     logger.info("Database ready%s", " after migration" if changed else "")
+    if recovered_profile_locks:
+        logger.warning("Recovered %s interrupted Chrome profile operation lock(s)", recovered_profile_locks)
     if settings.embedded_worker:
         await services.worker.start()
         await services.scheduler.start()

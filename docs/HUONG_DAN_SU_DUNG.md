@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.0-rc.1`
+Phiên bản áp dụng: `1.0.0-rc.2`
 
 Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media, lập lịch và điều khiển Chrome đăng bài. Tinix không dùng API đăng bài của Facebook, Instagram, TikTok hoặc YouTube. Mỗi tài khoản sử dụng một Chrome profile riêng và bạn đăng nhập trực tiếp trong Chrome.
 
@@ -55,6 +55,19 @@ Không nên tắt máy hoặc kết thúc cưỡng bức tiến trình khi một
 8. Khi phiên đăng nhập hợp lệ, chọn **Đồng bộ Page/kênh**.
 
 Mỗi account có một profile tại `chrome_profiles/<UUID>`. Không đăng nhập account khác vào cùng Chrome profile nếu muốn dữ liệu và target được tách biệt rõ ràng.
+
+### Dùng phiên đăng nhập từ dự án khác
+
+Trong **Tài khoản & Page**, mỗi account có bốn thao tác quản lý profile:
+
+- **Import profile**: sao chép một Chrome user-data directory bên ngoài vào profile riêng của account. Nhập đường dẫn tuyệt đối, ví dụ `D:\___TOOLS\__TINIX\Tinix FB Down\Chrome Profiles\fb_2`.
+- **Export profile**: tạo một bản sao di động tại `exports/chrome_profiles/`.
+- **Backup**: tạo điểm khôi phục nội bộ tại `data/backups/chrome_profiles/<ACCOUNT_ID>/`.
+- **Khôi phục**: thay profile hiện tại bằng một backup đã chọn; profile trước khôi phục lại được backup tự động.
+
+Trước mọi thao tác, hãy đóng Chrome đang dùng cả profile nguồn lẫn profile đích. Account không được có job chưa kết thúc. Tinix chặn Chrome đang giữ `--user-data-dir`, chặn symlink/junction, bỏ cache và lock file, chép vào thư mục tạm rồi kiểm tra cấu trúc trước khi đổi profile.
+
+Import/Export dùng để **di chuyển một bản sao giữa dự án hoặc máy**. Backup/Khôi phục dùng để **quay lại trạng thái cũ của chính account trong Tinix**. Không trỏ hai dự án vào cùng một thư mục profile vì hai Chrome có thể làm hỏng dữ liệu phiên.
 
 ### Khi gặp CAPTCHA, 2FA hoặc checkpoint
 
@@ -266,6 +279,8 @@ Mở **Cài đặt** để:
 - Dọn screenshot và file tạm theo retention.
 
 Database nằm tại `data/tinix_social.db`; backup nằm tại `data/backups/`. Tinix tự tạo backup trước mỗi migration schema.
+
+Backup database trong **Cài đặt** không chứa Chrome profile. Backup profile được tạo riêng tại từng account trong **Tài khoản & Page**.
 
 Để sao lưu toàn bộ ứng dụng, hãy dừng Tinix rồi sao chép:
 

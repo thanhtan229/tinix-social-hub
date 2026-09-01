@@ -72,6 +72,64 @@ class AccountRepository:
                 (status, now, now, account_id),
             )
 
+    def begin_profile_operation(self, account_id: str) -> dict[str, Any]:
+        """Lock an account only when no unfinished job can start using its profile."""
+        terminal = tuple(status.value for status in TERMINAL_STATUSES)
+        placeholders = ",".join("?" for _ in terminal)
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                account = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+                if not account:
+                    raise KeyError(account_id)
+                if account["profile_operation_locked"]:
+                    raise RuntimeError("Profile đang được Import, Export, Backup hoặc Restore.")
+                unfinished = connection.execute(
+                    f"SELECT COUNT(*) FROM jobs WHERE account_id=? AND status NOT IN ({placeholders})",
+                    (account_id, *terminal),
+                ).fetchone()[0]
+                if unfinished:
+                    raise RuntimeError("Account còn job chưa kết thúc; hãy hoàn tất hoặc hủy job trước.")
+                connection.execute(
+                    "UPDATE accounts SET profile_operation_locked=1,updated_at=? WHERE id=?",
+                    (utc_now(), account_id),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.get(account_id)
+
+    def end_profile_operation(self, account_id: str) -> None:
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE accounts SET profile_operation_locked=0,updated_at=? WHERE id=?",
+                (utc_now(), account_id),
+            )
+
+    def recover_profile_operations(self) -> int:
+        """Release maintenance locks left behind by an interrupted app process."""
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM accounts WHERE profile_operation_locked=1"
+                ).fetchone()[0]
+                connection.execute(
+                    "UPDATE accounts SET profile_operation_locked=0,updated_at=? WHERE profile_operation_locked=1",
+                    (now,),
+                )
+                connection.execute(
+                    "UPDATE chrome_profile_operations SET status='failed',error='Ứng dụng dừng khi thao tác đang chạy',finished_at=? WHERE status='running'",
+                    (now,),
+                )
+                connection.execute("COMMIT")
+                return count
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
     def delete_if_safe(self, account_id: str) -> bool:
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -209,6 +267,12 @@ class JobRepository:
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                if account_id:
+                    account = connection.execute(
+                        "SELECT profile_operation_locked FROM accounts WHERE id=?", (account_id,)
+                    ).fetchone()
+                    if account and account["profile_operation_locked"]:
+                        raise RuntimeError("Profile của account đang được bảo trì; chưa thể tạo job.")
                 connection.execute(
                     "INSERT INTO jobs(id,account_id,kind,status,payload_json,content_id,target_id,approval_id,scheduled_at,created_at,updated_at,dry_run,idempotency_key,max_attempts,correlation_id,missed_policy,publication_release_id) "
                     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -289,6 +353,12 @@ class JobRepository:
                 row = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
                 if not row:
                     raise KeyError(job_id)
+                if row["account_id"]:
+                    account = connection.execute(
+                        "SELECT profile_operation_locked FROM accounts WHERE id=?", (row["account_id"],)
+                    ).fetchone()
+                    if account and account["profile_operation_locked"]:
+                        raise ValueError("Profile của account đang được bảo trì; chưa thể retry job.")
                 safe = {"temporary_failure", "permanent_failure", "login_required", "checkpoint"}
                 if row["status"] not in safe or row["commit_reached_at"]:
                     raise ValueError("Job không ở trạng thái retry an toàn hoặc đã qua commit point.")
@@ -506,7 +576,7 @@ class JobRepository:
                 row = connection.execute(
                     f"SELECT j.* FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id "
                     f"WHERE j.status='queued' AND j.cancel_requested=0 AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?) "
-                    f"AND (j.account_id IS NULL OR a.enabled=1) "
+                    f"AND (j.account_id IS NULL OR (a.enabled=1 AND a.profile_operation_locked=0)) "
                     f"AND (j.account_id IS NULL OR NOT EXISTS (SELECT 1 FROM jobs active WHERE active.account_id=j.account_id AND active.status IN ({placeholders}))) "
                     f"ORDER BY j.priority,j.created_at LIMIT 1",
                     (now, *busy),

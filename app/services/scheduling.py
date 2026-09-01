@@ -68,6 +68,8 @@ class SchedulingService:
             raise SchedulingError("Không tìm thấy content.")
         if not account or not account["enabled"]:
             raise SchedulingError("Account không tồn tại hoặc đang bị tắt.")
+        if account.get("profile_operation_locked"):
+            raise SchedulingError("Profile của account đang được bảo trì; hãy thử lại sau.")
         definition = get_platform(account["platform"])
         if not definition or not definition.operational:
             raise SchedulingError("Nền tảng chưa được bật cho Chrome publishing.")

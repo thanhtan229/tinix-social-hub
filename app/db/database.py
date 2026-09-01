@@ -555,6 +555,26 @@ MIGRATIONS: list[tuple[int, str]] = [
     );
     CREATE INDEX idx_webhook_outbox_due ON webhook_outbox(status,next_attempt_at,created_at);
     """),
+    (11, """
+    ALTER TABLE accounts ADD COLUMN profile_operation_locked INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE chrome_profile_operations (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source_path TEXT,
+        destination_path TEXT,
+        backup_name TEXT,
+        files_copied INTEGER NOT NULL DEFAULT 0,
+        bytes_copied INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_profile_operations_account_created
+        ON chrome_profile_operations(account_id,created_at DESC);
+    """),
 ]
 
 

@@ -40,6 +40,14 @@ class AccountAndTargetRepositoryTests(unittest.TestCase):
         self.jobs.create("publish", {}, account["id"], None)
         self.assertIsNone(self.jobs.claim_next())
 
+    def test_profile_locked_account_does_not_claim_jobs(self) -> None:
+        account = self.accounts.create("Locked", "facebook")
+        job = self.jobs.create("publish", {}, account["id"], None)
+        with self.database.connection() as connection:
+            connection.execute("UPDATE accounts SET profile_operation_locked=1 WHERE id=?", (account["id"],))
+        self.assertIsNone(self.jobs.claim_next())
+        self.assertEqual(self.jobs.get(job["id"])["status"], "queued")
+
     def test_target_sync_updates_by_external_id_without_duplicates(self) -> None:
         account = self.accounts.create("Page admin", "facebook")
         first = self.targets.sync(
@@ -67,4 +75,3 @@ class AccountAndTargetRepositoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

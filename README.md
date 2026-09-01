@@ -4,7 +4,7 @@ Hướng dẫn thao tác đầy đủ: [docs/HUONG_DAN_SU_DUNG.md](docs/HUONG_DA
 
 Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 
-> Bản `1.0.0-rc.1` hoàn tất roadmap nội bộ từ benchmark Postiz. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
+> Bản `1.0.0-rc.2` bổ sung quản lý Chrome profile bằng bản sao an toàn. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
 
 ## Cài đặt và chạy
 
@@ -53,6 +53,8 @@ API key chỉ được đọc ở backend, không gửi xuống frontend. Loggin
 6. Chọn **Đồng bộ Page/kênh** sau khi trạng thái là “Đã đăng nhập”.
 
 Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa account hoặc xóa account khác.
+
+Có thể dùng **Import profile** để sao chép phiên đăng nhập từ Chrome user-data directory của dự án khác. Tinix không dùng chung thư mục sống: Chrome nguồn/đích phải đóng, profile hiện tại được backup trước khi thay thế, và Export luôn tạo bản sao dưới `exports/chrome_profiles/`.
 
 ### 2. Nội dung và duyệt
 

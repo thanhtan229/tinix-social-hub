@@ -52,6 +52,14 @@ class RestoreRequest(BaseModel):
     name: str
 
 
+class ProfileImportRequest(BaseModel):
+    source_path: str = Field(min_length=3, max_length=2000)
+
+
+class ProfileRestoreRequest(BaseModel):
+    backup_name: str = Field(min_length=1, max_length=200)
+
+
 class PostingSlotItem(BaseModel):
     weekday: int = Field(ge=0, le=6)
     minute_of_day: int = Field(ge=0, le=1439)
@@ -220,6 +228,54 @@ async def sync_facebook_pages(account_id: str, request: Request) -> list[dict[st
 @router.post("/accounts/{account_id}/sync-targets")
 async def sync_platform_targets(account_id: str, request: Request) -> list[dict[str, Any]]:
     return await sync_facebook_pages(account_id, request)
+
+
+async def _profile_operation(request: Request, account_id: str, method: str, *args: Any) -> dict[str, Any]:
+    from app.services.profile_transfer import ProfileTransferError
+    svc = services(request)
+    try:
+        async with svc.application_lock:
+            return await asyncio.to_thread(getattr(svc.profile_transfer, method), account_id, *args)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account.") from exc
+    except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/accounts/{account_id}/profile/backups")
+async def list_profile_backups(account_id: str, request: Request) -> list[dict[str, Any]]:
+    try:
+        return await asyncio.to_thread(services(request).profile_transfer.list_backups, account_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account.") from exc
+
+
+@router.get("/accounts/{account_id}/profile/history")
+async def profile_operation_history(account_id: str, request: Request) -> list[dict[str, Any]]:
+    try:
+        return await asyncio.to_thread(services(request).profile_transfer.history, account_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account.") from exc
+
+
+@router.post("/accounts/{account_id}/profile/import")
+async def import_profile(account_id: str, body: ProfileImportRequest, request: Request) -> dict[str, Any]:
+    return await _profile_operation(request, account_id, "import_profile", body.source_path)
+
+
+@router.post("/accounts/{account_id}/profile/export")
+async def export_profile(account_id: str, request: Request) -> dict[str, Any]:
+    return await _profile_operation(request, account_id, "export_profile")
+
+
+@router.post("/accounts/{account_id}/profile/backup")
+async def backup_profile(account_id: str, request: Request) -> dict[str, Any]:
+    return await _profile_operation(request, account_id, "backup_profile")
+
+
+@router.post("/accounts/{account_id}/profile/restore")
+async def restore_profile(account_id: str, body: ProfileRestoreRequest, request: Request) -> dict[str, Any]:
+    return await _profile_operation(request, account_id, "restore_profile", body.backup_name)
 
 
 @router.get("/targets")
@@ -413,9 +469,12 @@ async def create_job(body: JobCreate, request: Request) -> dict[str, Any]:
     if body.account_id and not await asyncio.to_thread(svc.accounts.get, body.account_id):
         raise HTTPException(404, "Không tìm thấy account.")
     scheduled_at = body.scheduled_at.astimezone(timezone.utc).isoformat() if body.scheduled_at else None
-    job = await asyncio.to_thread(
-        svc.jobs.create, body.kind, body.payload, body.account_id, scheduled_at, dry_run=body.dry_run
-    )
+    try:
+        job = await asyncio.to_thread(
+            svc.jobs.create, body.kind, body.payload, body.account_id, scheduled_at, dry_run=body.dry_run
+        )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
     svc.worker.notify()
     return job
 
