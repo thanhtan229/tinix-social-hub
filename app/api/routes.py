@@ -24,6 +24,7 @@ class JobCreate(BaseModel):
     account_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     scheduled_at: datetime | None = None
+    dry_run: bool = True
 
 
 class RestoreRequest(BaseModel):
@@ -37,9 +38,9 @@ def services(request: Request) -> Any:
 @router.get("/health")
 async def health(request: Request) -> dict[str, Any]:
     svc = services(request)
-    integrity = await asyncio.to_thread(svc.database.integrity_check)
+    integrity = await asyncio.to_thread(svc.database.ping)
     usage = shutil.disk_usage(svc.settings.data_dir)
-    chrome = svc.chrome.status()
+    chrome = await asyncio.to_thread(svc.chrome.status)
     return {
         "status": "ok" if integrity["ok"] else "degraded",
         "version": __version__,
@@ -76,7 +77,9 @@ async def create_job(body: JobCreate, request: Request) -> dict[str, Any]:
     if body.account_id and not await asyncio.to_thread(svc.accounts.get, body.account_id):
         raise HTTPException(404, "Không tìm thấy account.")
     scheduled_at = body.scheduled_at.astimezone(timezone.utc).isoformat() if body.scheduled_at else None
-    job = await asyncio.to_thread(svc.jobs.create, body.kind, body.payload, body.account_id, scheduled_at)
+    job = await asyncio.to_thread(
+        svc.jobs.create, body.kind, body.payload, body.account_id, scheduled_at, dry_run=body.dry_run
+    )
     svc.worker.notify()
     return job
 
@@ -90,9 +93,16 @@ async def cancel_job(job_id: str, request: Request) -> dict[str, bool]:
     return {"cancelled": True}
 
 
+@router.get("/jobs/{job_id}/events")
+async def job_events(job_id: str, request: Request) -> list[dict[str, Any]]:
+    if not await asyncio.to_thread(services(request).jobs.get, job_id):
+        raise HTTPException(404, "Không tìm thấy job.")
+    return await asyncio.to_thread(services(request).jobs.events, job_id)
+
+
 @router.get("/chrome")
 async def chrome_status(request: Request) -> Any:
-    return services(request).chrome.status()
+    return await asyncio.to_thread(services(request).chrome.status)
 
 
 @router.post("/accounts/{account_id}/chrome/open")

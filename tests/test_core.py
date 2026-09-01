@@ -34,6 +34,8 @@ class DatabaseAndQueueTests(unittest.TestCase):
         claimed = self.jobs.claim_next()
         self.assertEqual(claimed["id"], first["id"])
         self.assertIsNone(self.jobs.claim_next())
+        self.jobs.transition(first["id"], "checking_login")
+        self.jobs.transition(first["id"], "publishing")
         self.jobs.complete(first["id"], {"ok": True})
         self.assertEqual(self.jobs.claim_next()["id"], second["id"])
 
@@ -55,4 +57,3 @@ class DatabaseAndQueueTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

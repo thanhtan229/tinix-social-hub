@@ -6,8 +6,9 @@ from typing import Any
 
 from app.core.config import Settings
 from app.db.repositories import AccountRepository, JobRepository
+from app.domain.jobs import JobStatus
 from app.services.ai import OpenAICompatibleProvider
-from app.services.publishers import PublisherRegistry
+from app.services.publishers import PublishContext, PublishOutcome, PublisherRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,48 @@ class LocalWorker:
                 account = await asyncio.to_thread(self.accounts.get, job["account_id"])
                 if not account:
                     raise RuntimeError("Account không còn tồn tại.")
-                result = await self.publishers.get(account["platform"]).publish(account, job["payload"])
+                if not account["enabled"]:
+                    await asyncio.to_thread(
+                        self.jobs.transition, job["id"], JobStatus.PERMANENT_FAILURE,
+                        event_type="account_disabled", error="Account đang bị tắt.", failure_code="account_disabled",
+                    )
+                    return
+                await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.CHECKING_LOGIN, event_type="publisher_started")
+                await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.PUBLISHING, event_type="payload_ready")
+                publisher = self.publishers.get(account["platform"], dry_run=bool(job["dry_run"]))
+                publish_result = await publisher.publish(
+                    PublishContext(
+                        job=job,
+                        account=account,
+                        payload=job["payload"],
+                        is_cancelled=lambda: asyncio.to_thread(self.jobs.is_cancel_requested, job["id"]),
+                    )
+                )
+                result = {
+                    "outcome": publish_result.outcome.value,
+                    "message": publish_result.message,
+                    "post_url": publish_result.post_url,
+                    "metadata": publish_result.metadata,
+                }
+                if publish_result.outcome == PublishOutcome.DRY_RUN_READY:
+                    await asyncio.to_thread(self.jobs.dry_run_ready, job["id"], result)
+                    return
+                if publish_result.outcome == PublishOutcome.UNSUPPORTED:
+                    await asyncio.to_thread(
+                        self.jobs.transition, job["id"], JobStatus.PERMANENT_FAILURE,
+                        event_type="unsupported", error=publish_result.message, failure_code="unsupported",
+                    )
+                    return
+                if publish_result.outcome == PublishOutcome.LOGIN_REQUIRED:
+                    await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.LOGIN_REQUIRED, event_type="login_required")
+                    return
+                if publish_result.outcome == PublishOutcome.CHECKPOINT:
+                    await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.CHECKPOINT, event_type="checkpoint")
+                    return
+                if publish_result.outcome == PublishOutcome.UNKNOWN_RESULT:
+                    await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.UNKNOWN_RESULT, event_type="unknown_result")
+                    return
+                await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.VERIFYING, event_type="publish_submitted", commit_reached=True)
             else:
                 raise ValueError(f"Loại job không được hỗ trợ: {job['kind']}")
             if await asyncio.to_thread(self.jobs.is_cancel_requested, job["id"]):
