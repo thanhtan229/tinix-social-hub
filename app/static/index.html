@@ -17,6 +17,7 @@
       <button data-tab="media">Media Library</button>
       <button data-tab="compose">Calendar</button>
       <button data-tab="jobs">Hàng đợi & Lịch sử</button>
+      <button data-tab="analytics">Analytics</button>
       <button data-tab="accounts">Tài khoản & Page</button>
       <button data-tab="settings">Cài đặt</button>
     </nav>
@@ -101,6 +102,13 @@
     <section id="tab-accounts" class="tab">
       <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Kênh</h1><p>Mỗi account dùng Chrome profile riêng; đăng nhập được thực hiện thủ công trong Chrome.</p></div><button id="newAccount" class="primary">+ Thêm account</button></div>
       <div class="grid two"><article class="panel"><div class="panel-head"><h2>Accounts</h2><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div id="accountList"></div></article><article class="panel"><div class="panel-head"><h2>Page / Kênh đã đồng bộ</h2><input id="targetSearch" placeholder="Tìm Page hoặc kênh"></div><div id="targetList"></div></article></div>
+    </section>
+
+    <section id="tab-analytics" class="tab">
+      <div class="page-head"><div><p class="eyebrow">UI-SCRAPED METRICS</p><h1>Analytics & Reconciliation</h1><p>Chỉ đọc số liệu đang hiển thị trong Chrome; “không hỗ trợ” không được biến thành số 0.</p></div><button id="refreshAnalytics">Làm mới</button></div>
+      <div class="toolbar"><select id="analyticsDays"><option value="7">7 ngày</option><option value="30" selected>30 ngày</option><option value="90">90 ngày</option></select><select id="analyticsPlatform"><option value="">Mọi nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option></select></div>
+      <div id="analyticsStats" class="stats"></div>
+      <article class="panel"><div class="panel-head"><h2>Release reconciliation</h2><span class="muted">Thu thập chỉ chạy khi bấm nút</span></div><div id="analyticsReleases" class="status-list"></div></article>
     </section>
 
     <section id="tab-settings" class="tab">

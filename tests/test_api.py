@@ -16,6 +16,7 @@ from app.db.database import Database
 from app.db.publication_repositories import PublicationRepository
 from app.db.notification_repositories import NotificationRepository
 from app.db.media_repositories import MediaAssetRepository
+from app.db.analytics_repositories import AnalyticsRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -59,6 +60,7 @@ class ApiTests(unittest.TestCase):
         generations = AIGenerationRepository(database)
         publications = PublicationRepository(database)
         media_assets = MediaAssetRepository(database)
+        analytics = AnalyticsRepository(database)
         media_settings = SimpleNamespace(media_dir=root / "media")
         mock_ai = MockAIProvider()
         services = SimpleNamespace(
@@ -69,6 +71,7 @@ class ApiTests(unittest.TestCase):
             posting_slots=PostingSlotRepository(database),
             notifications=NotificationRepository(database),
             media_assets=media_assets,
+            analytics=analytics,
             targets=targets,
             contents=contents,
             brands=brands,
@@ -80,6 +83,7 @@ class ApiTests(unittest.TestCase):
             scheduler=SimpleNamespace(state="running"),
             settings=SimpleNamespace(data_dir=root / "data", max_chrome=2),
             ai=SimpleNamespace(configured=False),
+            analytics_collector=SimpleNamespace(),
         )
         app = FastAPI()
         app.state.services = services
@@ -144,6 +148,12 @@ class ApiTests(unittest.TestCase):
         retry = self.client.post(f"/api/jobs/{job['id']}/retry")
         self.assertEqual(retry.status_code, 200)
         self.assertEqual(retry.json()["status"], "queued")
+
+    def test_analytics_summary_marks_missing_data_unsupported(self) -> None:
+        response = self.client.get("/api/analytics/summary?days=30")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["supported"])
+        self.assertEqual(response.json()["metrics"], {})
 
     def test_account_update_rejects_platform_outside_catalog(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()

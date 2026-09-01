@@ -493,6 +493,33 @@ MIGRATIONS: list[tuple[int, str]] = [
     CREATE INDEX idx_content_media_asset ON content_media(asset_id,content_id);
     CREATE INDEX idx_media_assets_type_created ON media_assets(media_type,created_at DESC);
     """),
+    (9, """
+    CREATE TABLE release_metrics (
+        id TEXT PRIMARY KEY,
+        release_id TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        metric_date TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        value REAL NOT NULL,
+        source TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(release_id) REFERENCES publication_releases(id) ON DELETE CASCADE,
+        UNIQUE(release_id,metric_key,metric_date,source)
+    );
+    CREATE INDEX idx_release_metrics_range ON release_metrics(metric_date,metric_key,release_id);
+    CREATE TABLE analytics_fetch_runs (
+        id TEXT PRIMARY KEY,
+        release_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        metrics_count INTEGER NOT NULL DEFAULT 0,
+        message TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(release_id) REFERENCES publication_releases(id) ON DELETE CASCADE
+    );
+    """),
 ]
 
 

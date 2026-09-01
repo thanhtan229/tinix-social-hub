@@ -77,6 +77,11 @@ class BulkRetry(BaseModel):
     preview: bool = True
 
 
+class ReleaseConnect(BaseModel):
+    external_url: str = Field(min_length=10, max_length=2000)
+    note: str = Field(default="Kết nối thủ công từ WebUI", min_length=1, max_length=2000)
+
+
 def services(request: Request) -> Any:
     return request.app.state.services
 
@@ -342,6 +347,52 @@ async def publication_release_detail(release_id: str, request: Request) -> dict[
     if not release:
         raise HTTPException(404, "Không tìm thấy release.")
     return release
+
+
+@router.patch("/publication-releases/{release_id}/connect")
+async def connect_publication_release(
+    release_id: str, body: ReleaseConnect, request: Request
+) -> dict[str, Any]:
+    release = await asyncio.to_thread(services(request).publications.get_release, release_id)
+    if not release:
+        raise HTTPException(404, "Không tìm thấy release.")
+    from app.services.ui_analytics import AnalyticsCollectionError
+    try:
+        services(request).analytics_collector._validate_url(release["platform"], body.external_url)
+        return await asyncio.to_thread(
+            services(request).analytics.connect_release, release_id, body.external_url, body.note
+        )
+    except AnalyticsCollectionError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/publication-releases/{release_id}/collect-metrics")
+async def collect_release_metrics(release_id: str, request: Request) -> dict[str, Any]:
+    from app.services.ui_analytics import AnalyticsCollectionError
+    try:
+        return await services(request).analytics_collector.collect(release_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy release.") from exc
+    except AnalyticsCollectionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/publication-releases/{release_id}/metrics")
+async def release_metrics(release_id: str, request: Request) -> dict[str, Any]:
+    if not await asyncio.to_thread(services(request).publications.get_release, release_id):
+        raise HTTPException(404, "Không tìm thấy release.")
+    metrics, runs = await asyncio.gather(
+        asyncio.to_thread(services(request).analytics.for_release, release_id),
+        asyncio.to_thread(services(request).analytics.runs, release_id),
+    )
+    return {"metrics": metrics, "fetch_runs": runs}
+
+
+@router.get("/analytics/summary")
+async def analytics_summary(
+    request: Request, days: int = Query(30, ge=7, le=90), platform: str | None = None
+) -> dict[str, Any]:
+    return await asyncio.to_thread(services(request).analytics.summary, days, platform)
 
 
 @router.post("/jobs", status_code=201)

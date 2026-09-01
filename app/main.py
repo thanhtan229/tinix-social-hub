@@ -22,6 +22,7 @@ from app.db.content_repositories import AIGenerationRepository, BrandProfileRepo
 from app.db.publication_repositories import PublicationRepository
 from app.db.notification_repositories import NotificationRepository
 from app.db.media_repositories import MediaAssetRepository
+from app.db.analytics_repositories import AnalyticsRepository
 from app.db.repositories import AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
 from app.services.ai_studio import AIContentStudioService
@@ -34,6 +35,7 @@ from app.services.facebook_publisher import FacebookPublisher
 from app.services.publishers import PublisherRegistry
 from app.services.web_platform_publisher import InstagramChromePublisher, TikTokChromePublisher, YouTubeChromePublisher
 from app.services.platform_accounts import PlatformAccountService
+from app.services.ui_analytics import UIAnalyticsCollector
 from app.services.worker import LocalWorker, Scheduler
 
 
@@ -54,6 +56,7 @@ class Services:
     posting_slots: PostingSlotRepository
     notifications: NotificationRepository
     media_assets: MediaAssetRepository
+    analytics: AnalyticsRepository
     chrome: ChromeManager
     ai: OpenAICompatibleProvider
     publishers: PublisherRegistry
@@ -62,6 +65,7 @@ class Services:
     maintenance: MaintenanceService
     facebook_accounts: FacebookAccountService
     platform_accounts: PlatformAccountService
+    analytics_collector: UIAnalyticsCollector
     media: MediaService
     ai_studio: AIContentStudioService
     scheduling: SchedulingService
@@ -80,6 +84,7 @@ def build_services(settings: Settings) -> Services:
     posting_slots = PostingSlotRepository(database)
     notifications = NotificationRepository(database)
     media_assets = MediaAssetRepository(database)
+    analytics = AnalyticsRepository(database)
     chrome_profiles = ChromeProfileRepository(database)
     artifacts = ArtifactRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
@@ -95,14 +100,16 @@ def build_services(settings: Settings) -> Services:
     publishers.register("tiktok", TikTokChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("youtube", YouTubeChromePublisher(settings, chrome, accounts, artifacts, media))
     platform_accounts = PlatformAccountService(accounts, targets, chrome, publishers)
+    analytics_collector = UIAnalyticsCollector(accounts, publications, analytics, publishers)
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
     scheduling = SchedulingService(jobs, accounts, targets, contents, publications=publications)
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
-        posting_slots=posting_slots, notifications=notifications, media_assets=media_assets,
+        posting_slots=posting_slots, notifications=notifications, media_assets=media_assets, analytics=analytics,
         chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
-        maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts, media=media,
+        maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
+        analytics_collector=analytics_collector, media=media,
         ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),
     )
 
