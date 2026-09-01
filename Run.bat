@@ -1,0 +1,55 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+title Tinix Social Studio
+
+where py >nul 2>nul
+if errorlevel 1 (
+  where python >nul 2>nul
+  if errorlevel 1 (
+    echo [LOI] Khong tim thay Python 3.11 tro len.
+    echo Tai Python tai https://www.python.org/downloads/ va chon "Add Python to PATH".
+    pause
+    exit /b 1
+  )
+  set "PYTHON_CMD=python"
+) else (
+  set "PYTHON_CMD=py -3"
+)
+
+if not exist ".venv\Scripts\python.exe" (
+  echo [Tinix] Dang tao moi truong Python rieng...
+  %PYTHON_CMD% -m venv .venv
+  if errorlevel 1 goto :error
+)
+
+set "VENV_PY=.venv\Scripts\python.exe"
+"%VENV_PY%" -c "import fastapi,uvicorn,httpx" >nul 2>nul
+if errorlevel 1 (
+  echo [Tinix] Dang cai dependency lan dau...
+  "%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
+  if errorlevel 1 goto :error
+)
+
+if not exist ".env" copy /y ".env.example" ".env" >nul
+
+set "CHROME_FOUND="
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "CHROME_FOUND=1"
+if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "CHROME_FOUND=1"
+if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME_FOUND=1"
+if not defined CHROME_FOUND (
+  echo [CANH BAO] Chua tim thay Google Chrome o vi tri mac dinh.
+  echo Ban van co the dung WebUI; hay cai Chrome hoac dat TINIX_CHROME_PATH trong .env.
+)
+
+echo [Tinix] WebUI se mo tai http://127.0.0.1:8765
+echo [Tinix] Nhan Ctrl+C de dung an toan.
+"%VENV_PY%" -m app
+if errorlevel 1 goto :error
+exit /b 0
+
+:error
+echo.
+echo [LOI] Tinix Social Studio khong the khoi dong. Xem logs\tinix.log neu co.
+pause
+exit /b 1

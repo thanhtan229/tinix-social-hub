@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tinix Social Studio</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div><span class="brand-mark">T</span><strong>Tinix Social Studio</strong><small> PC-first</small></div>
+    <div id="backendBadge" class="badge muted">Đang kết nối…</div>
+  </header>
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">LOCAL CONTROL CENTER</p><h1>Đăng nội dung từ máy tính,<br><em>rõ ràng và bền vững.</em></h1></div>
+      <button class="primary" onclick="openCreateJob()">+ Tạo job mới</button>
+    </section>
+    <section id="stats" class="stats"></section>
+    <div class="grid">
+      <section class="panel wide">
+        <div class="panel-head"><div><p class="eyebrow">DURABLE QUEUE</p><h2>Hàng đợi gần đây</h2></div><button onclick="refreshAll()">Làm mới</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Loại</th><th>Account</th><th>Trạng thái</th><th>Thời gian</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><p class="eyebrow">CHROME PROFILES</p><h2>Tài khoản</h2></div><div><button onclick="closeAllChrome()">Đóng tất cả</button> <button onclick="openAccount()">+ Thêm</button></div></div>
+        <div id="accounts" class="account-list"></div>
+      </section>
+    </div>
+    <section class="panel database">
+      <div><p class="eyebrow">DATA SAFETY</p><h2>SQLite & Backup</h2><p id="dbText" class="muted-text">Đang kiểm tra…</p></div>
+      <div class="actions"><button onclick="checkIntegrity()">Kiểm tra integrity</button><button onclick="restoreLatest()">Khôi phục gần nhất</button><button class="primary" onclick="backup()">Tạo backup</button></div>
+    </section>
+  </main>
+
+  <dialog id="accountDialog"><form method="dialog" onsubmit="createAccount(event)"><h2>Thêm tài khoản</h2><label>Tên hiển thị<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option>facebook</option><option>instagram</option><option>tiktok</option><option>youtube</option></select></label><div class="dialog-actions"><button value="cancel">Hủy</button><button class="primary" value="default">Tạo</button></div></form></dialog>
+  <dialog id="jobDialog"><form method="dialog" onsubmit="createJob(event)"><h2>Tạo job</h2><label>Loại<select id="jobKind" onchange="toggleJobFields()"><option value="publish">Đăng bài (preview adapter)</option><option value="ai_content">Tạo nội dung bằng AI</option></select></label><label id="accountField">Tài khoản<select id="jobAccount"></select></label><label>Nội dung / prompt<textarea id="jobText" required rows="5"></textarea></label><label>Lên lịch (không bắt buộc)<input id="jobSchedule" type="datetime-local"></label><div class="dialog-actions"><button value="cancel">Hủy</button><button class="primary" value="default">Xếp hàng</button></div></form></dialog>
+  <div id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
