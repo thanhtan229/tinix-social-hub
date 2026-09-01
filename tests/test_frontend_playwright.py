@@ -84,7 +84,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.2")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.3")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -93,8 +93,9 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 page.wait_for_timeout(150)
             page.get_by_role("button", name="Tài khoản & Page", exact=True).click()
             self.assertEqual(page.locator("[data-profile-action]").count(), 4)
-            self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 4)
-            self.assertIn("Chưa có account", page.locator("#profileHelp").inner_text())
+            self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 3)
+            self.assertTrue(page.get_by_role("button", name="Import profile", exact=True).is_enabled())
+            self.assertIn("Import ngay", page.locator("#profileHelp").inner_text())
             self.assertEqual(errors, [])
             browser.close()
 

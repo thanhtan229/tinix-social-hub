@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +30,8 @@ class ChromeProfileTransferService:
     }
     LOCK_FILES = {"singletonlock", "singletoncookie", "singletonsocket", "lockfile"}
     REPARSE_POINT = 0x400
+    BUNDLE_FORMAT = "tinix-profile"
+    BUNDLE_VERSION = 1
 
     def __init__(
         self,
@@ -182,6 +185,47 @@ class ChromeProfileTransferService:
                 shutil.rmtree(staging)
             raise
 
+    def _read_bundle(self, bundle_path: str) -> tuple[Path, dict[str, Any], Path]:
+        bundle = Path(os.path.expandvars(os.path.expanduser(bundle_path))).resolve()
+        if not bundle.is_absolute() or not bundle.is_dir() or self._is_reparse(bundle):
+            raise ProfileTransferError("Gói Tinix profile không tồn tại hoặc không an toàn.")
+        manifest_path = bundle / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProfileTransferError("Gói profile thiếu manifest.json hợp lệ.") from exc
+        if manifest.get("bundle_format") != self.BUNDLE_FORMAT or manifest.get("format_version") != self.BUNDLE_VERSION:
+            raise ProfileTransferError("Định dạng gói Tinix profile không được hỗ trợ.")
+        name = str(manifest.get("account_name") or "").strip()
+        platform = str(manifest.get("platform") or "").strip().lower()
+        if not name or len(name) > 100:
+            raise ProfileTransferError("Tên account trong manifest không hợp lệ.")
+        if platform not in {"facebook", "instagram", "tiktok", "youtube"}:
+            raise ProfileTransferError(f"Nền tảng trong gói chưa được Social Hub hỗ trợ: {platform or 'trống'}.")
+        profile = (bundle / "chrome-profile").resolve()
+        if profile.parent != bundle:
+            raise ProfileTransferError("Đường dẫn Chrome profile trong gói không hợp lệ.")
+        self._validate_profile(profile)
+        return bundle, manifest, profile
+
+    def import_bundle(self, bundle_path: str) -> dict[str, Any]:
+        _, manifest, profile = self._read_bundle(bundle_path)
+        account = self.accounts.create(manifest["account_name"], manifest["platform"])
+        target = (self.settings.chrome_profile_dir / account["profile_key"]).resolve()
+        try:
+            transfer = self.import_profile(account["id"], str(profile))
+        except Exception:
+            self.accounts.delete_if_safe(account["id"])
+            if target.exists() and target.parent == self.settings.chrome_profile_dir.resolve():
+                shutil.rmtree(target)
+            raise
+        return {
+            **transfer,
+            "account": self.accounts.get(account["id"]),
+            "source_app": manifest.get("source_app"),
+            "source_account_id": manifest.get("source_account_id"),
+        }
+
     def _run(self, account_id: str, operation: str, source: Path | None, destination: Path | None, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         self.accounts.begin_profile_operation(account_id)
         operation_id = ""
@@ -238,13 +282,42 @@ class ChromeProfileTransferService:
 
     def export_profile(self, account_id: str) -> dict[str, Any]:
         account, source = self._account_and_target(account_id)
-        destination = self.export_root / f"{self._safe_label(account['name'])}-{self._timestamp()}"
+        destination = self.export_root / f"{self._safe_label(account['name'])}-{self._timestamp()}.tinix-profile"
 
         def action() -> dict[str, Any]:
             self._validate_profile(source)
             self._ensure_available(source)
-            files, size = self._copy_to_unique(source, destination)
-            return {"export_path": str(destination), "files_copied": files, "bytes_copied": size}
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent))
+            try:
+                profile_destination = staging / "chrome-profile"
+                files, size = self._copy_tree(source, profile_destination)
+                self._validate_profile(profile_destination)
+                from app import __version__
+                manifest = {
+                    "bundle_format": self.BUNDLE_FORMAT,
+                    "format_version": self.BUNDLE_VERSION,
+                    "account_name": account["name"],
+                    "platform": account["platform"],
+                    "source_app": "Tinix Social Hub",
+                    "source_app_version": __version__,
+                    "source_account_id": account["id"],
+                    "exported_at": utc_now(),
+                }
+                (staging / "manifest.json").write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                if destination.exists():
+                    raise ProfileTransferError(f"Đích đã tồn tại: {destination}")
+                os.replace(staging, destination)
+            except Exception:
+                if staging.exists():
+                    shutil.rmtree(staging)
+                raise
+            return {
+                "export_path": str(destination), "bundle_path": str(destination),
+                "files_copied": files, "bytes_copied": size,
+            }
 
         return self._run(account_id, "export", source, destination, action)
 

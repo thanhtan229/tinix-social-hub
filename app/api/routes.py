@@ -56,6 +56,10 @@ class ProfileImportRequest(BaseModel):
     source_path: str = Field(min_length=3, max_length=2000)
 
 
+class ProfileBundleImportRequest(BaseModel):
+    bundle_path: str = Field(min_length=3, max_length=2000)
+
+
 class ProfileRestoreRequest(BaseModel):
     backup_name: str = Field(min_length=1, max_length=200)
 
@@ -261,6 +265,17 @@ async def profile_operation_history(account_id: str, request: Request) -> list[d
 @router.post("/accounts/{account_id}/profile/import")
 async def import_profile(account_id: str, body: ProfileImportRequest, request: Request) -> dict[str, Any]:
     return await _profile_operation(request, account_id, "import_profile", body.source_path)
+
+
+@router.post("/profiles/import")
+async def import_profile_bundle(body: ProfileBundleImportRequest, request: Request) -> dict[str, Any]:
+    from app.services.profile_transfer import ProfileTransferError
+    svc = services(request)
+    try:
+        async with svc.application_lock:
+            return await asyncio.to_thread(svc.profile_transfer.import_bundle, body.bundle_path)
+    except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/accounts/{account_id}/profile/export")

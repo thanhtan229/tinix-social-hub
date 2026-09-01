@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,7 +57,17 @@ class ProfileTransferTests(unittest.TestCase):
         backup = self.service.backup_profile(self.account["id"])
         (self.target / "Default" / "Cookies").write_text("session-v2", encoding="utf-8")
         exported = self.service.export_profile(self.account["id"])
-        self.assertEqual((Path(exported["export_path"]) / "Default" / "Cookies").read_text(), "session-v2")
+        bundle = Path(exported["bundle_path"])
+        self.assertEqual((bundle / "chrome-profile" / "Default" / "Cookies").read_text(), "session-v2")
+        manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual((manifest["account_name"], manifest["platform"]), ("Main Account", "facebook"))
+
+        imported_bundle = self.service.import_bundle(str(bundle))
+        imported_account = imported_bundle["account"]
+        imported_target = self.root / "profiles" / imported_account["profile_key"]
+        self.assertEqual(imported_account["name"], "Main Account")
+        self.assertEqual(imported_account["platform"], "facebook")
+        self.assertEqual((imported_target / "Default" / "Cookies").read_text(), "session-v2")
 
         restored = self.service.restore_profile(self.account["id"], backup["backup_name"])
         self.assertEqual(restored["restored_from"], backup["backup_name"])
