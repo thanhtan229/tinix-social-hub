@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import random
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from app.db.calendar_repositories import PostingSlotRepository, SlotValidationError
+from app.db.content_repositories import ContentRepository
+from app.db.database import Database
+from app.db.publication_repositories import PublicationRepository
+from app.db.repositories import AccountRepository, JobRepository, TargetRepository
+from app.services.scheduling import SchedulingService
+from app.platforms.validation import PlatformValidationError, validate_publication
+
+
+class CalendarAndSlotTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.database = Database(root / "data" / "tinix_social.db", root / "backups")
+        self.database.initialize()
+        self.accounts = AccountRepository(self.database)
+        self.targets = TargetRepository(self.database)
+        self.contents = ContentRepository(self.database)
+        self.jobs = JobRepository(self.database)
+        self.publications = PublicationRepository(self.database)
+        self.slots = PostingSlotRepository(self.database)
+        self.account = self.accounts.create("Admin", "facebook")
+        self.target = self.targets.sync(
+            self.account["id"], "facebook",
+            [{"external_id": "page-1", "name": "Page", "url": "https://facebook.com/page-1"}],
+        )[0]
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_slots_are_normalized_and_timezone_is_validated(self) -> None:
+        slots = self.slots.replace(self.target["id"], "Asia/Bangkok", [
+            {"weekday": 1, "minute_of_day": 540},
+            {"weekday": 1, "minute_of_day": 540},
+            {"weekday": 0, "minute_of_day": 600},
+        ])
+        self.assertEqual([(item["weekday"], item["minute_of_day"]) for item in slots], [(0, 600), (1, 540)])
+        with self.assertRaises(SlotValidationError):
+            self.slots.replace(self.target["id"], "Not/AZone", [])
+
+    def test_find_next_skips_nonexistent_dst_wall_time(self) -> None:
+        self.slots.replace(self.target["id"], "America/New_York", [
+            {"weekday": 6, "minute_of_day": 150},  # Sunday 02:30
+        ])
+        after = datetime(2025, 3, 8, 12, tzinfo=timezone.utc)
+        result = self.slots.find_next(self.target["id"], after)
+        self.assertEqual(result, datetime(2025, 3, 16, 6, 30, tzinfo=timezone.utc))
+
+    def test_find_next_requires_configured_slots(self) -> None:
+        with self.assertRaises(SlotValidationError):
+            self.slots.find_next(self.target["id"])
+
+    def test_safe_release_can_be_rescheduled_with_audit(self) -> None:
+        content = self.contents.create({
+            "title": "Post", "caption": "Hello", "hashtags": [],
+            "platform_variants": {"facebook": {"caption": "Hello", "hashtags": []}},
+        })
+        scheduling = SchedulingService(
+            self.jobs, self.accounts, self.targets, self.contents, random.Random(1), self.publications
+        )
+        first_due = datetime.now(timezone.utc) + timedelta(hours=2)
+        job = scheduling.schedule(
+            content["id"], self.account["id"], [self.target["id"]], first_due, True, 0, 0, "confirm"
+        )[0]
+        second_due = datetime.now(timezone.utc) + timedelta(days=1)
+        release = self.publications.reschedule_release(
+            job["publication_release_id"], second_due.isoformat(), "Asia/Bangkok"
+        )
+        self.assertEqual(release["scheduled_at"], second_due.isoformat())
+        self.assertEqual(self.jobs.get(job["id"])["scheduled_at"], second_due.isoformat())
+        self.assertEqual(self.publications.release_events(release["id"])[0]["event_type"], "rescheduled")
+
+    def test_platform_format_validation_is_schema_driven(self) -> None:
+        schema = validate_publication(
+            "tiktok", "short_video", "Caption", [{"type": "video", "size_bytes": 10}],
+            {"privacy": "private", "allow_comments": False},
+        )
+        self.assertEqual(schema.id, "short_video")
+        with self.assertRaises(PlatformValidationError) as context:
+            validate_publication("instagram", "carousel", "Caption", [{"type": "image"}], {})
+        self.assertIn("2-10 media", str(context.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

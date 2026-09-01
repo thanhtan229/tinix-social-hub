@@ -14,7 +14,7 @@
       <button data-tab="overview" class="active">Tổng quan</button>
       <button data-tab="ai">AI Content Studio</button>
       <button data-tab="content">Kho nội dung</button>
-      <button data-tab="compose">Soạn & Lập lịch</button>
+      <button data-tab="compose">Calendar</button>
       <button data-tab="jobs">Hàng đợi & Lịch sử</button>
       <button data-tab="accounts">Tài khoản & Page</button>
       <button data-tab="settings">Cài đặt</button>
@@ -57,11 +57,19 @@
     </section>
 
     <section id="tab-compose" class="tab">
-      <div class="page-head"><div><p class="eyebrow">COMPOSE & SCHEDULE</p><h1>Soạn & Lập lịch</h1></div></div>
+      <div class="page-head"><div><p class="eyebrow">CALENDAR & COMPOSER</p><h1>Calendar phát hành</h1><p>Lịch hiển thị theo giờ máy; dữ liệu được lưu UTC.</p></div><button id="calendarToday">Hôm nay</button></div>
+      <div class="calendar-toolbar panel"><div class="view-switch"><button type="button" data-calendar-view="week" class="active">Tuần</button><button type="button" data-calendar-view="month">Tháng</button><button type="button" data-calendar-view="list">Danh sách</button></div><button id="calendarPrev" type="button">←</button><input id="calendarAnchor" type="date"><button id="calendarNext" type="button">→</button><select id="calendarPlatform"><option value="">Mọi nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option></select><select id="calendarStatus"><option value="">Mọi trạng thái</option><option value="scheduled">Đã lên lịch</option><option value="queued">Đang chờ</option><option value="succeeded">Thành công</option><option value="dry_run_ready">Dry-run</option><option value="permanent_failure">Lỗi</option></select></div>
+      <div id="calendarRange" class="calendar-range"></div>
+      <div id="calendarGrid" class="calendar-grid panel"></div>
+      <div class="grid two compose-panels">
       <form id="scheduleForm" class="panel form-grid">
+        <h2 class="full">Universal composer</h2>
         <label>Nội dung<select id="scheduleContent" required></select></label>
         <label>Facebook account<select id="scheduleAccount" required></select></label>
         <label class="full">Facebook Pages<select id="scheduleTargets" multiple size="6" required></select></label>
+        <label>Định dạng<select id="scheduleFormat"></select></label>
+        <div id="formatCounter" class="format-counter"></div>
+        <div id="platformSettings" class="full form-grid compact"></div>
         <label>Ngày giờ<input id="scheduleAt" type="datetime-local"></label>
         <label>Job bị lỡ<select id="missedPolicy"><option value="confirm">Chờ xác nhận</option><option value="publish">Đăng bù</option><option value="skip">Bỏ qua</option></select></label>
         <label>Delay giữa Page (giây)<input id="delaySeconds" type="number" min="0" value="0"></label>
@@ -70,6 +78,11 @@
         <div id="realWarning" class="warning full hidden">Bạn đang chọn ĐĂNG THẬT. Job chỉ chạy nếu revision hiện tại đã được duyệt.</div>
         <button class="primary full" type="submit">Lưu lịch</button>
       </form>
+      <div class="grid">
+        <article class="panel"><h2>Preview nội dung</h2><div id="composerPreview" class="composer-preview muted">Chọn nội dung để xem preview.</div></article>
+        <form id="slotForm" class="panel form-grid"><h2 class="full">Posting slots</h2><label class="full">Page / Kênh<select id="slotTarget"></select></label><label class="full">Múi giờ<input id="slotTimezone" value="Asia/Bangkok"></label><label class="full">Mỗi dòng: thứ (0=Thứ Hai) và giờ<textarea id="slotLines" rows="6" placeholder="0 09:00&#10;2 14:30&#10;4 09:00"></textarea></label><div class="actions full"><button id="findNextSlot" type="button">Dùng slot kế tiếp</button><button class="primary" type="submit">Lưu slots</button></div></form>
+      </div>
+      </div>
     </section>
 
     <section id="tab-jobs" class="tab">

@@ -61,7 +61,7 @@ Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa accou
 
 ### 3. Dry-run
 
-1. Vào **Soạn & Lập lịch**.
+1. Vào **Calendar**.
 2. Chọn content, account và Page chính xác.
 3. Giữ bật **Dry-run an toàn**.
 4. Worker mở composer, điền caption/media và dừng trước nút **Đăng**.

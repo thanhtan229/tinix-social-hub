@@ -51,6 +51,21 @@ class RestoreRequest(BaseModel):
     name: str
 
 
+class PostingSlotItem(BaseModel):
+    weekday: int = Field(ge=0, le=6)
+    minute_of_day: int = Field(ge=0, le=1439)
+
+
+class PostingSlotsUpdate(BaseModel):
+    timezone: str = Field(default="Asia/Bangkok", min_length=1, max_length=100)
+    slots: list[PostingSlotItem] = Field(default_factory=list, max_length=100)
+
+
+class ReleaseReschedule(BaseModel):
+    scheduled_at: datetime
+    timezone: str = Field(default="Asia/Bangkok", min_length=1, max_length=100)
+
+
 def services(request: Request) -> Any:
     return request.app.state.services
 
@@ -173,6 +188,39 @@ async def enable_target(target_id: str, body: EnabledUpdate, request: Request) -
     return target
 
 
+@router.get("/targets/{target_id}/posting-slots")
+async def list_posting_slots(target_id: str, request: Request) -> list[dict[str, Any]]:
+    if not await asyncio.to_thread(services(request).targets.get, target_id):
+        raise HTTPException(404, "Không tìm thấy kênh.")
+    return await asyncio.to_thread(services(request).posting_slots.list, target_id)
+
+
+@router.put("/targets/{target_id}/posting-slots")
+async def replace_posting_slots(
+    target_id: str, body: PostingSlotsUpdate, request: Request
+) -> list[dict[str, Any]]:
+    try:
+        return await asyncio.to_thread(
+            services(request).posting_slots.replace,
+            target_id, body.timezone, [item.model_dump() for item in body.slots],
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy kênh.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/targets/{target_id}/next-slot")
+async def next_posting_slot(
+    target_id: str, request: Request, after: datetime | None = None
+) -> dict[str, str]:
+    try:
+        result = await asyncio.to_thread(services(request).posting_slots.find_next, target_id, after)
+        return {"scheduled_at": result.isoformat()}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.get("/target-groups")
 async def list_target_groups(request: Request) -> list[dict[str, Any]]:
     return await asyncio.to_thread(services(request).targets.list_groups)
@@ -226,6 +274,29 @@ async def list_publication_releases(
         services(request).publications.list_releases,
         start=start, end=end, platform=platform, status=status, limit=limit,
     )
+
+
+@router.patch("/publication-releases/{release_id}/schedule")
+async def reschedule_publication_release(
+    release_id: str, body: ReleaseReschedule, request: Request
+) -> dict[str, Any]:
+    try:
+        services(request).posting_slots.validate_timezone(body.timezone)
+        return await asyncio.to_thread(
+            services(request).publications.reschedule_release,
+            release_id, body.scheduled_at.isoformat(), body.timezone,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy release.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/publication-releases/{release_id}/events")
+async def publication_release_events(release_id: str, request: Request) -> list[dict[str, Any]]:
+    if not await asyncio.to_thread(services(request).publications.get_release, release_id):
+        raise HTTPException(404, "Không tìm thấy release.")
+    return await asyncio.to_thread(services(request).publications.release_events, release_id)
 
 
 @router.post("/jobs", status_code=201)

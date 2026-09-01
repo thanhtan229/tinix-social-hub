@@ -53,6 +53,29 @@ input,select,textarea { width:100%; padding:10px; border:1px solid #cfd3cd; bord
 dialog { border:1px solid var(--line); border-radius:16px; padding:24px; width:min(570px,calc(100vw - 30px)); background:var(--card); box-shadow:0 25px 90px #17211b44; } dialog::backdrop { background:#17211b77; } dialog form { display:grid; gap:13px; } .dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 #toast { position:fixed; right:22px; bottom:22px; max-width:400px; padding:12px 16px; border-radius:10px; background:var(--ink); color:white; opacity:0; transform:translateY(8px); transition:.2s; pointer-events:none; z-index:20; } #toast.show { opacity:1; transform:none; }
 .muted { color:var(--muted); } .account-actions { display:flex; flex-wrap:wrap; gap:5px; justify-content:flex-end; }
+.calendar-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px; margin-bottom:10px; }
+.calendar-toolbar .view-switch { display:flex; gap:4px; margin-right:auto; }
+.calendar-toolbar .view-switch .active { background:var(--ink); color:white; }
+.calendar-toolbar input,.calendar-toolbar select { width:auto; min-width:135px; }
+.calendar-range { margin:10px 2px; color:var(--muted); font-weight:700; }
+.calendar-grid { display:grid; padding:0; overflow:hidden; margin-bottom:14px; }
+.calendar-grid.week-view { grid-template-columns:repeat(7,minmax(125px,1fr)); overflow-x:auto; }
+.calendar-grid.month-view { grid-template-columns:repeat(7,minmax(105px,1fr)); overflow-x:auto; }
+.calendar-day { min-height:165px; padding:8px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--card); }
+.calendar-day.outside { background:#f0eee8; opacity:.65; }
+.calendar-day header { display:flex; justify-content:space-between; color:var(--muted); margin-bottom:8px; }
+.calendar-day header b { color:var(--ink); }
+.release-card { display:grid; width:100%; gap:2px; text-align:left; padding:7px; margin-bottom:5px; background:#f5f8e5; border-color:#d7ddb4; }
+.release-card time { color:var(--green); font-size:11px; font-weight:800; }
+.release-card strong { overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.release-card .badge { justify-self:start; margin-top:3px; }
+.calendar-grid.list-view { padding:10px 16px; }
+.calendar-list-row { display:grid; grid-template-columns:180px minmax(0,1fr); gap:12px; align-items:center; border-bottom:1px solid var(--line); padding:8px 0; }
+.calendar-list-row .release-card { margin:0; }
+.compose-panels { align-items:start; }
+.form-grid.compact { grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px 0; }
+.format-counter { align-self:end; padding:10px; color:var(--muted); font-size:12px; }
+.composer-preview { white-space:pre-wrap; overflow-wrap:anywhere; }
 @media(max-width:1100px) { .platform-grid { grid-template-columns:repeat(2,1fr); } }
 @media(max-width:1000px) { .stats { grid-template-columns:repeat(3,1fr); } .card-grid { grid-template-columns:repeat(2,1fr); } }
-@media(max-width:760px) { .sidebar { position:static; width:auto; padding:12px; } .logo { margin-bottom:12px; } nav { display:flex; overflow:auto; } nav button { white-space:nowrap; } .connection { display:none; } main { margin:0; padding:25px 15px 60px; } .grid.two,.form-grid { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } .card-grid,.platform-grid { grid-template-columns:1fr; } .page-head { align-items:start; flex-direction:column; } h1 { font-size:30px; } }
+@media(max-width:760px) { .sidebar { position:static; width:auto; padding:12px; } .logo { margin-bottom:12px; } nav { display:flex; overflow:auto; } nav button { white-space:nowrap; } .connection { display:none; } main { margin:0; padding:25px 15px 60px; } .grid.two,.form-grid,.form-grid.compact { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } .card-grid,.platform-grid { grid-template-columns:1fr; } .page-head { align-items:start; flex-direction:column; } h1 { font-size:30px; } .calendar-grid.week-view,.calendar-grid.month-view { grid-template-columns:repeat(7,150px); } .calendar-list-row { grid-template-columns:1fr; } }

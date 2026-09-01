@@ -32,7 +32,7 @@ Queue, retry, cancellation, approval, idempotency, artifact và browser ownershi
 | TikTok | Có variant | Scaffold | Scaffold | Chưa làm |
 | YouTube | Có variant | Scaffold | Scaffold | Chưa làm |
 
-Publisher placeholder của ba nền tảng mới luôn trả `unsupported`; chúng không giả lập thành công. Tab **Soạn & Lập lịch** vẫn khóa vào Facebook trong giai đoạn duyệt tổng quan.
+Publisher placeholder của ba nền tảng mới luôn trả `unsupported`; chúng không giả lập thành công. Tab **Calendar** dùng universal composer theo schema; runtime chỉ nhận nền tảng đã được đánh dấu vận hành.
 
 ## Thứ tự triển khai đề xuất sau khi duyệt
 

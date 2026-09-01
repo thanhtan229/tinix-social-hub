@@ -70,6 +70,8 @@ class ScheduleBody(BaseModel):
     delay_seconds: int = Field(default=0, ge=0, le=86400)
     random_delay_seconds: int = Field(default=0, ge=0, le=3600)
     missed_policy: str = Field(default="confirm", pattern="^(publish|skip|confirm)$")
+    content_format: str = Field(default="post", min_length=1, max_length=50)
+    platform_settings: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("/brand-profiles")
@@ -219,6 +221,7 @@ async def create_schedule(body: ScheduleBody, request: Request) -> list[dict[str
             services(request).scheduling.schedule,
             body.content_id, body.account_id, body.target_ids, body.scheduled_at,
             body.dry_run, body.delay_seconds, body.random_delay_seconds, body.missed_policy,
+            body.content_format, body.platform_settings,
         )
         services(request).worker.notify()
         return jobs

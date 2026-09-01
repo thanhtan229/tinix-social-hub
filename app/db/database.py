@@ -408,6 +408,36 @@ MIGRATIONS: list[tuple[int, str]] = [
     UPDATE jobs SET publication_release_id='legacy-release-' || id
     WHERE kind='publish' AND account_id IS NOT NULL AND target_id IS NOT NULL;
     """),
+    (6, """
+    ALTER TABLE publication_plans ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Bangkok';
+    ALTER TABLE publication_releases ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Bangkok';
+    ALTER TABLE publication_releases ADD COLUMN rescheduled_at TEXT;
+    CREATE TABLE channel_posting_slots (
+        id TEXT PRIMARY KEY,
+        target_id TEXT NOT NULL,
+        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),
+        minute_of_day INTEGER NOT NULL CHECK(minute_of_day BETWEEN 0 AND 1439),
+        timezone TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE CASCADE,
+        UNIQUE(target_id,weekday,minute_of_day)
+    );
+    CREATE INDEX idx_posting_slots_target ON channel_posting_slots(target_id,enabled,weekday,minute_of_day);
+    CREATE TABLE publication_release_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        release_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT,
+        message TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(release_id) REFERENCES publication_releases(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_release_events_release ON publication_release_events(release_id,created_at);
+    """),
 ]
 
 

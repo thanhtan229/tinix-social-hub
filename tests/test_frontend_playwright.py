@@ -85,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 1)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 3)
             for name in (
-                "Tổng quan", "AI Content Studio", "Kho nội dung", "Soạn & Lập lịch",
+                "Tổng quan", "AI Content Studio", "Kho nội dung", "Calendar",
                 "Hàng đợi & Lịch sử", "Tài khoản & Page", "Cài đặt",
             ):
                 page.get_by_role("button", name=name, exact=True).click()

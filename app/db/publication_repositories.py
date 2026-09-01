@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from app.db.database import Database, row_to_dict, utc_now
@@ -173,6 +174,74 @@ class PublicationRepository:
                 f"SELECT * FROM publication_releases{where} ORDER BY COALESCE(scheduled_at,created_at),created_at LIMIT ?",
                 params,
             )]
+
+    def release_events(self, release_id: str) -> list[dict[str, Any]]:
+        with self.db.connection() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM publication_release_events WHERE release_id=? ORDER BY id", (release_id,)
+            )]
+
+    def reschedule_release(self, release_id: str, scheduled_at: str, timezone_name: str) -> dict[str, Any]:
+        due = datetime.fromisoformat(scheduled_at)
+        if due.tzinfo is None:
+            raise ValueError("Thời gian reschedule cần timezone.")
+        due_utc = due.astimezone(timezone.utc).isoformat()
+        now = utc_now()
+        target_status = "scheduled" if due_utc > now else "queued"
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                release = connection.execute("SELECT * FROM publication_releases WHERE id=?", (release_id,)).fetchone()
+                if not release:
+                    raise KeyError(release_id)
+                job = connection.execute("SELECT * FROM jobs WHERE id=?", (release["job_id"],)).fetchone()
+                allowed = {"scheduled", "queued", "pending_approval", "approved", "draft"}
+                if not job or job["status"] not in allowed or job["commit_reached_at"]:
+                    raise ValueError("Release đã chạy hoặc không còn an toàn để đổi lịch.")
+                connection.execute(
+                    "UPDATE publication_releases SET scheduled_at=?,timezone=?,status=?,rescheduled_at=?,updated_at=? WHERE id=?",
+                    (due_utc, timezone_name, target_status, now, now, release_id),
+                )
+                connection.execute(
+                    "UPDATE jobs SET scheduled_at=?,status=?,next_attempt_at=NULL,updated_at=? WHERE id=?",
+                    (due_utc, target_status, now, job["id"]),
+                )
+                connection.execute(
+                    "INSERT INTO publication_release_events(release_id,event_type,from_status,to_status,metadata_json,created_at) VALUES(?,?,?,?,?,?)",
+                    (
+                        release_id, "rescheduled", release["status"], target_status,
+                        _json({"from": release["scheduled_at"], "to": due_utc, "timezone": timezone_name}), now,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO publish_job_events(job_id,from_status,to_status,event_type,metadata_json,created_at) VALUES(?,?,?,?,?,?)",
+                    (
+                        job["id"], job["status"], target_status, "rescheduled",
+                        _json({"scheduled_at": due_utc, "timezone": timezone_name}), now,
+                    ),
+                )
+                plan_id = release["plan_id"]
+                plan_due = connection.execute(
+                    "SELECT MIN(scheduled_at) FROM publication_releases WHERE plan_id=?", (plan_id,)
+                ).fetchone()[0]
+                statuses = [row[0] for row in connection.execute(
+                    "SELECT status FROM publication_releases WHERE plan_id=?", (plan_id,)
+                )]
+                if all(status == "scheduled" for status in statuses):
+                    plan_status = "scheduled"
+                elif any(status in {"opening_browser", "checking_login", "uploading", "publishing", "verifying"} for status in statuses):
+                    plan_status = "active"
+                else:
+                    plan_status = "queued"
+                connection.execute(
+                    "UPDATE publication_plans SET scheduled_at=?,timezone=?,status=?,updated_at=? WHERE id=?",
+                    (plan_due, timezone_name, plan_status, now, plan_id),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.get_release(release_id)
 
     def sync_from_job(self, job: dict[str, Any]) -> None:
         release_id = job.get("publication_release_id")

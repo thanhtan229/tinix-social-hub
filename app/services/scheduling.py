@@ -10,6 +10,7 @@ from app.db.content_repositories import ContentRepository
 from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.platforms import get_platform
+from app.platforms.validation import PlatformValidationError, validate_publication
 
 
 class SchedulingError(ValueError):
@@ -34,9 +35,16 @@ class SchedulingService:
         self.publications = publications or PublicationRepository(jobs.db)
 
     @staticmethod
-    def _idempotency(content: dict[str, Any], target_id: str, scheduled_at: str | None, dry_run: bool) -> str:
+    def _idempotency(
+        content: dict[str, Any], target_id: str, scheduled_at: str | None, dry_run: bool,
+        content_format: str, platform_settings: dict[str, Any],
+    ) -> str:
         raw = json.dumps(
-            [content["id"], content["current_revision"], target_id, scheduled_at or "now", dry_run],
+            [
+                content["id"], content["current_revision"], target_id, scheduled_at or "now",
+                dry_run, content_format, platform_settings,
+            ],
+            sort_keys=True,
             separators=(",", ":"),
         )
         return hashlib.sha256(raw.encode()).hexdigest()
@@ -51,6 +59,8 @@ class SchedulingService:
         delay_seconds: int,
         random_delay_seconds: int,
         missed_policy: str,
+        content_format: str = "post",
+        platform_settings: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         content = self.contents.get(content_id)
         account = self.accounts.get(account_id)
@@ -86,12 +96,24 @@ class SchedulingService:
         facebook = content["platform_variants"].get("facebook") or {}
         caption = facebook.get("caption") or content["caption"]
         hashtags = facebook.get("hashtags") or content["hashtags"]
+        platform_settings = dict(platform_settings or {})
+        platform_settings.setdefault("cta", facebook.get("cta") or content.get("cta"))
+        validation_media = [
+            {"type": media["media_type"], "size_bytes": media["size_bytes"]}
+            for media in content["media"]
+        ]
+        try:
+            validate_publication(account["platform"], content_format, caption, validation_media, platform_settings)
+        except PlatformValidationError as exc:
+            raise SchedulingError(str(exc)) from exc
         plan_raw = json.dumps(
             [
                 content_id, revision_id, account_id, sorted(target["id"] for target in targets),
                 base.isoformat() if base else "now", dry_run, delay_seconds,
                 random_delay_seconds, missed_policy,
+                content_format, platform_settings,
             ],
+            sort_keys=True,
             separators=(",", ":"),
         )
         plan_key = hashlib.sha256(plan_raw.encode()).hexdigest()
@@ -121,7 +143,7 @@ class SchedulingService:
                 if random_delay_seconds > 0:
                     offset += self.rng.randint(0, random_delay_seconds)
             due = (base + timedelta(seconds=offset)).isoformat() if base else None
-            key = self._idempotency(content, target["id"], due, dry_run)
+            key = self._idempotency(content, target["id"], due, dry_run, content_format, platform_settings)
             existing = self.jobs.get_by_idempotency(key)
             if existing:
                 created.append(existing)
@@ -130,6 +152,8 @@ class SchedulingService:
                 "content_id": content_id,
                 "content_revision_id": revision_id,
                 "publication_plan_id": plan["id"],
+                "content_format": content_format,
+                "platform_settings": platform_settings,
                 "target_id": target["id"],
                 "target_external_id": target["external_id"],
                 "target_name": target["name"],
@@ -146,9 +170,9 @@ class SchedulingService:
             release = self.publications.create_release(
                 plan_id=plan["id"], content_id=content_id, content_revision_id=revision_id,
                 account_id=account_id, target_id=target["id"], platform=account["platform"],
-                content_format="video" if any(item["type"] == "video" for item in media_snapshot) else "post",
+                content_format=content_format,
                 scheduled_at=due,
-                settings={"cta": facebook.get("cta") or content.get("cta")},
+                settings=platform_settings,
                 payload_snapshot=payload, media_snapshot=media_snapshot,
                 selector_version=getattr(definition, "selector_version", None),
                 idempotency_key=release_key,

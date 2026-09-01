@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.routes import router
 from app.api.content import router as content_router
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
+from app.db.calendar_repositories import PostingSlotRepository
 from app.db.database import Database
 from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
@@ -62,6 +63,7 @@ class ApiTests(unittest.TestCase):
             accounts=accounts,
             jobs=jobs,
             publications=publications,
+            posting_slots=PostingSlotRepository(database),
             targets=targets,
             contents=contents,
             brands=brands,
@@ -108,6 +110,21 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(platforms["facebook"]["operational"])
         self.assertFalse(platforms["instagram"]["operational"])
         self.assertEqual(platforms["tiktok"]["capabilities"]["publishing"], "not_started")
+        self.assertEqual(platforms["instagram"]["format_schemas"][1]["id"], "carousel")
+
+    def test_posting_slots_and_next_slot_api(self) -> None:
+        account = self.services.accounts.create("Main", "facebook")
+        target = self.services.targets.sync(account["id"], "facebook", [{
+            "external_id": "page-1", "name": "Page", "url": "https://facebook.com/page-1",
+        }])[0]
+        saved = self.client.put(f"/api/targets/{target['id']}/posting-slots", json={
+            "timezone": "Asia/Bangkok", "slots": [{"weekday": 2, "minute_of_day": 600}],
+        })
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()[0]["minute_of_day"], 600)
+        next_slot = self.client.get(f"/api/targets/{target['id']}/next-slot")
+        self.assertEqual(next_slot.status_code, 200)
+        self.assertIn("+00:00", next_slot.json()["scheduled_at"])
 
     def test_account_update_rejects_platform_outside_catalog(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
