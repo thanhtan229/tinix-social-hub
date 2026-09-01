@@ -89,6 +89,31 @@ class AccountRepository:
                 raise
 
 
+class ChromeProfileRepository:
+    def __init__(self, database: Database) -> None:
+        self.db = database
+
+    def get_for_account(self, account_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            return row_to_dict(connection.execute("SELECT * FROM chrome_profiles WHERE account_id=?", (account_id,)).fetchone())
+
+    def record_started(self, account_id: str, port: int, pid: int, started_at: str) -> None:
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE chrome_profiles SET remote_port=?,last_pid=?,last_started_at=?,last_seen_at=?,updated_at=? WHERE account_id=?",
+                (port, pid, started_at, now, now, account_id),
+            )
+
+    def record_stopped(self, account_id: str) -> None:
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE chrome_profiles SET remote_port=NULL,last_pid=NULL,last_seen_at=?,updated_at=? WHERE account_id=?",
+                (now, now, account_id),
+            )
+
+
 class JobRepository:
     def __init__(self, database: Database, retry_base_seconds: int = 30, retry_cap_seconds: int = 1800) -> None:
         self.db = database
@@ -354,3 +379,116 @@ class JobRepository:
         if not job or JobStatus(job["status"]) in TERMINAL_STATUSES | {JobStatus.UNKNOWN_RESULT}:
             return
         self.cancel(job_id)
+
+
+class TargetRepository:
+    def __init__(self, database: Database) -> None:
+        self.db = database
+
+    def sync(self, account_id: str, platform: str, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for target in targets:
+                    existing = connection.execute(
+                        "SELECT id FROM publishing_targets WHERE account_id=? AND platform=? AND external_id=?",
+                        (account_id, platform, target["external_id"]),
+                    ).fetchone()
+                    if existing:
+                        connection.execute(
+                            "UPDATE publishing_targets SET name=?,url=?,access_status='accessible',last_synced_at=?,last_error=NULL,updated_at=? WHERE id=?",
+                            (target["name"], target.get("url"), now, now, existing["id"]),
+                        )
+                    else:
+                        connection.execute(
+                            "INSERT INTO publishing_targets(id,account_id,platform,target_type,external_id,name,url,access_status,last_synced_at,created_at,updated_at) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (
+                                str(uuid.uuid4()), account_id, platform, target.get("target_type", "page"),
+                                target["external_id"], target["name"], target.get("url"), "accessible", now, now, now,
+                            ),
+                        )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.list(account_id=account_id)
+
+    def list(self, account_id: str | None = None, search: str | None = None, enabled: bool | None = None) -> list[dict[str, Any]]:
+        clauses, parameters = [], []
+        if account_id:
+            clauses.append("account_id=?")
+            parameters.append(account_id)
+        if search:
+            clauses.append("name LIKE ? ESCAPE '\\'")
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            parameters.append(f"%{escaped}%")
+        if enabled is not None:
+            clauses.append("enabled=?")
+            parameters.append(int(enabled))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.db.connection() as connection:
+            return [
+                row_to_dict(row)
+                for row in connection.execute(f"SELECT * FROM publishing_targets{where} ORDER BY name", parameters)
+            ]
+
+    def get(self, target_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            return row_to_dict(connection.execute("SELECT * FROM publishing_targets WHERE id=?", (target_id,)).fetchone())
+
+    def set_enabled(self, target_id: str, enabled: bool) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE publishing_targets SET enabled=?,updated_at=? WHERE id=?", (int(enabled), utc_now(), target_id)
+            )
+        return self.get(target_id)
+
+    def set_sync_error(self, account_id: str, message: str) -> None:
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE publishing_targets SET access_status='sync_error',last_error=?,updated_at=? WHERE account_id=?",
+                (message[:1000], utc_now(), account_id),
+            )
+
+    def create_group(self, name: str, description: str | None = None) -> dict[str, Any]:
+        group_id, now = str(uuid.uuid4()), utc_now()
+        with self.db.connection() as connection:
+            connection.execute(
+                "INSERT INTO target_groups(id,name,description,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (group_id, name.strip(), description, now, now),
+            )
+        return self.get_group(group_id)
+
+    def get_group(self, group_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            row = connection.execute("SELECT * FROM target_groups WHERE id=?", (group_id,)).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["target_ids"] = [
+                item[0] for item in connection.execute("SELECT target_id FROM target_group_members WHERE group_id=?", (group_id,))
+            ]
+            return result
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        with self.db.connection() as connection:
+            ids = [row[0] for row in connection.execute("SELECT id FROM target_groups ORDER BY name")]
+        return [self.get_group(group_id) for group_id in ids]
+
+    def set_group_members(self, group_id: str, target_ids: list[str]) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("DELETE FROM target_group_members WHERE group_id=?", (group_id,))
+                for target_id in dict.fromkeys(target_ids):
+                    connection.execute(
+                        "INSERT INTO target_group_members(group_id,target_id,created_at) VALUES(?,?,?)",
+                        (group_id, target_id, utc_now()),
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.get_group(group_id)

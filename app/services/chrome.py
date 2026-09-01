@@ -16,6 +16,7 @@ from typing import Any
 import psutil
 
 from app.core.config import Settings
+from app.db.repositories import ChromeProfileRepository
 
 
 @dataclass(slots=True)
@@ -31,8 +32,9 @@ class ManagedChrome:
 class ChromeManager:
     """Owns only Chrome processes launched with a Tinix-specific profile path."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, profiles: ChromeProfileRepository | None = None) -> None:
         self.settings = settings
+        self.profiles = profiles
         self._sessions_file = settings.data_dir / "chrome_sessions.json"
         self._sessions: dict[str, ManagedChrome] = {}
         self._lock = threading.RLock()
@@ -169,6 +171,8 @@ class ChromeManager:
             )
             self._sessions[account_id] = session
             self._persist()
+            if self.profiles:
+                self.profiles.record_started(account_id, port, process.pid, session.started_at)
             return self._details(session)
 
     def status(self, account_id: str | None = None) -> dict[str, Any] | list[dict[str, Any]] | None:
@@ -203,10 +207,11 @@ class ChromeManager:
                     pass
             self._sessions.pop(account_id, None)
             self._persist()
+            if self.profiles:
+                self.profiles.record_stopped(account_id)
             return True
 
     def close_all(self) -> int:
         with self._lock:
             account_ids = list(self._sessions)
         return sum(1 for account_id in account_ids if self.close(account_id))
-

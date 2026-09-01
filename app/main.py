@@ -16,10 +16,11 @@ from app.api.routes import router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.database import Database
-from app.db.repositories import AccountRepository, JobRepository
+from app.db.repositories import AccountRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
 from app.services.chrome import ChromeManager
 from app.services.maintenance import MaintenanceService
+from app.services.facebook_accounts import FacebookAccountService
 from app.services.publishers import PublisherRegistry
 from app.services.worker import LocalWorker, Scheduler
 
@@ -33,25 +34,33 @@ class Services:
     database: Database
     accounts: AccountRepository
     jobs: JobRepository
+    targets: TargetRepository
     chrome: ChromeManager
     ai: OpenAICompatibleProvider
     publishers: PublisherRegistry
     worker: LocalWorker
     scheduler: Scheduler
     maintenance: MaintenanceService
+    facebook_accounts: FacebookAccountService
 
 
 def build_services(settings: Settings) -> Services:
     database = Database(settings.database_path, settings.backup_dir)
     accounts = AccountRepository(database)
     jobs = JobRepository(database)
-    chrome = ChromeManager(settings)
+    targets = TargetRepository(database)
+    chrome_profiles = ChromeProfileRepository(database)
+    chrome = ChromeManager(settings, chrome_profiles)
     ai = OpenAICompatibleProvider(settings)
     publishers = PublisherRegistry()
     worker = LocalWorker(settings, jobs, accounts, ai, publishers)
     scheduler = Scheduler(settings, jobs, worker)
     maintenance = MaintenanceService(settings)
-    return Services(settings, database, accounts, jobs, chrome, ai, publishers, worker, scheduler, maintenance)
+    facebook_accounts = FacebookAccountService(accounts, targets, chrome)
+    return Services(
+        settings, database, accounts, jobs, targets, chrome, ai, publishers,
+        worker, scheduler, maintenance, facebook_accounts,
+    )
 
 
 @asynccontextmanager
