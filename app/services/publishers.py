@@ -30,6 +30,7 @@ class PublishContext:
     account: dict[str, Any]
     payload: dict[str, Any]
     is_cancelled: Callable[[], Awaitable[bool]]
+    transition: Callable[[str, str, bool], Awaitable[None]]
 
 
 class Publisher(ABC):
@@ -74,7 +75,7 @@ class PublisherRegistry:
         self._publishers[platform.lower()] = publisher
 
     def get(self, platform: str, *, dry_run: bool) -> Publisher:
-        if dry_run:
-            return self._preview
-        return self._publishers.get(platform.lower(), UnsupportedPublisher(platform))
-
+        registered = self._publishers.get(platform.lower())
+        if registered:
+            return registered
+        return self._preview if dry_run else UnsupportedPublisher(platform)

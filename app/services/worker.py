@@ -86,14 +86,21 @@ class LocalWorker:
                     )
                     return
                 await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.CHECKING_LOGIN, event_type="publisher_started")
-                await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.PUBLISHING, event_type="payload_ready")
                 publisher = self.publishers.get(account["platform"], dry_run=bool(job["dry_run"]))
+
+                async def publisher_transition(target: str, event_type: str, commit_reached: bool = False) -> None:
+                    await asyncio.to_thread(
+                        self.jobs.transition, job["id"], target,
+                        event_type=event_type, commit_reached=commit_reached,
+                    )
+
                 publish_result = await publisher.publish(
                     PublishContext(
                         job=job,
                         account=account,
                         payload=job["payload"],
                         is_cancelled=lambda: asyncio.to_thread(self.jobs.is_cancel_requested, job["id"]),
+                        transition=publisher_transition,
                     )
                 )
                 result = {
@@ -103,6 +110,9 @@ class LocalWorker:
                     "metadata": publish_result.metadata,
                 }
                 if publish_result.outcome == PublishOutcome.DRY_RUN_READY:
+                    current = await asyncio.to_thread(self.jobs.get, job["id"])
+                    if current["status"] == JobStatus.CHECKING_LOGIN.value:
+                        await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.PUBLISHING, event_type="dry_run_payload_ready")
                     await asyncio.to_thread(self.jobs.dry_run_ready, job["id"], result)
                     return
                 if publish_result.outcome == PublishOutcome.UNSUPPORTED:
@@ -120,7 +130,10 @@ class LocalWorker:
                 if publish_result.outcome == PublishOutcome.UNKNOWN_RESULT:
                     await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.UNKNOWN_RESULT, event_type="unknown_result")
                     return
-                await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.VERIFYING, event_type="publish_submitted", commit_reached=True)
+                current = await asyncio.to_thread(self.jobs.get, job["id"])
+                if current["status"] == JobStatus.CHECKING_LOGIN.value:
+                    await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.PUBLISHING, event_type="payload_ready")
+                    await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.VERIFYING, event_type="publish_submitted", commit_reached=True)
             else:
                 raise ValueError(f"Loại job không được hỗ trợ: {job['kind']}")
             if await asyncio.to_thread(self.jobs.is_cancel_requested, job["id"]):

@@ -114,6 +114,29 @@ class ChromeProfileRepository:
             )
 
 
+class ArtifactRepository:
+    def __init__(self, database: Database) -> None:
+        self.db = database
+
+    def record(
+        self,
+        job_id: str,
+        artifact_type: str,
+        relative_path: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        artifact_id = str(uuid.uuid4())
+        with self.db.connection() as connection:
+            attempt = connection.execute(
+                "SELECT id FROM publish_attempts WHERE job_id=? ORDER BY attempt_number DESC LIMIT 1", (job_id,)
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO browser_error_artifacts(id,job_id,attempt_id,artifact_type,relative_path,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (artifact_id, job_id, attempt["id"] if attempt else None, artifact_type, relative_path, _json(metadata or {}), utc_now()),
+            )
+            return dict(connection.execute("SELECT * FROM browser_error_artifacts WHERE id=?", (artifact_id,)).fetchone())
+
+
 class JobRepository:
     def __init__(self, database: Database, retry_base_seconds: int = 30, retry_cap_seconds: int = 1800) -> None:
         self.db = database
@@ -192,6 +215,12 @@ class JobRepository:
     def events(self, job_id: str) -> list[dict[str, Any]]:
         with self.db.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT * FROM publish_job_events WHERE job_id=? ORDER BY id", (job_id,))]
+
+    def artifacts(self, job_id: str) -> list[dict[str, Any]]:
+        with self.db.connection() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM browser_error_artifacts WHERE job_id=? ORDER BY created_at DESC", (job_id,)
+            )]
 
     def transition(
         self,

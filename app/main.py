@@ -18,7 +18,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.database import Database
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
-from app.db.repositories import AccountRepository, ChromeProfileRepository, JobRepository, TargetRepository
+from app.db.repositories import AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.chrome import ChromeManager
@@ -26,6 +26,7 @@ from app.services.maintenance import MaintenanceService
 from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
 from app.services.facebook_accounts import FacebookAccountService
+from app.services.facebook_publisher import FacebookPublisher
 from app.services.publishers import PublisherRegistry
 from app.services.worker import LocalWorker, Scheduler
 
@@ -64,6 +65,7 @@ def build_services(settings: Settings) -> Services:
     brands = BrandProfileRepository(database)
     ai_generations = AIGenerationRepository(database)
     chrome_profiles = ChromeProfileRepository(database)
+    artifacts = ArtifactRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
     ai = OpenAICompatibleProvider(settings)
     publishers = PublisherRegistry()
@@ -72,6 +74,7 @@ def build_services(settings: Settings) -> Services:
     maintenance = MaintenanceService(settings)
     facebook_accounts = FacebookAccountService(accounts, targets, chrome)
     media = MediaService(settings, contents)
+    publishers.register("facebook", FacebookPublisher(settings, chrome, accounts, artifacts, media))
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
     scheduling = SchedulingService(jobs, accounts, targets, contents)
     return Services(

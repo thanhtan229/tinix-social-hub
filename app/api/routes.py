@@ -206,6 +206,13 @@ async def job_events(job_id: str, request: Request) -> list[dict[str, Any]]:
     return await asyncio.to_thread(services(request).jobs.events, job_id)
 
 
+@router.get("/jobs/{job_id}/artifacts")
+async def job_artifacts(job_id: str, request: Request) -> list[dict[str, Any]]:
+    if not await asyncio.to_thread(services(request).jobs.get, job_id):
+        raise HTTPException(404, "Không tìm thấy job.")
+    return await asyncio.to_thread(services(request).jobs.artifacts, job_id)
+
+
 @router.get("/chrome")
 async def chrome_status(request: Request) -> Any:
     return await asyncio.to_thread(services(request).chrome.status)
