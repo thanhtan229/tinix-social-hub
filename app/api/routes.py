@@ -11,6 +11,7 @@ import psutil
 
 from app import __version__
 from app.platforms import PLATFORM_CATALOG, get_platform
+from app.runtime import runtime_report
 
 
 router = APIRouter(prefix="/api")
@@ -130,6 +131,15 @@ async def health(request: Request) -> dict[str, Any]:
             "last_result": getattr(maintenance, "last_result", None),
         },
     }
+
+
+@router.get("/runtime")
+async def runtime_readiness(request: Request) -> dict[str, Any]:
+    svc = services(request)
+    return runtime_report(
+        database=svc.database, queue=svc.jobs, storage=svc.storage,
+        secrets=svc.secrets, browser=svc.chrome,
+    )
 
 
 @router.get("/accounts")

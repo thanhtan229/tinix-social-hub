@@ -47,6 +47,7 @@ class Settings:
     host: str
     port: int
     open_browser: bool
+    embedded_worker: bool
     max_concurrent_jobs: int
     max_chrome: int
     job_poll_seconds: int
@@ -100,6 +101,7 @@ def get_settings() -> Settings:
         host=host,
         port=_int("TINIX_PORT", 8765, 1024, 65535),
         open_browser=_bool("TINIX_OPEN_BROWSER", True),
+        embedded_worker=_bool("TINIX_EMBEDDED_WORKER", True),
         max_concurrent_jobs=_int("TINIX_MAX_CONCURRENT_JOBS", 2, 1, 8),
         max_chrome=_int("TINIX_MAX_CHROME", 2, 1, 8),
         job_poll_seconds=_int("TINIX_JOB_POLL_SECONDS", 2, 1, 30),

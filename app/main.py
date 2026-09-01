@@ -39,6 +39,8 @@ from app.services.web_platform_publisher import InstagramChromePublisher, TikTok
 from app.services.platform_accounts import PlatformAccountService
 from app.services.ui_analytics import UIAnalyticsCollector
 from app.services.webhooks import WebhookDispatcher
+from app.core.secrets import SecretProtector
+from app.runtime import BrowserRuntime, DurableQueue, LocalPathStorage, ManagedStorage, SecretStore, StateDatabase
 from app.services.worker import LocalWorker, Scheduler
 
 
@@ -48,9 +50,9 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class Services:
     settings: Settings
-    database: Database
+    database: StateDatabase
     accounts: AccountRepository
-    jobs: JobRepository
+    jobs: DurableQueue
     targets: TargetRepository
     contents: ContentRepository
     brands: BrandProfileRepository
@@ -72,6 +74,8 @@ class Services:
     platform_accounts: PlatformAccountService
     analytics_collector: UIAnalyticsCollector
     webhook_dispatcher: WebhookDispatcher
+    storage: ManagedStorage
+    secrets: SecretStore
     media: MediaService
     ai_studio: AIContentStudioService
     scheduling: SchedulingService
@@ -91,8 +95,10 @@ def build_services(settings: Settings) -> Services:
     notifications = NotificationRepository(database)
     media_assets = MediaAssetRepository(database)
     analytics = AnalyticsRepository(database)
-    api_tokens = APITokenRepository(database, settings.data_dir)
-    webhooks = WebhookRepository(database)
+    secret_store = SecretProtector()
+    storage = LocalPathStorage(settings.media_dir)
+    api_tokens = APITokenRepository(database, settings.data_dir, secret_store)
+    webhooks = WebhookRepository(database, secret_store)
     chrome_profiles = ChromeProfileRepository(database)
     artifacts = ArtifactRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
@@ -102,7 +108,7 @@ def build_services(settings: Settings) -> Services:
     scheduler = Scheduler(settings, jobs, worker)
     maintenance = MaintenanceService(settings)
     facebook_accounts = FacebookAccountService(accounts, targets, chrome)
-    media = MediaService(settings, contents, media_assets)
+    media = MediaService(settings, contents, media_assets, storage)
     publishers.register("facebook", FacebookPublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("instagram", InstagramChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("tiktok", TikTokChromePublisher(settings, chrome, accounts, artifacts, media))
@@ -119,7 +125,8 @@ def build_services(settings: Settings) -> Services:
         api_tokens=api_tokens, webhooks=webhooks,
         chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
         maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
-        analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher, media=media,
+        analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher,
+        storage=storage, secrets=secret_store, media=media,
         ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),
     )
 
@@ -133,8 +140,9 @@ async def lifespan(application: FastAPI):
     changed = await asyncio.to_thread(services.database.initialize)
     await asyncio.to_thread(services.api_tokens.ensure_default)
     logger.info("Database ready%s", " after migration" if changed else "")
-    await services.worker.start()
-    await services.scheduler.start()
+    if settings.embedded_worker:
+        await services.worker.start()
+        await services.scheduler.start()
     await services.maintenance.start()
     await services.webhook_dispatcher.start()
     if settings.open_browser:
@@ -146,8 +154,9 @@ async def lifespan(application: FastAPI):
         logger.info("Graceful shutdown started")
         await services.webhook_dispatcher.stop()
         await services.maintenance.stop()
-        await services.scheduler.stop()
-        await services.worker.stop()
+        if settings.embedded_worker:
+            await services.scheduler.stop()
+            await services.worker.stop()
         await services.ai.close()
         closed = await asyncio.to_thread(services.chrome.close_all)
         logger.info("Shutdown complete; closed %s managed Chrome processes", closed)

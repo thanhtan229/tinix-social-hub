@@ -11,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 from app.core.config import Settings
 from app.db.content_repositories import ContentRepository
 from app.db.media_repositories import MediaAssetRepository
+from app.runtime import LocalPathStorage, ManagedStorage
 
 
 class MediaValidationError(ValueError):
@@ -25,25 +26,20 @@ class MediaService:
 
     def __init__(
         self, settings: Settings, contents: ContentRepository,
-        assets: MediaAssetRepository | None = None,
+        assets: MediaAssetRepository | None = None, storage: ManagedStorage | None = None,
     ) -> None:
-        self.root = settings.media_dir.resolve()
+        self.storage = storage or LocalPathStorage(settings.media_dir)
+        self.root = self.storage.root
         self.contents = contents
         self.assets = assets or MediaAssetRepository(contents.db)
 
     def _safe_absolute(self, relative_path: str) -> Path:
-        if Path(relative_path).is_absolute():
-            raise MediaValidationError("Media path phải là đường dẫn tương đối.")
-        resolved = (self.root / relative_path).resolve()
-        if self.root not in resolved.parents:
-            raise MediaValidationError("Media path nằm ngoài thư mục media.")
-        return resolved
+        try:return self.storage.safe_path(relative_path)
+        except ValueError as exc:raise MediaValidationError(str(exc)) from exc
 
     def resolve_existing(self, relative_path: str) -> Path:
-        path = self._safe_absolute(relative_path)
-        if not path.is_file() or path.is_symlink():
-            raise FileNotFoundError(relative_path)
-        return path
+        try:return self.storage.resolve_existing(relative_path)
+        except ValueError as exc:raise MediaValidationError(str(exc)) from exc
 
     def _kind(self, original_name: str, content_type: str | None) -> tuple[str, int, str]:
         extension = Path(original_name).suffix.lower()

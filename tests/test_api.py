@@ -19,6 +19,8 @@ from app.db.media_repositories import MediaAssetRepository
 from app.db.analytics_repositories import AnalyticsRepository
 from app.db.automation_repositories import APITokenRepository, WebhookRepository
 from app.api.v1 import router as v1_router
+from app.core.secrets import SecretProtector
+from app.runtime import LocalPathStorage
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -38,6 +40,9 @@ class WorkerStub:
 
 
 class ChromeStub:
+    def open(self, account):
+        return {"state": "ready", "port": 0}
+
     def status(self, account_id: str | None = None):
         return None if account_id else []
 
@@ -78,6 +83,8 @@ class ApiTests(unittest.TestCase):
             analytics=analytics,
             api_tokens=api_tokens,
             webhooks=WebhookRepository(database),
+            storage=LocalPathStorage(root / "media"),
+            secrets=SecretProtector(),
             targets=targets,
             contents=contents,
             brands=brands,
@@ -169,6 +176,14 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()), 4)
+
+    def test_runtime_endpoint_reports_contracts_and_vps_blockers(self) -> None:
+        response = self.client.get("/api/runtime")
+        self.assertEqual(response.status_code, 200)
+        report = response.json()
+        self.assertTrue(report["contract_ready"])
+        self.assertFalse(report["vps_deployable"])
+        self.assertGreaterEqual(len(report["vps_blockers"]), 3)
 
     def test_account_update_rejects_platform_outside_catalog(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
