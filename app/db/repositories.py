@@ -405,6 +405,20 @@ class JobRepository:
                         (str(uuid.uuid4()), notice_type, severity, title, message or error or f"Job {job_id}",
                          "job", job_id, f"job:{job_id}:{validated_target.value}:{row['attempts']}", _json(metadata or {}), now),
                     )
+                webhook_payload = _json({
+                    "event": "job.status_changed", "job_id": job_id,
+                    "from_status": row["status"], "to_status": validated_target.value,
+                    "release_id": row["publication_release_id"], "occurred_at": now,
+                })
+                for subscription in connection.execute(
+                    "SELECT id,events_json FROM webhook_subscriptions WHERE enabled=1"
+                ).fetchall():
+                    subscribed = json.loads(subscription["events_json"])
+                    if "*" in subscribed or "job.status_changed" in subscribed:
+                        connection.execute(
+                            "INSERT INTO webhook_outbox(id,subscription_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
+                            (str(uuid.uuid4()), subscription["id"], "job.status_changed", webhook_payload, now),
+                        )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")

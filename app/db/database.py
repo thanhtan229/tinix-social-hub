@@ -520,6 +520,41 @@ MIGRATIONS: list[tuple[int, str]] = [
         FOREIGN KEY(release_id) REFERENCES publication_releases(id) ON DELETE CASCADE
     );
     """),
+    (10, """
+    CREATE TABLE api_tokens (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        token_hash TEXT NOT NULL UNIQUE,
+        scopes_json TEXT NOT NULL,
+        last_used_at TEXT,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+    );
+    CREATE TABLE webhook_subscriptions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        secret_protected TEXT NOT NULL,
+        events_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE webhook_outbox (
+        id TEXT PRIMARY KEY,
+        subscription_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        sent_at TEXT,
+        FOREIGN KEY(subscription_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_webhook_outbox_due ON webhook_outbox(status,next_attempt_at,created_at);
+    """),
 ]
 
 

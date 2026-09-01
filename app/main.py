@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__
 from app.api.routes import router
 from app.api.content import router as content_router
+from app.api.v1 import router as v1_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.database import Database
@@ -23,6 +24,7 @@ from app.db.publication_repositories import PublicationRepository
 from app.db.notification_repositories import NotificationRepository
 from app.db.media_repositories import MediaAssetRepository
 from app.db.analytics_repositories import AnalyticsRepository
+from app.db.automation_repositories import APITokenRepository, WebhookRepository
 from app.db.repositories import AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
 from app.services.ai_studio import AIContentStudioService
@@ -36,6 +38,7 @@ from app.services.publishers import PublisherRegistry
 from app.services.web_platform_publisher import InstagramChromePublisher, TikTokChromePublisher, YouTubeChromePublisher
 from app.services.platform_accounts import PlatformAccountService
 from app.services.ui_analytics import UIAnalyticsCollector
+from app.services.webhooks import WebhookDispatcher
 from app.services.worker import LocalWorker, Scheduler
 
 
@@ -57,6 +60,8 @@ class Services:
     notifications: NotificationRepository
     media_assets: MediaAssetRepository
     analytics: AnalyticsRepository
+    api_tokens: APITokenRepository
+    webhooks: WebhookRepository
     chrome: ChromeManager
     ai: OpenAICompatibleProvider
     publishers: PublisherRegistry
@@ -66,6 +71,7 @@ class Services:
     facebook_accounts: FacebookAccountService
     platform_accounts: PlatformAccountService
     analytics_collector: UIAnalyticsCollector
+    webhook_dispatcher: WebhookDispatcher
     media: MediaService
     ai_studio: AIContentStudioService
     scheduling: SchedulingService
@@ -85,6 +91,8 @@ def build_services(settings: Settings) -> Services:
     notifications = NotificationRepository(database)
     media_assets = MediaAssetRepository(database)
     analytics = AnalyticsRepository(database)
+    api_tokens = APITokenRepository(database, settings.data_dir)
+    webhooks = WebhookRepository(database)
     chrome_profiles = ChromeProfileRepository(database)
     artifacts = ArtifactRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
@@ -101,15 +109,17 @@ def build_services(settings: Settings) -> Services:
     publishers.register("youtube", YouTubeChromePublisher(settings, chrome, accounts, artifacts, media))
     platform_accounts = PlatformAccountService(accounts, targets, chrome, publishers)
     analytics_collector = UIAnalyticsCollector(accounts, publications, analytics, publishers)
+    webhook_dispatcher = WebhookDispatcher(webhooks)
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
     scheduling = SchedulingService(jobs, accounts, targets, contents, publications=publications)
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
         posting_slots=posting_slots, notifications=notifications, media_assets=media_assets, analytics=analytics,
+        api_tokens=api_tokens, webhooks=webhooks,
         chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
         maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
-        analytics_collector=analytics_collector, media=media,
+        analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher, media=media,
         ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),
     )
 
@@ -121,10 +131,12 @@ async def lifespan(application: FastAPI):
     services = build_services(settings)
     application.state.services = services
     changed = await asyncio.to_thread(services.database.initialize)
+    await asyncio.to_thread(services.api_tokens.ensure_default)
     logger.info("Database ready%s", " after migration" if changed else "")
     await services.worker.start()
     await services.scheduler.start()
     await services.maintenance.start()
+    await services.webhook_dispatcher.start()
     if settings.open_browser:
         threading.Timer(1.2, lambda: webbrowser.open(settings.web_url)).start()
     logger.info("Tinix Social Studio %s is ready at %s", __version__, settings.web_url)
@@ -132,6 +144,7 @@ async def lifespan(application: FastAPI):
         yield
     finally:
         logger.info("Graceful shutdown started")
+        await services.webhook_dispatcher.stop()
         await services.maintenance.stop()
         await services.scheduler.stop()
         await services.worker.stop()
@@ -143,6 +156,7 @@ async def lifespan(application: FastAPI):
 app = FastAPI(title="Tinix Social Studio", version=__version__, lifespan=lifespan)
 app.include_router(router)
 app.include_router(content_router)
+app.include_router(v1_router)
 static_dir = get_settings().project_root / "app" / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 

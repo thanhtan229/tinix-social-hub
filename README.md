@@ -109,6 +109,7 @@ Mọi transition được lưu trong `publish_job_events`; mỗi lần chạy đ
 ## Backup và khôi phục
 
 - Database: `data/tinix_social.db`.
+- Local automation: bearer-authenticated `/api/v1`, CLI và durable webhook outbox; xem `docs/LOCAL_AUTOMATION.md`.
 - Backup luân phiên: `data/backups/`.
 - Tinix tạo backup **trước** migration schema.
 - Tạo backup thủ công trong tab **Cài đặt**.

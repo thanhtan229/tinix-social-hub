@@ -17,6 +17,8 @@ from app.db.publication_repositories import PublicationRepository
 from app.db.notification_repositories import NotificationRepository
 from app.db.media_repositories import MediaAssetRepository
 from app.db.analytics_repositories import AnalyticsRepository
+from app.db.automation_repositories import APITokenRepository, WebhookRepository
+from app.api.v1 import router as v1_router
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -61,6 +63,8 @@ class ApiTests(unittest.TestCase):
         publications = PublicationRepository(database)
         media_assets = MediaAssetRepository(database)
         analytics = AnalyticsRepository(database)
+        api_tokens = APITokenRepository(database, root / "data")
+        self.local_token = api_tokens.ensure_default()
         media_settings = SimpleNamespace(media_dir=root / "media")
         mock_ai = MockAIProvider()
         services = SimpleNamespace(
@@ -72,6 +76,8 @@ class ApiTests(unittest.TestCase):
             notifications=NotificationRepository(database),
             media_assets=media_assets,
             analytics=analytics,
+            api_tokens=api_tokens,
+            webhooks=WebhookRepository(database),
             targets=targets,
             contents=contents,
             brands=brands,
@@ -89,6 +95,7 @@ class ApiTests(unittest.TestCase):
         app.state.services = services
         app.include_router(router)
         app.include_router(content_router)
+        app.include_router(v1_router)
         self.services = services
         self.client = TestClient(app)
 
@@ -154,6 +161,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["supported"])
         self.assertEqual(response.json()["metrics"], {})
+
+    def test_v1_requires_token_and_enforces_read(self) -> None:
+        self.assertEqual(self.client.get("/api/v1/platforms").status_code, 401)
+        response = self.client.get(
+            "/api/v1/platforms", headers={"Authorization": f"Bearer {self.local_token}"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()), 4)
 
     def test_account_update_rejects_platform_outside_catalog(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
