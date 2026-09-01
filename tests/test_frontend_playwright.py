@@ -82,8 +82,8 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(page.locator("#nav button").count(), 8)
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
-            self.assertEqual(page.locator("#platformRoadmap .operational").count(), 1)
-            self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 3)
+            self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
+            self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Tài khoản & Page", "Cài đặt",

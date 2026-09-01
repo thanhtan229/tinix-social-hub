@@ -170,6 +170,26 @@ class SchedulingTests(ContentFixture):
         self.assertEqual(jobs[0]["status"], "queued")
         self.assertEqual(jobs[0]["dry_run"], 1)
 
+    def test_instagram_dry_run_schedule_uses_provider_variant(self) -> None:
+        account = self.accounts.create("Instagram", "instagram")
+        target = self.targets.sync(account["id"], "instagram", [{
+            "external_id": "profile", "name": "Profile", "url": "https://www.instagram.com/profile/",
+            "target_type": "profile",
+        }])[0]
+        content = self.contents.create({
+            "title": "IG", "caption": "Base", "hashtags": [],
+            "platform_variants": {"instagram": {"caption": "Instagram caption", "hashtags": ["#ig"]}},
+        })
+        self.contents.add_media(content["id"], {
+            "media_type": "image", "relative_path": "fixture.png", "original_name": "fixture.png",
+            "mime_type": "image/png", "size_bytes": 10, "sha256": "a" * 64,
+        })
+        job = self.scheduling.schedule(
+            content["id"], account["id"], [target["id"]], None, True, 0, 0, "confirm", "image", {}
+        )[0]
+        self.assertEqual(job["payload"]["caption"], "Instagram caption")
+        self.assertEqual(job["payload"]["content_format"], "image")
+
     def test_schedule_creates_frozen_plan_release_and_job_link(self) -> None:
         jobs = self.scheduling.schedule(
             self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"

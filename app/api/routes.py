@@ -174,7 +174,12 @@ async def delete_account(account_id: str, request: Request) -> dict[str, bool]:
 @router.post("/accounts/{account_id}/check-login")
 async def check_account_login(account_id: str, request: Request) -> dict[str, Any]:
     try:
-        return await services(request).facebook_accounts.check_login(account_id)
+        svc = services(request)
+        account = await asyncio.to_thread(svc.accounts.get, account_id)
+        if not account:
+            raise KeyError(account_id)
+        handler = svc.facebook_accounts if account["platform"] == "facebook" else svc.platform_accounts
+        return await handler.check_login(account_id)
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy account.") from exc
     except (ValueError, RuntimeError) as exc:
@@ -184,11 +189,22 @@ async def check_account_login(account_id: str, request: Request) -> dict[str, An
 @router.post("/accounts/{account_id}/sync-pages")
 async def sync_facebook_pages(account_id: str, request: Request) -> list[dict[str, Any]]:
     try:
-        return await services(request).facebook_accounts.sync_pages(account_id)
+        svc = services(request)
+        account = await asyncio.to_thread(svc.accounts.get, account_id)
+        if not account:
+            raise KeyError(account_id)
+        if account["platform"] == "facebook":
+            return await svc.facebook_accounts.sync_pages(account_id)
+        return await svc.platform_accounts.sync_targets(account_id)
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy account.") from exc
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/accounts/{account_id}/sync-targets")
+async def sync_platform_targets(account_id: str, request: Request) -> list[dict[str, Any]]:
+    return await sync_facebook_pages(account_id, request)
 
 
 @router.get("/targets")

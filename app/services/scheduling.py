@@ -68,13 +68,14 @@ class SchedulingService:
             raise SchedulingError("Không tìm thấy content.")
         if not account or not account["enabled"]:
             raise SchedulingError("Account không tồn tại hoặc đang bị tắt.")
-        if account["platform"] != "facebook":
-            raise SchedulingError("Facebook MVP chỉ lập lịch cho account Facebook.")
+        definition = get_platform(account["platform"])
+        if not definition or not definition.operational:
+            raise SchedulingError("Nền tảng chưa được bật cho Chrome publishing.")
         approval = self.contents.current_approval(content_id)
         if not dry_run and not approval:
             raise SchedulingError("Bản revision hiện tại chưa được duyệt.")
         if not target_ids:
-            raise SchedulingError("Cần chọn ít nhất một Facebook Page.")
+            raise SchedulingError("Cần chọn ít nhất một Page/profile/channel.")
         if missed_policy not in {"publish", "skip", "confirm"}:
             raise SchedulingError("Chính sách job bị lỡ không hợp lệ.")
         base = scheduled_at.astimezone(timezone.utc) if scheduled_at else None
@@ -93,11 +94,11 @@ class SchedulingService:
 
         created: list[dict[str, Any]] = []
         offset = 0
-        facebook = content["platform_variants"].get("facebook") or {}
-        caption = facebook.get("caption") or content["caption"]
-        hashtags = facebook.get("hashtags") or content["hashtags"]
+        variant = content["platform_variants"].get(account["platform"]) or {}
+        caption = variant.get("caption") or content["caption"]
+        hashtags = variant.get("hashtags") or content["hashtags"]
         platform_settings = dict(platform_settings or {})
-        platform_settings.setdefault("cta", facebook.get("cta") or content.get("cta"))
+        platform_settings.setdefault("cta", variant.get("cta") or content.get("cta"))
         validation_media = [
             {"type": media["media_type"], "size_bytes": media["size_bytes"]}
             for media in content["media"]
@@ -136,7 +137,6 @@ class SchedulingService:
             }
             for media in content["media"]
         ]
-        definition = get_platform(account["platform"])
         for index, target in enumerate(targets):
             if index:
                 offset += max(0, delay_seconds)
@@ -154,13 +154,14 @@ class SchedulingService:
                 "publication_plan_id": plan["id"],
                 "content_format": content_format,
                 "platform_settings": platform_settings,
+                "title": variant.get("title") or content["title"],
                 "target_id": target["id"],
                 "target_external_id": target["external_id"],
                 "target_name": target["name"],
                 "target_url": target["url"],
                 "caption": caption,
                 "hashtags": hashtags,
-                "cta": facebook.get("cta") or content.get("cta"),
+                "cta": variant.get("cta") or content.get("cta"),
                 "media": [
                     {"type": media["media_type"], "relative_path": media["relative_path"]}
                     for media in content["media"]

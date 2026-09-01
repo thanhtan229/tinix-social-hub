@@ -113,8 +113,8 @@ class ApiTests(unittest.TestCase):
         platforms = {item["id"]: item for item in response.json()}
         self.assertEqual(set(platforms), {"facebook", "instagram", "tiktok", "youtube"})
         self.assertTrue(platforms["facebook"]["operational"])
-        self.assertFalse(platforms["instagram"]["operational"])
-        self.assertEqual(platforms["tiktok"]["capabilities"]["publishing"], "not_started")
+        self.assertTrue(platforms["instagram"]["operational"])
+        self.assertEqual(platforms["tiktok"]["capabilities"]["publishing"], "review_required")
         self.assertEqual(platforms["instagram"]["format_schemas"][1]["id"], "carousel")
 
     def test_posting_slots_and_next_slot_api(self) -> None:

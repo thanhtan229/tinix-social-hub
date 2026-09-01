@@ -31,7 +31,9 @@ from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
 from app.services.facebook_accounts import FacebookAccountService
 from app.services.facebook_publisher import FacebookPublisher
-from app.services.publishers import InstagramPublisherStub, PublisherRegistry, TikTokPublisherStub, YouTubePublisherStub
+from app.services.publishers import PublisherRegistry
+from app.services.web_platform_publisher import InstagramChromePublisher, TikTokChromePublisher, YouTubeChromePublisher
+from app.services.platform_accounts import PlatformAccountService
 from app.services.worker import LocalWorker, Scheduler
 
 
@@ -59,6 +61,7 @@ class Services:
     scheduler: Scheduler
     maintenance: MaintenanceService
     facebook_accounts: FacebookAccountService
+    platform_accounts: PlatformAccountService
     media: MediaService
     ai_studio: AIContentStudioService
     scheduling: SchedulingService
@@ -82,15 +85,16 @@ def build_services(settings: Settings) -> Services:
     chrome = ChromeManager(settings, chrome_profiles)
     ai = OpenAICompatibleProvider(settings)
     publishers = PublisherRegistry()
-    publishers.register("instagram", InstagramPublisherStub())
-    publishers.register("tiktok", TikTokPublisherStub())
-    publishers.register("youtube", YouTubePublisherStub())
     worker = LocalWorker(settings, jobs, accounts, ai, publishers)
     scheduler = Scheduler(settings, jobs, worker)
     maintenance = MaintenanceService(settings)
     facebook_accounts = FacebookAccountService(accounts, targets, chrome)
     media = MediaService(settings, contents, media_assets)
     publishers.register("facebook", FacebookPublisher(settings, chrome, accounts, artifacts, media))
+    publishers.register("instagram", InstagramChromePublisher(settings, chrome, accounts, artifacts, media))
+    publishers.register("tiktok", TikTokChromePublisher(settings, chrome, accounts, artifacts, media))
+    publishers.register("youtube", YouTubeChromePublisher(settings, chrome, accounts, artifacts, media))
+    platform_accounts = PlatformAccountService(accounts, targets, chrome, publishers)
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
     scheduling = SchedulingService(jobs, accounts, targets, contents, publications=publications)
     return Services(
@@ -98,7 +102,7 @@ def build_services(settings: Settings) -> Services:
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
         posting_slots=posting_slots, notifications=notifications, media_assets=media_assets,
         chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
-        maintenance=maintenance, facebook_accounts=facebook_accounts, media=media,
+        maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts, media=media,
         ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),
     )
 

@@ -76,11 +76,12 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         ),
     ),
     PlatformDefinition(
-        id="instagram", name="Instagram", phase="Architecture scaffold",
+        id="instagram", name="Instagram", phase="Chrome adapter · image/carousel",
         account_label="Instagram account", target_label="Profile", target_types=("profile",),
         content_formats=("image", "carousel", "reel", "story"),
-        capabilities=PlatformCapabilities("ready", "scaffold", "scaffold", "scaffold", "not_started", "not_started"),
-        next_milestone="Chốt login/session, profile discovery và composer contract.",
+        capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
+        next_milestone="Dry-run thủ công trên profile thật; Reel/Story tiếp tục bị khóa.",
+        selector_version="instagram-web-v1", operational=True,
         format_schemas=(
             FormatSchema("image", "Ảnh", 2200, 1, 1, ("image",)),
             FormatSchema("carousel", "Carousel", 2200, 2, 10, ("image",)),
@@ -89,11 +90,12 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         ),
     ),
     PlatformDefinition(
-        id="tiktok", name="TikTok", phase="Architecture scaffold",
+        id="tiktok", name="TikTok", phase="Chrome adapter · short video",
         account_label="TikTok account", target_label="Channel", target_types=("channel",),
         content_formats=("short_video", "photo_post"),
-        capabilities=PlatformCapabilities("ready", "scaffold", "scaffold", "scaffold", "not_started", "not_started"),
-        next_milestone="Chốt upload contract, metadata video và checkpoint handling.",
+        capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
+        next_milestone="Dry-run TikTok Studio và xác nhận privacy/comment trên UI thật.",
+        selector_version="tiktok-studio-web-v1", operational=True,
         format_schemas=(
             FormatSchema("short_video", "Video ngắn", 2200, 1, 1, ("video",), (
                 SettingSchema("privacy", "Quyền riêng tư", "select", True, "public", ("public", "friends", "private")),
@@ -103,11 +105,12 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         ),
     ),
     PlatformDefinition(
-        id="youtube", name="YouTube", phase="Architecture scaffold",
+        id="youtube", name="YouTube", phase="Chrome adapter · video/Short",
         account_label="Google account", target_label="Channel", target_types=("channel",),
         content_formats=("video", "short", "community_post"),
-        capabilities=PlatformCapabilities("ready", "scaffold", "scaffold", "scaffold", "not_started", "not_started"),
-        next_milestone="Chốt luồng YouTube Studio cho video/Short và cơ chế xác minh trên UI.",
+        capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
+        next_milestone="Dry-run YouTube Studio trên channel thật; community post tiếp tục bị khóa.",
+        selector_version="youtube-studio-web-v1", operational=True,
         format_schemas=(
             FormatSchema("video", "Video", 5000, 1, 1, ("video",), (
                 SettingSchema("title", "Tiêu đề", "text", True),

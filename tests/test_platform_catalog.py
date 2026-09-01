@@ -13,14 +13,14 @@ class PlatformCatalogTests(unittest.TestCase):
         self.assertEqual(get_platform(" Instagram ").id, "instagram")
         self.assertIsNone(get_platform("threads"))
 
-    def test_only_facebook_is_operational_during_architecture_review(self) -> None:
+    def test_every_provider_is_chrome_operational_with_review_gate(self) -> None:
         operational = [platform.id for platform in PLATFORM_CATALOG if platform.operational]
-        self.assertEqual(operational, ["facebook"])
+        self.assertEqual(operational, ["facebook", "instagram", "tiktok", "youtube"])
         for platform in PLATFORM_CATALOG:
             self.assertEqual(platform.publication_transport, "chrome")
             if platform.id != "facebook":
-                self.assertEqual(platform.capabilities.publishing, "not_started")
-                self.assertEqual(platform.capabilities.result_verification, "not_started")
+                self.assertEqual(platform.capabilities.publishing, "review_required")
+                self.assertEqual(platform.capabilities.result_verification, "review_required")
 
     def test_capability_summary_accounts_for_every_boundary(self) -> None:
         for platform in PLATFORM_CATALOG:

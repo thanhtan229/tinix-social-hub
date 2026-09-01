@@ -145,7 +145,7 @@ Không có automated test nào gọi AI thật hoặc đăng mạng xã hội:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, Page parsing, content/revision/approval, media safety, MockAI, API, FacebookPublisher mock và Playwright frontend smoke.
+Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, target parsing, content/revision/approval, media safety/dedupe, MockAI, API, Chrome-only publishers và Playwright frontend smoke.
 
 ## Phạm vi MVP
 

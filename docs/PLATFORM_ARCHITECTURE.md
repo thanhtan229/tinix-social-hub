@@ -32,7 +32,7 @@ Queue, retry, cancellation, approval, idempotency, artifact và browser ownershi
 | TikTok | Có variant | Scaffold | Scaffold | Chưa làm |
 | YouTube | Có variant | Scaffold | Scaffold | Chưa làm |
 
-Publisher placeholder của ba nền tảng mới luôn trả `unsupported`; chúng không giả lập thành công. Tab **Calendar** dùng universal composer theo schema; runtime chỉ nhận nền tảng đã được đánh dấu vận hành.
+Instagram, TikTok và YouTube có Chrome adapters versioned, login detector, target discovery, composer, commit point và UI verifier. Các format đã mở lần lượt là Instagram image/carousel, TikTok short video và YouTube video/Short; Reel, Story, photo post và community post vẫn trả `unsupported`. Mọi adapter mặc định dry-run và tuyệt đối không gọi API đăng bài của nền tảng.
 
 ## Thứ tự triển khai đề xuất sau khi duyệt
 
