@@ -68,3 +68,5 @@ Scaffold chưa cho phép sync Profile/Channel, dry-run composer thực tế, l�
 6. Mức ưu tiên giữa đăng chéo cùng nội dung và tối ưu variant riêng.
 
 Ma trận chi tiết nằm tại [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md).
+
+Kế hoạch nâng cấp sau khi benchmark Postiz nằm tại [POSTIZ_BENCHMARK_PLAN.md](POSTIZ_BENCHMARK_PLAN.md).
