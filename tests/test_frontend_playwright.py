@@ -81,6 +81,9 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             self.assertEqual(response.status, 200)
             self.assertEqual(page.locator("#nav button").count(), 7)
+            self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
+            self.assertEqual(page.locator("#platformRoadmap .operational").count(), 1)
+            self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 3)
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Soạn & Lập lịch",
                 "Hàng đợi & Lịch sử", "Tài khoản & Page", "Cài đặt",
@@ -93,4 +96,3 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

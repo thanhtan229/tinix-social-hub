@@ -26,6 +26,7 @@
     <section id="tab-overview" class="tab active">
       <div class="page-head"><div><p class="eyebrow">LOCAL CONTROL CENTER</p><h1>Tổng quan vận hành</h1></div><button class="primary" data-go="compose">+ Lập lịch</button></div>
       <div id="stats" class="stats"></div>
+      <article class="panel platform-overview"><div class="panel-head"><div><h2>Khung nền tảng</h2><p class="muted">Catalog năng lực để duyệt kiến trúc; “Bộ khung” không đồng nghĩa đã có thể đăng.</p></div></div><div id="platformRoadmap" class="platform-grid"></div></article>
       <div class="grid two">
         <article class="panel"><div class="panel-head"><h2>Job gần đây</h2><button data-go="jobs">Xem tất cả</button></div><div id="overviewJobs"></div></article>
         <article class="panel"><div class="panel-head"><h2>Trạng thái hệ thống</h2></div><div id="systemStatus" class="status-list"></div></article>
@@ -77,8 +78,8 @@
     </section>
 
     <section id="tab-accounts" class="tab">
-      <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Facebook Page</h1></div><button id="newAccount" class="primary">+ Thêm account</button></div>
-      <div class="grid two"><article class="panel"><div class="panel-head"><h2>Accounts</h2><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div id="accountList"></div></article><article class="panel"><div class="panel-head"><h2>Facebook Pages</h2><input id="targetSearch" placeholder="Tìm Page"></div><div id="targetList"></div></article></div>
+      <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Kênh</h1><p>Facebook đang vận hành; Instagram, TikTok và YouTube mới là bộ khung để duyệt.</p></div><button id="newAccount" class="primary">+ Thêm account</button></div>
+      <div class="grid two"><article class="panel"><div class="panel-head"><h2>Accounts</h2><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div id="accountList"></div></article><article class="panel"><div class="panel-head"><h2>Page / Kênh đã đồng bộ</h2><input id="targetSearch" placeholder="Tìm Page hoặc kênh"></div><div id="targetList"></div></article></div>
     </section>
 
     <section id="tab-settings" class="tab">
@@ -87,7 +88,7 @@
     </section>
   </main>
 
-  <dialog id="accountDialog"><form id="accountForm"><h2>Thêm tài khoản</h2><label>Tên<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option></select></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Tạo</button></div></form></dialog>
+  <dialog id="accountDialog"><form id="accountForm"><h2>Thêm tài khoản</h2><label>Tên<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option value="facebook">Facebook · MVP</option><option value="instagram">Instagram · bộ khung</option><option value="tiktok">TikTok · bộ khung</option><option value="youtube">YouTube · bộ khung</option></select></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Tạo</button></div></form></dialog>
   <dialog id="contentDialog"><form id="contentForm"><h2 id="contentDialogTitle">Tạo nội dung</h2><input id="contentId" type="hidden"><label>Tiêu đề<input id="contentTitle" required maxlength="200"></label><label>Caption<textarea id="contentCaption" rows="7"></textarea></label><label>Hashtag, cách nhau bằng dấu cách<input id="contentHashtags"></label><label>CTA<input id="contentCta"></label><label>Ảnh/video<input id="contentMedia" type="file" accept="image/*,video/*" multiple></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Lưu bản nháp</button></div></form></dialog>
   <dialog id="jobDialog"><div><h2>Lịch sử trạng thái</h2><div id="jobEvents"></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <div id="toast"></div>

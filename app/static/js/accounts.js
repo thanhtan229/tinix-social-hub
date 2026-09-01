@@ -5,7 +5,7 @@ export async function refreshAccounts() {
   const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
   store.accounts = accounts; store.targets = targets;
   document.querySelector("#accountList").innerHTML = accounts.length ? accounts.map(account => `<div class="list-row"><div><strong>${esc(account.name)}</strong><small class="muted">${esc(account.platform)} · ${badge(account.login_status)}</small></div><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở Chrome</button>${account.platform === "facebook" ? `<button data-account-action="login" data-id="${account.id}">Kiểm tra login</button><button data-account-action="sync" data-id="${account.id}">Đồng bộ Page</button>` : ""}<button data-account-action="toggle" data-id="${account.id}">${account.enabled ? "Tắt" : "Bật"}</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></div>`).join("") : '<p class="muted">Chưa có account.</p>';
-  document.querySelector("#targetList").innerHTML = targets.length ? targets.map(target => `<div class="list-row"><div><strong>${esc(target.name)}</strong><small class="muted">${esc(target.access_status)} · ${esc((accounts.find(a=>a.id===target.account_id)||{}).name||"")}</small></div><button data-target-id="${target.id}" data-enabled="${target.enabled}">${target.enabled ? "Tắt" : "Bật"}</button></div>`).join("") : '<p class="muted">Chưa đồng bộ Facebook Page.</p>';
+  document.querySelector("#targetList").innerHTML = targets.length ? targets.map(target => `<div class="list-row"><div><strong>${esc(target.name)}</strong><small class="muted">${esc(target.platform)} · ${esc(target.access_status)} · ${esc((accounts.find(a=>a.id===target.account_id)||{}).name||"")}</small></div><button data-target-id="${target.id}" data-enabled="${target.enabled}">${target.enabled ? "Tắt" : "Bật"}</button></div>`).join("") : '<p class="muted">Chưa có Page hoặc kênh được đồng bộ.</p>';
   bindActions();
 }
 
@@ -32,4 +32,3 @@ export function initAccounts() {
   document.querySelector("#closeAllChrome").onclick = async () => { const result = await api("/chrome/close-all", {method:"POST"}); toast(`Đã đóng ${result.closed} Chrome`); };
   document.querySelector("#targetSearch").oninput = () => { clearTimeout(initAccounts.searchTimer); initAccounts.searchTimer = setTimeout(refreshAccounts, 350); };
 }
-

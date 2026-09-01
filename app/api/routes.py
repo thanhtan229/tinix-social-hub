@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 import psutil
 
 from app import __version__
+from app.platforms import PLATFORM_CATALOG, get_platform
 
 
 router = APIRouter(prefix="/api")
@@ -54,6 +55,12 @@ def services(request: Request) -> Any:
     return request.app.state.services
 
 
+@router.get("/platforms")
+async def list_platforms() -> list[dict[str, object]]:
+    """Expose the architecture roadmap without enabling unfinished features."""
+    return [platform.to_dict() for platform in PLATFORM_CATALOG]
+
+
 @router.get("/health")
 async def health(request: Request) -> dict[str, Any]:
     svc = services(request)
@@ -91,13 +98,15 @@ async def list_accounts(request: Request) -> list[dict[str, Any]]:
 
 @router.post("/accounts", status_code=201)
 async def create_account(body: AccountCreate, request: Request) -> dict[str, Any]:
-    if body.platform.lower() not in {"facebook", "instagram", "tiktok", "youtube"}:
+    if not get_platform(body.platform):
         raise HTTPException(422, "Nền tảng không được hỗ trợ.")
     return await asyncio.to_thread(services(request).accounts.create, body.name, body.platform)
 
 
 @router.put("/accounts/{account_id}")
 async def update_account(account_id: str, body: AccountUpdate, request: Request) -> dict[str, Any]:
+    if not get_platform(body.platform):
+        raise HTTPException(422, "Nền tảng không được hỗ trợ.")
     account = await asyncio.to_thread(services(request).accounts.update, account_id, body.name, body.platform)
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")

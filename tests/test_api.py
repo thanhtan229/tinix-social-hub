@@ -97,6 +97,22 @@ class ApiTests(unittest.TestCase):
         deleted = self.client.delete(f"/api/accounts/{account_id}")
         self.assertEqual(deleted.status_code, 200)
 
+    def test_platform_catalog_distinguishes_mvp_from_scaffolds(self) -> None:
+        response = self.client.get("/api/platforms")
+        self.assertEqual(response.status_code, 200)
+        platforms = {item["id"]: item for item in response.json()}
+        self.assertEqual(set(platforms), {"facebook", "instagram", "tiktok", "youtube"})
+        self.assertTrue(platforms["facebook"]["operational"])
+        self.assertFalse(platforms["instagram"]["operational"])
+        self.assertEqual(platforms["tiktok"]["capabilities"]["publishing"], "not_started")
+
+    def test_account_update_rejects_platform_outside_catalog(self) -> None:
+        account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
+        response = self.client.put(
+            f"/api/accounts/{account['id']}", json={"name": "Main", "platform": "unknown"}
+        )
+        self.assertEqual(response.status_code, 422)
+
     def test_publish_job_defaults_to_safe_dry_run(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
         response = self.client.post(

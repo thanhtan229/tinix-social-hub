@@ -151,5 +151,8 @@ Test suite bao phủ migrations, repositories, state machine, retry/backoff, can
 
 Facebook Page text, nhiều ảnh và video dùng cùng composer flow. Facebook Reel chưa được coi là ổn định cho đến khi luồng text/ảnh/video đã qua kiểm thử thủ công. Instagram, TikTok và YouTube hiện là explicit unsupported adapters, không giả thành công.
 
-Khả năng VPS chỉ được chuẩn bị qua module boundary, settings, repositories và durable queue. MVP không triển khai hạ tầng VPS, Linux, multi-user hoặc microservice.
+Khung đa nền tảng và ma trận năng lực được mô tả tại [docs/PLATFORM_ARCHITECTURE.md](docs/PLATFORM_ARCHITECTURE.md). WebUI đọc cùng catalog qua `GET /api/platforms`, vì vậy phần tổng quan phản ánh đúng trạng thái code thay vì ngụ ý mọi nền tảng đã hoạt động.
 
+Để duyệt toàn cảnh module, luồng dữ liệu và các quyết định còn mở, xem [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md).
+
+Khả năng VPS chỉ được chuẩn bị qua module boundary, settings, repositories và durable queue. MVP không triển khai hạ tầng VPS, Linux, multi-user hoặc microservice.
