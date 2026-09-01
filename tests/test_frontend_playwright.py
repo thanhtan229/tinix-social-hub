@@ -72,7 +72,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
         if hasattr(cls, "temp"):
             cls.temp.cleanup()
 
-    def test_all_seven_tabs_load_without_console_errors(self) -> None:
+    def test_all_tabs_load_without_console_errors(self) -> None:
         errors: list[str] = []
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
@@ -80,12 +80,12 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             self.assertEqual(response.status, 200)
-            self.assertEqual(page.locator("#nav button").count(), 7)
+            self.assertEqual(page.locator("#nav button").count(), 8)
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 1)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 3)
             for name in (
-                "Tổng quan", "AI Content Studio", "Kho nội dung", "Calendar",
+                "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Tài khoản & Page", "Cài đặt",
             ):
                 page.get_by_role("button", name=name, exact=True).click()

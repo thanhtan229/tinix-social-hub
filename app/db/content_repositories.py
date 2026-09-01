@@ -327,7 +327,7 @@ class ContentRepository:
                     raise ContentInUseError("Content đang có lịch sử hoặc lịch đăng; không thể xóa record.")
                 paths = []
                 for row in connection.execute(
-                    "SELECT relative_path,thumbnail_relative_path FROM content_media WHERE content_id=?", (content_id,)
+                    "SELECT relative_path,thumbnail_relative_path FROM content_media WHERE content_id=? AND asset_id IS NULL", (content_id,)
                 ):
                     paths.extend(path for path in row if path)
                 connection.execute("DELETE FROM content_items WHERE id=?", (content_id,))

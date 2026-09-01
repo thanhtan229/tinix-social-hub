@@ -457,6 +457,42 @@ MIGRATIONS: list[tuple[int, str]] = [
     );
     CREATE INDEX idx_notifications_unread ON notifications(read_at,created_at DESC);
     """),
+    (8, """
+    CREATE TABLE media_assets (
+        id TEXT PRIMARY KEY,
+        media_type TEXT NOT NULL,
+        relative_path TEXT NOT NULL UNIQUE,
+        thumbnail_relative_path TEXT,
+        original_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        sha256 TEXT NOT NULL UNIQUE,
+        width INTEGER,
+        height INTEGER,
+        duration_seconds REAL,
+        alt_text TEXT,
+        thumbnail_timestamp REAL,
+        source TEXT NOT NULL DEFAULT 'upload',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE media_asset_tags (
+        asset_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(asset_id,tag),
+        FOREIGN KEY(asset_id) REFERENCES media_assets(id) ON DELETE CASCADE
+    );
+    ALTER TABLE content_media ADD COLUMN asset_id TEXT REFERENCES media_assets(id) ON DELETE RESTRICT;
+    ALTER TABLE content_media ADD COLUMN alt_text TEXT;
+    ALTER TABLE content_media ADD COLUMN thumbnail_timestamp REAL;
+    INSERT OR IGNORE INTO media_assets(
+        id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,source,created_at,updated_at
+    ) SELECT id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,'legacy',created_at,created_at FROM content_media;
+    UPDATE content_media SET asset_id=(SELECT id FROM media_assets WHERE media_assets.sha256=content_media.sha256);
+    CREATE INDEX idx_content_media_asset ON content_media(asset_id,content_id);
+    CREATE INDEX idx_media_assets_type_created ON media_assets(media_type,created_at DESC);
+    """),
 ]
 
 

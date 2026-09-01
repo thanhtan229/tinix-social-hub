@@ -14,6 +14,7 @@
       <button data-tab="overview" class="active">Tổng quan</button>
       <button data-tab="ai">AI Content Studio</button>
       <button data-tab="content">Kho nội dung</button>
+      <button data-tab="media">Media Library</button>
       <button data-tab="compose">Calendar</button>
       <button data-tab="jobs">Hàng đợi & Lịch sử</button>
       <button data-tab="accounts">Tài khoản & Page</button>
@@ -31,6 +32,12 @@
         <article class="panel"><div class="panel-head"><h2>Job gần đây</h2><button data-go="jobs">Xem tất cả</button></div><div id="overviewJobs"></div></article>
         <article class="panel"><div class="panel-head"><h2>Trạng thái hệ thống</h2></div><div id="systemStatus" class="status-list"></div></article>
       </div>
+    </section>
+
+    <section id="tab-media" class="tab">
+      <div class="page-head"><div><p class="eyebrow">REUSABLE ASSETS</p><h1>Media Library</h1><p>Upload một lần, dùng lại theo SHA-256; asset đang có reference sẽ không thể xóa.</p></div><label class="upload-button primary">+ Upload media<input id="assetUpload" type="file" accept="image/*,video/*" multiple hidden></label></div>
+      <div class="toolbar"><input id="assetSearch" placeholder="Tìm tên hoặc alt text"><select id="assetType"><option value="">Ảnh & video</option><option value="image">Ảnh</option><option value="video">Video</option></select><input id="assetTag" placeholder="Lọc tag"><label class="check"><input id="assetOrphan" type="checkbox"> Chỉ orphan</label><button id="refreshAssets">Làm mới</button></div>
+      <div id="assetList" class="asset-grid"></div>
     </section>
 
     <section id="tab-ai" class="tab">

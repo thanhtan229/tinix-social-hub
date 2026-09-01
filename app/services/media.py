@@ -4,12 +4,13 @@ import hashlib
 import os
 import uuid
 from pathlib import Path
-from typing import BinaryIO, Any
+from typing import Any, BinaryIO
 
 from PIL import Image, UnidentifiedImageError
 
 from app.core.config import Settings
 from app.db.content_repositories import ContentRepository
+from app.db.media_repositories import MediaAssetRepository
 
 
 class MediaValidationError(ValueError):
@@ -22,9 +23,13 @@ class MediaService:
     MAX_IMAGE_BYTES = 20 * 1024 * 1024
     MAX_VIDEO_BYTES = 1024 * 1024 * 1024
 
-    def __init__(self, settings: Settings, contents: ContentRepository) -> None:
+    def __init__(
+        self, settings: Settings, contents: ContentRepository,
+        assets: MediaAssetRepository | None = None,
+    ) -> None:
         self.root = settings.media_dir.resolve()
         self.contents = contents
+        self.assets = assets or MediaAssetRepository(contents.db)
 
     def _safe_absolute(self, relative_path: str) -> Path:
         if Path(relative_path).is_absolute():
@@ -40,56 +45,50 @@ class MediaService:
             raise FileNotFoundError(relative_path)
         return path
 
-    def save_upload(
-        self,
-        content_id: str,
-        stream: BinaryIO,
-        original_name: str,
-        content_type: str | None,
-        sort_order: int = 0,
-    ) -> dict[str, Any]:
+    def _kind(self, original_name: str, content_type: str | None) -> tuple[str, int, str]:
         extension = Path(original_name).suffix.lower()
         if extension in self.IMAGE_EXTENSIONS and (content_type or "").startswith("image/"):
-            media_type, maximum = "image", self.MAX_IMAGE_BYTES
-        elif extension in self.VIDEO_EXTENSIONS and (content_type or "").startswith("video/"):
-            media_type, maximum = "video", self.MAX_VIDEO_BYTES
-        else:
-            raise MediaValidationError("Chỉ hỗ trợ ảnh JPG/PNG/WebP/GIF hoặc video MP4/MOV/WebM/M4V.")
+            return "image", self.MAX_IMAGE_BYTES, extension
+        if extension in self.VIDEO_EXTENSIONS and (content_type or "").startswith("video/"):
+            return "video", self.MAX_VIDEO_BYTES, extension
+        raise MediaValidationError("Chỉ hỗ trợ ảnh JPG/PNG/WebP/GIF hoặc video MP4/MOV/WebM/M4V.")
 
-        content = self.contents.get(content_id)
-        if not content:
-            raise MediaValidationError("Không tìm thấy content.")
-        existing_types = {item["media_type"] for item in content["media"]}
-        if media_type == "video" and existing_types:
-            raise MediaValidationError("Một content chỉ được chứa một video và không trộn video với ảnh.")
-        if media_type == "image" and "video" in existing_types:
-            raise MediaValidationError("Không thể thêm ảnh vào content đang có video.")
-
-        directory = self._safe_absolute(content_id)
-        directory.mkdir(parents=True, exist_ok=True)
-        filename = f"{uuid.uuid4().hex}{extension}"
-        destination = directory / filename
-        temporary = destination.with_suffix(destination.suffix + ".part")
+    def upload_asset(
+        self, stream: BinaryIO, original_name: str, content_type: str | None,
+        *, alt_text: str | None = None, source: str = "upload",
+    ) -> dict[str, Any]:
+        media_type, maximum, extension = self._kind(original_name, content_type)
+        incoming = self._safe_absolute("_incoming")
+        incoming.mkdir(parents=True, exist_ok=True)
+        temporary = incoming / f"{uuid.uuid4().hex}{extension}.part"
         digest, size = hashlib.sha256(), 0
+        destination: Path | None = None
+        thumbnail_path: Path | None = None
         try:
             with temporary.open("wb") as target:
-                while True:
-                    chunk = stream.read(1024 * 1024)
-                    if not chunk:
-                        break
+                while chunk := stream.read(1024 * 1024):
                     size += len(chunk)
                     if size > maximum:
                         raise MediaValidationError(f"File vượt giới hạn {maximum // (1024 * 1024)} MB.")
-                    digest.update(chunk)
-                    target.write(chunk)
+                    digest.update(chunk); target.write(chunk)
+            sha256 = digest.hexdigest()
+            existing = self.assets.get_by_sha256(sha256)
+            if existing:
+                temporary.unlink(missing_ok=True)
+                return existing
+            library = self._safe_absolute(f"_library/{sha256[:2]}")
+            library.mkdir(parents=True, exist_ok=True)
+            destination = library / f"{sha256}{extension}"
             os.replace(temporary, destination)
-            thumbnail: str | None = None
+            width = height = None
+            thumbnail = None
             if media_type == "image":
                 try:
                     with Image.open(destination) as image:
                         image.verify()
-                    thumbnail_path = directory / f"{destination.stem}.thumb.jpg"
+                    thumbnail_path = library / f"{sha256}.thumb.jpg"
                     with Image.open(destination) as image:
+                        width, height = image.size
                         image.thumbnail((480, 480))
                         if image.mode not in ("RGB", "L"):
                             image = image.convert("RGB")
@@ -102,23 +101,36 @@ class MediaService:
                     signature = video.read(16)
                 if not (b"ftyp" in signature or signature.startswith(b"\x1aE\xdf\xa3")):
                     raise MediaValidationError("File video không có định dạng MP4/MOV/WebM hợp lệ.")
-            record = {
+            return self.assets.create({
                 "media_type": media_type,
                 "relative_path": destination.relative_to(self.root).as_posix(),
                 "thumbnail_relative_path": thumbnail,
                 "original_name": Path(original_name).name[:255],
                 "mime_type": content_type or "application/octet-stream",
-                "size_bytes": size,
-                "sha256": digest.hexdigest(),
-                "sort_order": sort_order,
-            }
-            return self.contents.add_media(content_id, record)
+                "size_bytes": size, "sha256": sha256, "width": width, "height": height,
+                "alt_text": alt_text, "source": source,
+            })
         except Exception:
             temporary.unlink(missing_ok=True)
-            destination.unlink(missing_ok=True)
-            for thumb in directory.glob(f"{destination.stem}.thumb.*"):
-                thumb.unlink(missing_ok=True)
+            if destination: destination.unlink(missing_ok=True)
+            if thumbnail_path: thumbnail_path.unlink(missing_ok=True)
             raise
+
+    def attach_asset(self, content_id: str, asset_id: str, sort_order: int = 0, alt_text: str | None = None) -> dict[str, Any]:
+        try:
+            self.assets.attach(asset_id, content_id, sort_order, alt_text)
+        except (KeyError, ValueError) as exc:
+            raise MediaValidationError(str(exc)) from exc
+        return self.contents.get(content_id)
+
+    def save_upload(
+        self, content_id: str, stream: BinaryIO, original_name: str,
+        content_type: str | None, sort_order: int = 0,
+    ) -> dict[str, Any]:
+        if not self.contents.get(content_id):
+            raise MediaValidationError("Không tìm thấy content.")
+        asset = self.upload_asset(stream, original_name, content_type)
+        return self.attach_asset(content_id, asset["id"], sort_order)
 
     def delete_managed(self, relative_paths: list[str]) -> int:
         deleted = 0
@@ -126,8 +138,7 @@ class MediaService:
             try:
                 path = self._safe_absolute(relative)
                 if path.is_file() and not path.is_symlink():
-                    path.unlink()
-                    deleted += 1
+                    path.unlink(); deleted += 1
             except (OSError, MediaValidationError):
                 continue
         return deleted

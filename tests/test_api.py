@@ -15,6 +15,7 @@ from app.db.calendar_repositories import PostingSlotRepository
 from app.db.database import Database
 from app.db.publication_repositories import PublicationRepository
 from app.db.notification_repositories import NotificationRepository
+from app.db.media_repositories import MediaAssetRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -57,6 +58,7 @@ class ApiTests(unittest.TestCase):
         brands = BrandProfileRepository(database)
         generations = AIGenerationRepository(database)
         publications = PublicationRepository(database)
+        media_assets = MediaAssetRepository(database)
         media_settings = SimpleNamespace(media_dir=root / "media")
         mock_ai = MockAIProvider()
         services = SimpleNamespace(
@@ -66,10 +68,11 @@ class ApiTests(unittest.TestCase):
             publications=publications,
             posting_slots=PostingSlotRepository(database),
             notifications=NotificationRepository(database),
+            media_assets=media_assets,
             targets=targets,
             contents=contents,
             brands=brands,
-            media=MediaService(media_settings, contents),
+            media=MediaService(media_settings, contents, media_assets),
             ai_studio=AIContentStudioService(mock_ai, generations, brands, contents),
             scheduling=SchedulingService(jobs, accounts, targets, contents, publications=publications),
             chrome=ChromeStub(),

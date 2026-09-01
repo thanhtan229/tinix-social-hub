@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 
 from app.services.ai import AIError, PlatformVariant
 from app.db.content_repositories import ContentInUseError
+from app.db.media_repositories import MediaAssetInUseError
+from app.platforms import PLATFORM_CATALOG
 from app.services.media import MediaValidationError
 from app.services.scheduling import SchedulingError
 
@@ -72,6 +74,18 @@ class ScheduleBody(BaseModel):
     missed_policy: str = Field(default="confirm", pattern="^(publish|skip|confirm)$")
     content_format: str = Field(default="post", min_length=1, max_length=50)
     platform_settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class MediaAssetUpdate(BaseModel):
+    alt_text: str | None = Field(default=None, max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=100)
+    thumbnail_timestamp: float | None = Field(default=None, ge=0)
+
+
+class MediaAttachBody(BaseModel):
+    content_id: str
+    sort_order: int = Field(default=0, ge=0, le=1000)
+    alt_text: str | None = Field(default=None, max_length=2000)
 
 
 @router.get("/brand-profiles")
@@ -192,6 +206,85 @@ async def upload_content_media(
         )
     except MediaValidationError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/media-assets")
+async def list_media_assets(
+    request: Request, search: str | None = Query(default=None, max_length=100),
+    media_type: str | None = Query(default=None, pattern="^(image|video)$"),
+    tag: str | None = Query(default=None, max_length=80), orphan_only: bool = False,
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(
+        services(request).media_assets.list, search, media_type, tag, orphan_only, limit
+    )
+
+
+@router.post("/media-assets", status_code=201)
+async def upload_media_asset(
+    request: Request, file: UploadFile = File(...), alt_text: str | None = Form(default=None),
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            services(request).media.upload_asset, file.file, file.filename or "upload", file.content_type,
+            alt_text=alt_text,
+        )
+    except MediaValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.patch("/media-assets/{asset_id}")
+async def update_media_asset(asset_id: str, body: MediaAssetUpdate, request: Request) -> dict[str, Any]:
+    asset = await asyncio.to_thread(
+        services(request).media_assets.update, asset_id, body.alt_text, body.tags, body.thumbnail_timestamp
+    )
+    if not asset:
+        raise HTTPException(404, "Không tìm thấy media asset.")
+    return asset
+
+
+@router.post("/media-assets/{asset_id}/attach")
+async def attach_media_asset(asset_id: str, body: MediaAttachBody, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            services(request).media.attach_asset, body.content_id, asset_id, body.sort_order, body.alt_text
+        )
+    except MediaValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.delete("/media-assets/{asset_id}/attach/{content_id}")
+async def detach_media_asset(asset_id: str, content_id: str, request: Request) -> dict[str, bool]:
+    detached = await asyncio.to_thread(services(request).media_assets.detach, asset_id, content_id)
+    if not detached:
+        raise HTTPException(404, "Không tìm thấy reference.")
+    return {"detached": True}
+
+
+@router.get("/media-assets/{asset_id}/compatibility")
+async def media_asset_compatibility(asset_id: str, request: Request) -> dict[str, Any]:
+    asset = await asyncio.to_thread(services(request).media_assets.get, asset_id)
+    if not asset:
+        raise HTTPException(404, "Không tìm thấy media asset.")
+    platforms = {}
+    for platform in PLATFORM_CATALOG:
+        platforms[platform.id] = [
+            schema.id for schema in platform.format_schemas
+            if asset["media_type"] in schema.allowed_media_types and schema.min_media <= 1 <= schema.max_media
+        ]
+    return {"asset_id": asset_id, "platforms": platforms}
+
+
+@router.delete("/media-assets/{asset_id}")
+async def delete_media_asset(asset_id: str, request: Request, delete_files: bool = True) -> dict[str, Any]:
+    try:
+        paths = await asyncio.to_thread(services(request).media_assets.delete, asset_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy media asset.") from exc
+    except MediaAssetInUseError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    deleted = await asyncio.to_thread(services(request).media.delete_managed, paths) if delete_files else 0
+    return {"deleted": True, "files_deleted": deleted}
 
 
 @router.get("/media/{relative_path:path}", include_in_schema=False)

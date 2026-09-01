@@ -18,6 +18,7 @@ from app.db.repositories import AccountRepository, JobRepository, TargetReposito
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.media import MediaService, MediaValidationError
+from app.db.media_repositories import MediaAssetInUseError
 from app.services.scheduling import SchedulingError, SchedulingService
 
 
@@ -95,6 +96,23 @@ class MediaServiceTests(ContentFixture):
         with self.assertRaises(MediaValidationError):
             self.media.save_upload(content["id"], io.BytesIO(b"not an image"), "photo.png", "image/png")
         self.assertEqual(list((self.root / "media" / content["id"]).glob("*")), [])
+
+    def test_library_deduplicates_and_preserves_references(self) -> None:
+        first, second = self.create_content(), self.create_content()
+        first_result = self.media.save_upload(first["id"], self.image_stream(), "first.png", "image/png")
+        second_result = self.media.save_upload(second["id"], self.image_stream(), "second.png", "image/png")
+        assets = self.media.assets.list()
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["reference_count"], 2)
+        self.assertEqual(first_result["media"][0]["relative_path"], second_result["media"][0]["relative_path"])
+        with self.assertRaises(MediaAssetInUseError):
+            self.media.assets.delete(assets[0]["id"])
+
+    def test_asset_metadata_tags_and_orphan_filter(self) -> None:
+        asset = self.media.upload_asset(self.image_stream(), "photo.png", "image/png", alt_text="Original")
+        updated = self.media.assets.update(asset["id"], "Banner", [" Campaign ", "campaign", "Green"], None)
+        self.assertEqual(updated["tags"], ["campaign", "green"])
+        self.assertEqual(self.media.assets.list(orphan_only=True)[0]["alt_text"], "Banner")
 
 
 class AIStudioTests(ContentFixture):
