@@ -27,7 +27,7 @@ from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
 from app.services.facebook_accounts import FacebookAccountService
 from app.services.facebook_publisher import FacebookPublisher
-from app.services.publishers import PublisherRegistry
+from app.services.publishers import InstagramPublisherStub, PublisherRegistry, TikTokPublisherStub, YouTubePublisherStub
 from app.services.worker import LocalWorker, Scheduler
 
 
@@ -54,6 +54,7 @@ class Services:
     media: MediaService
     ai_studio: AIContentStudioService
     scheduling: SchedulingService
+    application_lock: asyncio.Lock
 
 
 def build_services(settings: Settings) -> Services:
@@ -69,6 +70,9 @@ def build_services(settings: Settings) -> Services:
     chrome = ChromeManager(settings, chrome_profiles)
     ai = OpenAICompatibleProvider(settings)
     publishers = PublisherRegistry()
+    publishers.register("instagram", InstagramPublisherStub())
+    publishers.register("tiktok", TikTokPublisherStub())
+    publishers.register("youtube", YouTubePublisherStub())
     worker = LocalWorker(settings, jobs, accounts, ai, publishers)
     scheduler = Scheduler(settings, jobs, worker)
     maintenance = MaintenanceService(settings)
@@ -82,7 +86,7 @@ def build_services(settings: Settings) -> Services:
         contents=contents, brands=brands, ai_generations=ai_generations,
         chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
         maintenance=maintenance, facebook_accounts=facebook_accounts, media=media,
-        ai_studio=ai_studio, scheduling=scheduling,
+        ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),
     )
 
 
@@ -117,6 +121,14 @@ app.include_router(router)
 app.include_router(content_router)
 static_dir = get_settings().project_root / "app" / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.middleware("http")
+async def serialize_mutating_requests(request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and hasattr(request.app.state, "services"):
+        async with request.app.state.services.application_lock:
+            return await call_next(request)
+    return await call_next(request)
 
 
 @app.get("/", include_in_schema=False)

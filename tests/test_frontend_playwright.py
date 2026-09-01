@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import urllib.request
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright
+
+
+def find_chrome() -> Path | None:
+    candidates = []
+    for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        if os.getenv(variable):
+            candidates.append(Path(os.environ[variable]) / "Google" / "Chrome" / "Application" / "chrome.exe")
+    return next((path for path in candidates if path.is_file()), None)
+
+
+class FrontendPlaywrightSmokeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.chrome = find_chrome()
+        if not cls.chrome:
+            raise unittest.SkipTest("Google Chrome is not installed")
+        cls.temp = tempfile.TemporaryDirectory()
+        root = Path(cls.temp.name)
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            cls.port = sock.getsockname()[1]
+        env = os.environ.copy()
+        env.update({
+            "TINIX_OPEN_BROWSER": "false",
+            "TINIX_PORT": str(cls.port),
+            "TINIX_DATA_DIR": str(root / "data"),
+            "TINIX_BACKUP_DIR": str(root / "backups"),
+            "TINIX_LOG_DIR": str(root / "logs"),
+            "TINIX_MEDIA_DIR": str(root / "media"),
+            "TINIX_EXPORT_DIR": str(root / "exports"),
+            "TINIX_SCREENSHOT_DIR": str(root / "screenshots"),
+            "TINIX_CHROME_PROFILE_DIR": str(root / "profiles"),
+        })
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        cls.server = subprocess.Popen(
+            [sys.executable, "-m", "app"], cwd=Path(__file__).resolve().parents[1], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags,
+        )
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{cls.port}/api/health", timeout=1) as response:
+                    if json.load(response)["status"] == "ok":
+                        return
+            except Exception:
+                time.sleep(0.2)
+        cls.server.terminate()
+        raise RuntimeError("Test server did not start")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if hasattr(cls, "server"):
+            cls.server.terminate()
+            try:
+                cls.server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                cls.server.kill()
+        if hasattr(cls, "temp"):
+            cls.temp.cleanup()
+
+    def test_all_seven_tabs_load_without_console_errors(self) -> None:
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+            response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            self.assertEqual(response.status, 200)
+            self.assertEqual(page.locator("#nav button").count(), 7)
+            for name in (
+                "Tổng quan", "AI Content Studio", "Kho nội dung", "Soạn & Lập lịch",
+                "Hàng đợi & Lịch sử", "Tài khoản & Page", "Cài đặt",
+            ):
+                page.get_by_role("button", name=name, exact=True).click()
+                page.wait_for_timeout(150)
+            self.assertEqual(errors, [])
+            browser.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
+

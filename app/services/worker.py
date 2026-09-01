@@ -57,7 +57,7 @@ class LocalWorker:
                 task = asyncio.create_task(self._execute(job), name=f"job-{job['id']}")
                 self._active.add(task)
                 claimed += 1
-            self.state = "working" if self._active else "idle"
+            self.state = "working" if self._active else ("idle" if self._accepting else "paused")
             if claimed:
                 await asyncio.sleep(0)
                 continue

@@ -66,6 +66,21 @@ class UnsupportedPublisher(Publisher):
         )
 
 
+class InstagramPublisherStub(UnsupportedPublisher):
+    def __init__(self) -> None:
+        super().__init__("instagram")
+
+
+class TikTokPublisherStub(UnsupportedPublisher):
+    def __init__(self) -> None:
+        super().__init__("tiktok")
+
+
+class YouTubePublisherStub(UnsupportedPublisher):
+    def __init__(self) -> None:
+        super().__init__("youtube")
+
+
 class PublisherRegistry:
     def __init__(self) -> None:
         self._publishers: dict[str, Publisher] = {}

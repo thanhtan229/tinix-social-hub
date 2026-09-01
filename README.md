@@ -1,44 +1,155 @@
 # Tinix Social Studio
 
-MVP **PC-first, VPS-ready** chạy hoàn toàn trên Windows PC: FastAPI WebUI, SQLite (WAL), durable job queue, scheduler, một local worker, AI provider tương thích OpenAI và Chrome profile riêng cho từng account.
+Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch và đăng nội dung lên Facebook Page bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 
-## Chạy lần đầu
+> Bản `0.9.0` là Facebook MVP release candidate. Publisher đã có cơ chế dry-run, commit point và xác minh kết quả, nhưng selector Facebook vẫn cần được kiểm tra thủ công trên account/Page cụ thể trước lần đăng thật đầu tiên.
 
-1. Cài Python 3.11+ và Google Chrome.
-2. Nhấp đúp `Run.bat`.
-3. Lần đầu ứng dụng tự tạo `.venv`, cài dependency, tạo `.env`, migrate database và mở `http://127.0.0.1:8765`.
+## Cài đặt và chạy
 
-Không cần Docker, PostgreSQL, Redis, Celery, HTTPS hay reverse proxy. Dữ liệu nằm trong các thư mục cạnh ứng dụng nên có thể backup bằng cách đóng app rồi sao chép `data`, `media` và `chrome_profiles`.
+Yêu cầu:
 
-## Cấu hình
+- Windows 10/11.
+- Python 3.11 trở lên.
+- Google Chrome.
 
-Sao chép/chỉnh `.env.example` thành `.env`. Mặc định WebUI chỉ bind `127.0.0.1`. API key AI chỉ nằm ở backend; không được đưa xuống frontend hay ghi vào log.
+Nhấp đúp [Run.bat](Run.bat). Script sẽ:
 
-Để dùng DeepSeek, đặt:
+1. Kiểm tra Python version.
+2. Tạo `.venv` nếu chưa có.
+3. So sánh SHA-256 của `requirements.txt` và chỉ cập nhật dependency khi cần.
+4. Kiểm tra Google Chrome.
+5. Tạo `.env` từ `.env.example` nếu chưa có.
+6. Migrate database kèm pre-migration backup.
+7. Khởi động FastAPI, scheduler, worker và maintenance service.
+8. Mở WebUI tại `http://127.0.0.1:8765`.
+
+Nhấn `Ctrl+C` trong cửa sổ Tinix để dừng an toàn. Worker ngừng nhận job mới, chờ job đang chạy kết thúc trong giới hạn và chỉ đóng Chrome do Tinix quản lý.
+
+## Cấu hình AI
+
+Chỉnh `.env` trên máy cá nhân:
 
 ```env
 TINIX_AI_BASE_URL=https://api.deepseek.com
 TINIX_AI_MODEL=deepseek-chat
-TINIX_AI_API_KEY=...
+TINIX_AI_API_KEY=your-key-here
+TINIX_AI_TIMEOUT_SECONDS=60
+TINIX_AI_MAX_RETRIES=2
 ```
 
-## Dữ liệu và khôi phục
+API key chỉ được đọc ở backend, không gửi xuống frontend. Logging có bộ lọc redaction để loại key nếu một lỗi vô tình chứa key trong message.
 
-- SQLite bật WAL, foreign keys và busy timeout; mỗi thao tác mở connection riêng.
-- Job trạng thái `running` còn sót sau restart được trả lại hàng đợi.
-- Backup tự động chỉ tạo khi có migration schema. Backup thủ công có trên WebUI/API và luân phiên giữ 7 bản.
-- Kiểm tra: `GET /api/database/integrity`.
-- Khôi phục: `POST /api/database/restore` với JSON `{"name":"ten-backup.db"}` khi không có job chạy. Hệ thống tạo safety backup trước khi restore.
+## Quy trình Facebook MVP
 
-## Chrome
+### 1. Account và đăng nhập
 
-Mỗi account nhận UUID/profile ổn định tại `chrome_profiles/<profile_key>`. Ứng dụng không dùng hay thay đổi Chrome profile cá nhân. Nút Đóng chỉ tác động các tiến trình Chrome do phiên Tinix hiện tại khởi tạo.
+1. Mở tab **Tài khoản & Page**.
+2. Thêm account Facebook.
+3. Chọn **Mở Chrome**.
+4. Đăng nhập Facebook thủ công trong Chrome đó. Đây là profile riêng của Tinix, không phải profile Chrome cá nhân.
+5. Chọn **Kiểm tra login**.
+6. Chọn **Đồng bộ Page** sau khi trạng thái là “Đã đăng nhập”.
 
-## Trạng thái MVP
+Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa account hoặc xóa account khác.
 
-Hạ tầng PC và preview publisher đã hoạt động. `PreviewPublisher` cố ý không đăng thật lên mạng xã hội; mỗi nền tảng cần một adapter riêng trong `app/services/publishers.py` và có thể dùng Chrome manager/profile hiện có. Đây là ranh giới an toàn để phát triển publisher mà không viết lại queue, scheduler, AI hay WebUI.
+### 2. Nội dung và duyệt
 
-## Khả năng mở rộng sau này
+1. Tạo nội dung trong **Kho nội dung**, hoặc tạo draft từ **AI Content Studio**.
+2. Thêm nhiều ảnh hoặc một video.
+3. Gửi duyệt rồi duyệt revision hiện tại.
+4. Nếu sửa bài sau khi duyệt, approval bị vô hiệu và phải duyệt revision mới.
 
-Khi có nhu cầu đã đo lường: thêm bảo mật WebUI/reverse proxy, đổi repository SQLite sang PostgreSQL, tách worker thành tiến trình khác và thêm cơ chế tự khởi động trên VPS. Không cần thay đổi publisher contract, AI provider, durable job model hoặc application services.
+### 3. Dry-run
+
+1. Vào **Soạn & Lập lịch**.
+2. Chọn content, account và Page chính xác.
+3. Giữ bật **Dry-run an toàn**.
+4. Worker mở composer, điền caption/media và dừng trước nút **Đăng**.
+5. Kiểm tra Chrome thủ công. Job phải kết thúc ở `dry_run_ready`.
+
+Dry-run không bấm nút Đăng.
+
+### 4. Đăng thật
+
+Chỉ bỏ chọn dry-run khi:
+
+- Account đã đăng nhập.
+- Page đích đã được đồng bộ đúng.
+- Revision hiện tại đã được duyệt.
+- Media còn tồn tại và hợp lệ.
+- Dry-run đã tới bước cuối thành công.
+- Người vận hành xác nhận rõ đây là đăng thật.
+
+Publisher ghi commit point trước khi bấm Đăng. Nếu đã bấm nhưng không xác minh được kết quả, job chuyển `unknown_result` và **không tự retry**, tránh đăng trùng.
+
+## Xử lý login/checkpoint
+
+Khi thấy `login_required`, `session_lost` hoặc `checkpoint`:
+
+1. Mở Chrome của đúng account từ WebUI.
+2. Hoàn tất đăng nhập, CAPTCHA, 2FA hoặc checkpoint trực tiếp trong Chrome.
+3. Không nhập mật khẩu/2FA vào Tinix.
+4. Chọn **Kiểm tra login** lại.
+5. Chỉ tạo lại job sau khi trạng thái trở thành “Đã đăng nhập”.
+
+Job checkpoint/login-required không tự retry. Chrome được giữ mở để người dùng xử lý.
+
+## Trạng thái job quan trọng
+
+- `dry_run_ready`: composer đã sẵn sàng, chưa bấm Đăng.
+- `succeeded`: đã có tín hiệu xác minh sau đăng.
+- `temporary_failure`: lỗi có thể retry sau exponential backoff.
+- `permanent_failure`: lỗi không nên retry tự động.
+- `login_required`: cần đăng nhập thủ công.
+- `checkpoint`: cần xử lý checkpoint thủ công.
+- `unknown_result`: có thể đã đăng; phải kiểm tra Facebook trước khi tạo job mới.
+
+Mọi transition được lưu trong `publish_job_events`; mỗi lần chạy được lưu trong `publish_attempts`.
+
+## Backup và khôi phục
+
+- Database: `data/tinix_social.db`.
+- Backup luân phiên: `data/backups/`.
+- Tinix tạo backup **trước** migration schema.
+- Tạo backup thủ công trong tab **Cài đặt**.
+- Restore chỉ chạy trong maintenance mode: request ghi khác bị khóa và worker được pause.
+- Tinix tạo safety backup trước restore và kiểm tra integrity của file nguồn.
+
+Để backup toàn bộ ứng dụng, đóng Tinix rồi sao chép:
+
+- `data/`
+- `media/`
+- `chrome_profiles/`
+- `.env` nếu cần giữ cấu hình máy
+
+Không chia sẻ các thư mục này vì có thể chứa nội dung cá nhân hoặc cookie đăng nhập.
+
+## An toàn dữ liệu và Git
+
+Git ignore toàn bộ:
+
+- `.env` và biến thể `.env.*`, ngoại trừ `.env.example`.
+- `data/`, database và backup.
+- `chrome_profiles/`.
+- `media/`, `logs/`, `screenshots/`, `exports/`.
+- `.venv/`, file tạm và test artifacts.
+
+Khi xóa content, mặc định Tinix chỉ xóa record. Xóa file media là lựa chọn riêng và chỉ áp dụng cho file nằm an toàn dưới media root.
+
+## Kiểm thử
+
+Không có automated test nào gọi AI thật hoặc đăng mạng xã hội:
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall -q app tests
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, Page parsing, content/revision/approval, media safety, MockAI, API, FacebookPublisher mock và Playwright frontend smoke.
+
+## Phạm vi MVP
+
+Facebook Page text, nhiều ảnh và video dùng cùng composer flow. Facebook Reel chưa được coi là ổn định cho đến khi luồng text/ảnh/video đã qua kiểm thử thủ công. Instagram, TikTok và YouTube hiện là explicit unsupported adapters, không giả thành công.
+
+Khả năng VPS chỉ được chuẩn bị qua module boundary, settings, repositories và durable queue. MVP không triển khai hạ tầng VPS, Linux, multi-user hoặc microservice.
 

@@ -5,13 +5,14 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.db.database import MIGRATIONS, Database, utc_now
 from app.db.repositories import AccountRepository, JobRepository
 from app.domain.jobs import InvalidJobTransition, validate_transition
 from app.services.ai import OpenAICompatibleProvider
-from app.services.publishers import PublisherRegistry
+from app.services.publishers import Publisher, PublisherRegistry
 from app.services.worker import LocalWorker
 
 
@@ -88,6 +89,20 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(self.jobs.recover_interrupted(), 1)
         self.assertEqual(self.jobs.get(job["id"])["status"], "unknown_result")
 
+    def test_missed_job_policies_are_applied_after_grace_period(self) -> None:
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        jobs = {
+            policy: self.jobs.create("publish", {}, None, future, missed_policy=policy)
+            for policy in ("confirm", "publish", "skip")
+        }
+        old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        with self.database.connection() as connection:
+            connection.execute("UPDATE jobs SET scheduled_at=?", (old,))
+        self.assertEqual(self.jobs.release_due(), 3)
+        self.assertEqual(self.jobs.get(jobs["confirm"]["id"])["status"], "pending_approval")
+        self.assertEqual(self.jobs.get(jobs["publish"]["id"])["status"], "queued")
+        self.assertEqual(self.jobs.get(jobs["skip"]["id"])["status"], "cancelled")
+
 
 class WorkerPublisherSafetyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -142,7 +157,27 @@ class WorkerPublisherSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["status"], "permanent_failure")
         self.assertEqual(finished["failure_code"], "unsupported")
 
+    async def test_running_publisher_receives_real_task_cancellation(self) -> None:
+        started = asyncio.Event()
+
+        class SlowPublisher(Publisher):
+            async def publish(self, context):
+                started.set()
+                await asyncio.sleep(60)
+
+        self.worker.publishers.register("facebook", SlowPublisher())
+        account = self.accounts.create("Page", "facebook")
+        job = self.jobs.create("publish", {"text": "hello"}, account["id"], None, dry_run=False)
+        self.worker.notify()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        self.assertTrue(self.jobs.cancel(job["id"]))
+        self.worker.cancel(job["id"])
+        for _ in range(100):
+            if self.jobs.get(job["id"])["status"] == "cancelled":
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(self.jobs.get(job["id"])["status"], "cancelled")
+
 
 if __name__ == "__main__":
     unittest.main()
-

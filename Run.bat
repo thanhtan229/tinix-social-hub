@@ -51,7 +51,7 @@ if /I not "%REQ_HASH%"=="%INSTALLED_HASH%" (
   >".venv\.requirements.sha256" echo %REQ_HASH%
 )
 
-"%VENV_PY%" -c "import fastapi,uvicorn,httpx,multipart,psutil,playwright" >nul 2>nul
+"%VENV_PY%" -c "import fastapi,uvicorn,httpx,multipart,psutil,playwright,PIL" >nul 2>nul
 if errorlevel 1 goto :error
 
 if not exist ".env" copy /y ".env.example" ".env" >nul
@@ -65,7 +65,7 @@ if not defined CHROME_FOUND (
   echo Ban van co the dung WebUI; hay cai Chrome hoac dat TINIX_CHROME_PATH trong .env.
 )
 
-echo [Tinix] WebUI se mo tai http://127.0.0.1:8765
+echo [Tinix] WebUI local se tu dong mo sau khi backend san sang.
 echo [Tinix] Nhan Ctrl+C de dung an toan.
 "%VENV_PY%" -m app
 if errorlevel 1 goto :error

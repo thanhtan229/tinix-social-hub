@@ -6,6 +6,21 @@ from logging.handlers import RotatingFileHandler
 from app.core.config import Settings
 
 
+class SecretRedactionFilter(logging.Filter):
+    def __init__(self, secrets: list[str]) -> None:
+        super().__init__()
+        self.secrets = [secret for secret in secrets if secret]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self.secrets:
+            return True
+        message = record.getMessage()
+        for secret in self.secrets:
+            message = message.replace(secret, "[REDACTED]")
+        record.msg, record.args = message, ()
+        return True
+
+
 def configure_logging(settings: Settings) -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -16,7 +31,9 @@ def configure_logging(settings: Settings) -> None:
     file_handler.setFormatter(formatter)
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
+    redaction = SecretRedactionFilter([settings.ai_api_key])
+    file_handler.addFilter(redaction)
+    stream.addFilter(redaction)
     root.handlers.clear()
     root.addHandler(file_handler)
     root.addHandler(stream)
-
