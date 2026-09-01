@@ -13,13 +13,18 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.api.routes import router
+from app.api.content import router as content_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.database import Database
+from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.repositories import AccountRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
+from app.services.ai_studio import AIContentStudioService
 from app.services.chrome import ChromeManager
 from app.services.maintenance import MaintenanceService
+from app.services.media import MediaService
+from app.services.scheduling import SchedulingService
 from app.services.facebook_accounts import FacebookAccountService
 from app.services.publishers import PublisherRegistry
 from app.services.worker import LocalWorker, Scheduler
@@ -35,6 +40,9 @@ class Services:
     accounts: AccountRepository
     jobs: JobRepository
     targets: TargetRepository
+    contents: ContentRepository
+    brands: BrandProfileRepository
+    ai_generations: AIGenerationRepository
     chrome: ChromeManager
     ai: OpenAICompatibleProvider
     publishers: PublisherRegistry
@@ -42,6 +50,9 @@ class Services:
     scheduler: Scheduler
     maintenance: MaintenanceService
     facebook_accounts: FacebookAccountService
+    media: MediaService
+    ai_studio: AIContentStudioService
+    scheduling: SchedulingService
 
 
 def build_services(settings: Settings) -> Services:
@@ -49,6 +60,9 @@ def build_services(settings: Settings) -> Services:
     accounts = AccountRepository(database)
     jobs = JobRepository(database)
     targets = TargetRepository(database)
+    contents = ContentRepository(database)
+    brands = BrandProfileRepository(database)
+    ai_generations = AIGenerationRepository(database)
     chrome_profiles = ChromeProfileRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
     ai = OpenAICompatibleProvider(settings)
@@ -57,9 +71,15 @@ def build_services(settings: Settings) -> Services:
     scheduler = Scheduler(settings, jobs, worker)
     maintenance = MaintenanceService(settings)
     facebook_accounts = FacebookAccountService(accounts, targets, chrome)
+    media = MediaService(settings, contents)
+    ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
+    scheduling = SchedulingService(jobs, accounts, targets, contents)
     return Services(
-        settings, database, accounts, jobs, targets, chrome, ai, publishers,
-        worker, scheduler, maintenance, facebook_accounts,
+        settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
+        contents=contents, brands=brands, ai_generations=ai_generations,
+        chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
+        maintenance=maintenance, facebook_accounts=facebook_accounts, media=media,
+        ai_studio=ai_studio, scheduling=scheduling,
     )
 
 
@@ -84,12 +104,14 @@ async def lifespan(application: FastAPI):
         await services.maintenance.stop()
         await services.scheduler.stop()
         await services.worker.stop()
+        await services.ai.close()
         closed = await asyncio.to_thread(services.chrome.close_all)
         logger.info("Shutdown complete; closed %s managed Chrome processes", closed)
 
 
 app = FastAPI(title="Tinix Social Studio", version=__version__, lifespan=lifespan)
 app.include_router(router)
+app.include_router(content_router)
 static_dir = get_settings().project_root / "app" / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 

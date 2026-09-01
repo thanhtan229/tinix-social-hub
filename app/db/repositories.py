@@ -148,6 +148,7 @@ class JobRepository:
         approval_id: str | None = None,
         idempotency_key: str | None = None,
         max_attempts: int = 3,
+        missed_policy: str = "confirm",
     ) -> dict[str, Any]:
         job_id, now = str(uuid.uuid4()), utc_now()
         status = JobStatus.SCHEDULED if scheduled_at and scheduled_at > now else JobStatus.QUEUED
@@ -155,12 +156,12 @@ class JobRepository:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute(
-                    "INSERT INTO jobs(id,account_id,kind,status,payload_json,content_id,target_id,approval_id,scheduled_at,created_at,updated_at,dry_run,idempotency_key,max_attempts,correlation_id) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO jobs(id,account_id,kind,status,payload_json,content_id,target_id,approval_id,scheduled_at,created_at,updated_at,dry_run,idempotency_key,max_attempts,correlation_id,missed_policy) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         job_id, account_id, kind, status.value, _json(payload), content_id, target_id,
                         approval_id, scheduled_at, now, now, int(dry_run), idempotency_key,
-                        max(1, min(max_attempts, 10)), str(uuid.uuid4()),
+                        max(1, min(max_attempts, 10)), str(uuid.uuid4()), missed_policy,
                     ),
                 )
                 self._event(connection, job_id, None, status.value, "created")
@@ -169,6 +170,10 @@ class JobRepository:
                 connection.execute("ROLLBACK")
                 raise
         return self.get(job_id)
+
+    def get_by_idempotency(self, key: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            return row_to_dict(connection.execute("SELECT * FROM jobs WHERE idempotency_key=?", (key,)).fetchone())
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self.db.connection() as connection:
@@ -248,13 +253,26 @@ class JobRepository:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 rows = connection.execute(
-                    "SELECT id,status FROM jobs WHERE (status='scheduled' AND scheduled_at<=?) "
+                    "SELECT id,status,missed_policy,scheduled_at FROM jobs WHERE (status='scheduled' AND scheduled_at<=?) "
                     "OR (status='temporary_failure' AND next_attempt_at<=?) ORDER BY created_at",
                     (now, now),
                 ).fetchall()
+                missed_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
                 for row in rows:
-                    connection.execute("UPDATE jobs SET status='queued',updated_at=?,next_attempt_at=NULL WHERE id=?", (now, row["id"]))
-                    self._event(connection, row["id"], row["status"], "queued", "due_released")
+                    target, event = "queued", "due_released"
+                    is_missed = bool(
+                        row["status"] == "scheduled" and row["scheduled_at"]
+                        and datetime.fromisoformat(row["scheduled_at"]) < missed_cutoff
+                    )
+                    if is_missed and row["missed_policy"] == "skip":
+                        target, event = "cancelled", "missed_skipped"
+                    elif is_missed and row["missed_policy"] == "confirm":
+                        target, event = "pending_approval", "missed_waiting_confirmation"
+                    connection.execute(
+                        "UPDATE jobs SET status=?,updated_at=?,next_attempt_at=NULL,finished_at=CASE WHEN ?='cancelled' THEN ? ELSE finished_at END WHERE id=?",
+                        (target, now, target, now, row["id"]),
+                    )
+                    self._event(connection, row["id"], row["status"], target, event)
                     released += 1
                 connection.execute("COMMIT")
             except Exception:
