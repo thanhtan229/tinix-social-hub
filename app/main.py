@@ -20,6 +20,7 @@ from app.db.database import Database
 from app.db.calendar_repositories import PostingSlotRepository
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.publication_repositories import PublicationRepository
+from app.db.notification_repositories import NotificationRepository
 from app.db.repositories import AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
 from app.services.ai_studio import AIContentStudioService
@@ -48,6 +49,7 @@ class Services:
     ai_generations: AIGenerationRepository
     publications: PublicationRepository
     posting_slots: PostingSlotRepository
+    notifications: NotificationRepository
     chrome: ChromeManager
     ai: OpenAICompatibleProvider
     publishers: PublisherRegistry
@@ -71,6 +73,7 @@ def build_services(settings: Settings) -> Services:
     ai_generations = AIGenerationRepository(database)
     publications = PublicationRepository(database)
     posting_slots = PostingSlotRepository(database)
+    notifications = NotificationRepository(database)
     chrome_profiles = ChromeProfileRepository(database)
     artifacts = ArtifactRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
@@ -90,7 +93,7 @@ def build_services(settings: Settings) -> Services:
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
-        posting_slots=posting_slots,
+        posting_slots=posting_slots, notifications=notifications,
         chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
         maintenance=maintenance, facebook_accounts=facebook_accounts, media=media,
         ai_studio=ai_studio, scheduling=scheduling, application_lock=asyncio.Lock(),

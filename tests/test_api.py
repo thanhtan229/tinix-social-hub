@@ -14,6 +14,7 @@ from app.db.content_repositories import AIGenerationRepository, BrandProfileRepo
 from app.db.calendar_repositories import PostingSlotRepository
 from app.db.database import Database
 from app.db.publication_repositories import PublicationRepository
+from app.db.notification_repositories import NotificationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -64,6 +65,7 @@ class ApiTests(unittest.TestCase):
             jobs=jobs,
             publications=publications,
             posting_slots=PostingSlotRepository(database),
+            notifications=NotificationRepository(database),
             targets=targets,
             contents=contents,
             brands=brands,
@@ -125,6 +127,20 @@ class ApiTests(unittest.TestCase):
         next_slot = self.client.get(f"/api/targets/{target['id']}/next-slot")
         self.assertEqual(next_slot.status_code, 200)
         self.assertIn("+00:00", next_slot.json()["scheduled_at"])
+
+    def test_notification_and_bulk_retry_api(self) -> None:
+        account = self.services.accounts.create("Main", "facebook")
+        job = self.services.jobs.create("publish", {}, account["id"], None, max_attempts=1)
+        self.services.jobs.claim_next()
+        self.services.jobs.fail(job["id"], "failure")
+        notifications = self.client.get("/api/notifications?unread_only=true")
+        self.assertEqual(notifications.status_code, 200)
+        self.assertEqual(notifications.json()[0]["entity_id"], job["id"])
+        preview = self.client.post("/api/jobs/retry-bulk", json={"job_ids": [job["id"]], "preview": True})
+        self.assertEqual(preview.json()["eligible"], [job["id"]])
+        retry = self.client.post(f"/api/jobs/{job['id']}/retry")
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(retry.json()["status"], "queued")
 
     def test_account_update_rejects_platform_outside_catalog(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()

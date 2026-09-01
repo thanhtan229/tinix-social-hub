@@ -438,6 +438,25 @@ MIGRATIONS: list[tuple[int, str]] = [
     );
     CREATE INDEX idx_release_events_release ON publication_release_events(release_id,created_at);
     """),
+    (7, """
+    ALTER TABLE publication_releases ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'pending';
+    ALTER TABLE publication_releases ADD COLUMN verified_at TEXT;
+    ALTER TABLE publication_releases ADD COLUMN verification_note TEXT;
+    CREATE TABLE notifications (
+        id TEXT PRIMARY KEY,
+        notification_type TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'info',
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        entity_type TEXT,
+        entity_id TEXT,
+        dedupe_key TEXT UNIQUE,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        read_at TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_notifications_unread ON notifications(read_at,created_at DESC);
+    """),
 ]
 
 

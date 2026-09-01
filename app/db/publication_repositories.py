@@ -132,6 +132,23 @@ class PublicationRepository:
         with self.db.connection() as connection:
             return row_to_dict(connection.execute("SELECT * FROM publication_releases WHERE id=?", (release_id,)).fetchone())
 
+    def release_detail(self, release_id: str) -> dict[str, Any] | None:
+        release = self.get_release(release_id)
+        if not release:
+            return None
+        release["events"] = self.release_events(release_id)
+        with self.db.connection() as connection:
+            release["job"] = row_to_dict(connection.execute(
+                "SELECT * FROM jobs WHERE id=?", (release.get("job_id"),)
+            ).fetchone()) if release.get("job_id") else None
+            release["attempts"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM publish_attempts WHERE job_id=? ORDER BY attempt_number", (release.get("job_id"),)
+            )] if release.get("job_id") else []
+            release["artifacts"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM browser_error_artifacts WHERE job_id=? ORDER BY created_at DESC", (release.get("job_id"),)
+            )] if release.get("job_id") else []
+        return release
+
     def get_release_by_idempotency(self, key: str) -> dict[str, Any] | None:
         with self.db.connection() as connection:
             return row_to_dict(connection.execute(

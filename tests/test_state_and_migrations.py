@@ -41,7 +41,7 @@ class MigrationTests(unittest.TestCase):
             database = Database(path, root / "backups")
             self.assertTrue(database.initialize())
             with database.connection() as migrated:
-                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 6)
+                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 7)
                 self.assertEqual(migrated.execute("SELECT name FROM accounts WHERE id='a1'").fetchone()[0], "Page")
                 job = migrated.execute("SELECT status,dry_run FROM jobs WHERE id='j1'").fetchone()
                 self.assertEqual((job["status"], job["dry_run"]), ("queued", 1))

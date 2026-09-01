@@ -66,6 +66,17 @@ class ReleaseReschedule(BaseModel):
     timezone: str = Field(default="Asia/Bangkok", min_length=1, max_length=100)
 
 
+class JobFinalize(BaseModel):
+    succeeded: bool
+    note: str = Field(min_length=1, max_length=2000)
+    post_url: str | None = Field(default=None, max_length=2000)
+
+
+class BulkRetry(BaseModel):
+    job_ids: list[str] = Field(min_length=1, max_length=200)
+    preview: bool = True
+
+
 def services(request: Request) -> Any:
     return request.app.state.services
 
@@ -84,6 +95,14 @@ async def health(request: Request) -> dict[str, Any]:
     chrome = await asyncio.to_thread(svc.chrome.status)
     memory = psutil.virtual_memory()
     process_memory = psutil.Process().memory_info().rss
+    queue_health = await asyncio.to_thread(svc.jobs.health_counts)
+    warnings = []
+    if queue_health["stuck"]:
+        warnings.append({"code": "stuck_jobs", "severity": "warning", "count": queue_health["stuck"]})
+    if queue_health["needs_attention"]:
+        warnings.append({"code": "jobs_need_attention", "severity": "warning", "count": queue_health["needs_attention"]})
+    if usage.free < max(2 * 1024**3, int(usage.total * .1)):
+        warnings.append({"code": "disk_low", "severity": "error", "free_bytes": usage.free})
     maintenance = getattr(svc, "maintenance", None)
     return {
         "status": "ok" if integrity["ok"] else "degraded",
@@ -99,6 +118,8 @@ async def health(request: Request) -> dict[str, Any]:
         "disk": {"free_bytes": usage.free, "total_bytes": usage.total},
         "memory": {"available_bytes": memory.available, "total_bytes": memory.total, "process_bytes": process_memory},
         "ai_configured": svc.ai.configured,
+        "queue_health": queue_health,
+        "warnings": warnings,
         "maintenance": {
             "state": getattr(maintenance, "state", "unavailable"),
             "last_result": getattr(maintenance, "last_result", None),
@@ -299,6 +320,14 @@ async def publication_release_events(release_id: str, request: Request) -> list[
     return await asyncio.to_thread(services(request).publications.release_events, release_id)
 
 
+@router.get("/publication-releases/{release_id}")
+async def publication_release_detail(release_id: str, request: Request) -> dict[str, Any]:
+    release = await asyncio.to_thread(services(request).publications.release_detail, release_id)
+    if not release:
+        raise HTTPException(404, "Không tìm thấy release.")
+    return release
+
+
 @router.post("/jobs", status_code=201)
 async def create_job(body: JobCreate, request: Request) -> dict[str, Any]:
     svc = services(request)
@@ -312,6 +341,70 @@ async def create_job(body: JobCreate, request: Request) -> dict[str, Any]:
     )
     svc.worker.notify()
     return job
+
+
+@router.get("/jobs/{job_id}")
+async def job_detail(job_id: str, request: Request) -> dict[str, Any]:
+    job = await asyncio.to_thread(services(request).jobs.detail, job_id)
+    if not job:
+        raise HTTPException(404, "Không tìm thấy job.")
+    return job
+
+
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(job_id: str, request: Request) -> dict[str, Any]:
+    try:
+        job = await asyncio.to_thread(services(request).jobs.retry, job_id)
+        services(request).worker.notify()
+        return job
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy job.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/jobs/{job_id}/finalize")
+async def finalize_job(job_id: str, body: JobFinalize, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            services(request).jobs.finalize_unknown, job_id, body.succeeded, body.note, body.post_url
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy job.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/jobs/retry-bulk")
+async def retry_jobs_bulk(body: BulkRetry, request: Request) -> dict[str, Any]:
+    jobs = [await asyncio.to_thread(services(request).jobs.get, item) for item in dict.fromkeys(body.job_ids)]
+    eligible = [item["id"] for item in jobs if item and item["status"] in {"temporary_failure", "permanent_failure", "login_required", "checkpoint"} and not item["commit_reached_at"]]
+    blocked = [item for item in body.job_ids if item not in eligible]
+    if not body.preview:
+        for job_id in eligible:
+            await asyncio.to_thread(services(request).jobs.retry, job_id)
+        services(request).worker.notify()
+    return {"preview": body.preview, "eligible": eligible, "blocked": blocked, "count": len(eligible)}
+
+
+@router.get("/notifications")
+async def list_notifications(
+    request: Request, unread_only: bool = False, limit: int = Query(100, ge=1, le=500)
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(services(request).notifications.list, unread_only, limit)
+
+
+@router.post("/notifications/{notification_id}/read")
+async def read_notification(notification_id: str, request: Request) -> dict[str, bool]:
+    marked = await asyncio.to_thread(services(request).notifications.mark_read, notification_id)
+    if not marked:
+        raise HTTPException(404, "Không tìm thấy thông báo.")
+    return {"read": True}
+
+
+@router.post("/notifications/read-all")
+async def read_all_notifications(request: Request) -> dict[str, int]:
+    return {"read": await asyncio.to_thread(services(request).notifications.mark_all_read)}
 
 
 @router.post("/jobs/{job_id}/cancel")

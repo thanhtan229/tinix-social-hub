@@ -254,6 +254,84 @@ class JobRepository:
                 "SELECT * FROM browser_error_artifacts WHERE job_id=? ORDER BY created_at DESC", (job_id,)
             )]
 
+    def detail(self, job_id: str) -> dict[str, Any] | None:
+        job = self.get(job_id)
+        if not job:
+            return None
+        with self.db.connection() as connection:
+            job["attempt_history"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM publish_attempts WHERE job_id=? ORDER BY attempt_number", (job_id,)
+            )]
+            job["release"] = row_to_dict(connection.execute(
+                "SELECT * FROM publication_releases WHERE id=?", (job.get("publication_release_id"),)
+            ).fetchone()) if job.get("publication_release_id") else None
+        job["events"] = self.events(job_id)
+        job["artifacts"] = self.artifacts(job_id)
+        return job
+
+    def health_counts(self, stuck_minutes: int = 15) -> dict[str, int]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=stuck_minutes)).isoformat()
+        with self.db.connection() as connection:
+            stuck = connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('opening_browser','checking_login','uploading','publishing','verifying') AND updated_at<?",
+                (cutoff,),
+            ).fetchone()[0]
+            attention = connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('login_required','checkpoint','unknown_result','permanent_failure')",
+            ).fetchone()[0]
+        return {"stuck": stuck, "needs_attention": attention}
+
+    def retry(self, job_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if not row:
+                    raise KeyError(job_id)
+                safe = {"temporary_failure", "permanent_failure", "login_required", "checkpoint"}
+                if row["status"] not in safe or row["commit_reached_at"]:
+                    raise ValueError("Job không ở trạng thái retry an toàn hoặc đã qua commit point.")
+                connection.execute(
+                    "UPDATE jobs SET status='queued',cancel_requested=0,next_attempt_at=NULL,finished_at=NULL,error=NULL,failure_code=NULL,updated_at=? WHERE id=?",
+                    (now, job_id),
+                )
+                if row["publication_release_id"]:
+                    connection.execute(
+                        "UPDATE publication_releases SET status='queued',verification_status='pending',updated_at=? WHERE id=?",
+                        (now, row["publication_release_id"]),
+                    )
+                    self._sync_plan_status(connection, row["publication_release_id"])
+                self._event(connection, job_id, row["status"], "queued", "manual_retry")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.get(job_id)
+
+    def finalize_unknown(self, job_id: str, succeeded: bool, note: str, post_url: str | None = None) -> dict[str, Any]:
+        target = "succeeded" if succeeded else "permanent_failure"
+        now = utc_now()
+        with self.db.connection() as connection:
+            row = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            if row["status"] not in {"unknown_result", "verifying"}:
+                raise ValueError("Chỉ finalize job đang chờ xác minh.")
+        result = {"post_url": post_url, "manual_verification": True, "note": note}
+        job = self.transition(
+            job_id, target, event_type="manual_finalize", message=note,
+            result=result if succeeded else None, error=None if succeeded else note,
+            failure_code=None if succeeded else "manual_unconfirmed",
+        )
+        if job.get("publication_release_id"):
+            with self.db.connection() as connection:
+                connection.execute(
+                    "UPDATE publication_releases SET verification_status=?,verified_at=?,verification_note=?,external_url=COALESCE(?,external_url),updated_at=? WHERE id=?",
+                    ("verified" if succeeded else "rejected", now, note[:2000], post_url, now, job["publication_release_id"]),
+                )
+        return self.get(job_id)
+
     def transition(
         self,
         job_id: str,
@@ -312,6 +390,21 @@ class JobRepository:
                         ),
                     )
                 self._event(connection, job_id, row["status"], validated_target.value, event_type, message, metadata)
+                notices = {
+                    "succeeded": ("completed", "info", "Phát hành hoàn tất"),
+                    "dry_run_ready": ("completed", "info", "Dry-run sẵn sàng"),
+                    "login_required": ("reconnect", "warning", "Cần đăng nhập lại"),
+                    "checkpoint": ("checkpoint", "warning", "Cần xử lý checkpoint"),
+                    "unknown_result": ("unconfirmed", "warning", "Kết quả chưa xác định"),
+                    "permanent_failure": ("failed", "error", "Phát hành thất bại"),
+                }
+                if validated_target.value in notices:
+                    notice_type, severity, title = notices[validated_target.value]
+                    connection.execute(
+                        "INSERT OR IGNORE INTO notifications(id,notification_type,severity,title,message,entity_type,entity_id,dedupe_key,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (str(uuid.uuid4()), notice_type, severity, title, message or error or f"Job {job_id}",
+                         "job", job_id, f"job:{job_id}:{validated_target.value}:{row['attempts']}", _json(metadata or {}), now),
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")

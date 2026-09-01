@@ -76,6 +76,14 @@ dialog { border:1px solid var(--line); border-radius:16px; padding:24px; width:m
 .form-grid.compact { grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px 0; }
 .format-counter { align-self:end; padding:10px; color:var(--muted); font-size:12px; }
 .composer-preview { white-space:pre-wrap; overflow-wrap:anywhere; }
+.release-control { margin-bottom:14px; }
+.notification-row { display:grid; width:100%; gap:2px; text-align:left; border-left:4px solid var(--green); }
+.notification-row.warning { border-left-color:var(--amber); }
+.notification-row.error { border-left-color:var(--red); }
+.notification-row span,.notification-row small { color:var(--muted); font-weight:400; }
+.release-summary { padding:10px; border-radius:10px; background:#f3f1eb; margin-bottom:12px; }
+#jobDialog { width:min(760px,calc(100vw - 30px)); }
+#jobDialog h3 { margin-top:18px; }
 @media(max-width:1100px) { .platform-grid { grid-template-columns:repeat(2,1fr); } }
 @media(max-width:1000px) { .stats { grid-template-columns:repeat(3,1fr); } .card-grid { grid-template-columns:repeat(2,1fr); } }
 @media(max-width:760px) { .sidebar { position:static; width:auto; padding:12px; } .logo { margin-bottom:12px; } nav { display:flex; overflow:auto; } nav button { white-space:nowrap; } .connection { display:none; } main { margin:0; padding:25px 15px 60px; } .grid.two,.form-grid,.form-grid.compact { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } .card-grid,.platform-grid { grid-template-columns:1fr; } .page-head { align-items:start; flex-direction:column; } h1 { font-size:30px; } .calendar-grid.week-view,.calendar-grid.month-view { grid-template-columns:repeat(7,150px); } .calendar-list-row { grid-template-columns:1fr; } }
