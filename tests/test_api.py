@@ -12,6 +12,7 @@ from app.api.routes import router
 from app.api.content import router as content_router
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.database import Database
+from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -53,18 +54,20 @@ class ApiTests(unittest.TestCase):
         contents = ContentRepository(database)
         brands = BrandProfileRepository(database)
         generations = AIGenerationRepository(database)
+        publications = PublicationRepository(database)
         media_settings = SimpleNamespace(media_dir=root / "media")
         mock_ai = MockAIProvider()
         services = SimpleNamespace(
             database=database,
             accounts=accounts,
             jobs=jobs,
+            publications=publications,
             targets=targets,
             contents=contents,
             brands=brands,
             media=MediaService(media_settings, contents),
             ai_studio=AIContentStudioService(mock_ai, generations, brands, contents),
-            scheduling=SchedulingService(jobs, accounts, targets, contents),
+            scheduling=SchedulingService(jobs, accounts, targets, contents, publications=publications),
             chrome=ChromeStub(),
             worker=WorkerStub(),
             scheduler=SimpleNamespace(state="running"),

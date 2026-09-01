@@ -13,6 +13,7 @@ from PIL import Image
 
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.database import Database
+from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
@@ -114,7 +115,10 @@ class SchedulingTests(ContentFixture):
         self.accounts = AccountRepository(self.database)
         self.targets = TargetRepository(self.database)
         self.jobs = JobRepository(self.database)
-        self.scheduling = SchedulingService(self.jobs, self.accounts, self.targets, self.contents, random.Random(1))
+        self.publications = PublicationRepository(self.database)
+        self.scheduling = SchedulingService(
+            self.jobs, self.accounts, self.targets, self.contents, random.Random(1), self.publications
+        )
         self.account = self.accounts.create("Admin", "facebook")
         self.target = self.targets.sync(
             self.account["id"], "facebook",
@@ -147,6 +151,48 @@ class SchedulingTests(ContentFixture):
         )
         self.assertEqual(jobs[0]["status"], "queued")
         self.assertEqual(jobs[0]["dry_run"], 1)
+
+    def test_schedule_creates_frozen_plan_release_and_job_link(self) -> None:
+        jobs = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
+        )
+        plans = self.publications.list_plans()
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(len(plans[0]["releases"]), 1)
+        release = plans[0]["releases"][0]
+        self.assertEqual(jobs[0]["publication_release_id"], release["id"])
+        self.assertEqual(release["payload_snapshot"]["caption"], "Facebook caption")
+        self.assertEqual(release["content_revision_id"], self.contents.revisions(self.content["id"])[0]["id"])
+
+        self.contents.update(self.content["id"], {
+            "title": "Changed later", "caption": "Changed later", "hashtags": [], "platform_variants": {}
+        })
+        frozen = self.publications.get_release(release["id"])
+        self.assertEqual(frozen["payload_snapshot"]["caption"], "Facebook caption")
+
+    def test_plan_and_release_are_idempotent_with_schedule(self) -> None:
+        first = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
+        )
+        second = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
+        )
+        self.assertEqual(first[0]["id"], second[0]["id"])
+        self.assertEqual(len(self.publications.list_plans()), 1)
+        self.assertEqual(len(self.publications.list_releases()), 1)
+
+    def test_job_state_is_aggregated_to_plan(self) -> None:
+        job = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
+        )[0]
+        claimed = self.jobs.claim_next()
+        self.assertEqual(claimed["id"], job["id"])
+        plan_id = self.publications.get_release(job["publication_release_id"])["plan_id"]
+        self.assertEqual(self.publications.get_plan(plan_id)["status"], "active")
+        self.jobs.transition(job["id"], "checking_login")
+        self.jobs.transition(job["id"], "publishing")
+        self.jobs.dry_run_ready(job["id"], {"post_url": None})
+        self.assertEqual(self.publications.get_plan(plan_id)["status"], "completed")
 
 
 if __name__ == "__main__":

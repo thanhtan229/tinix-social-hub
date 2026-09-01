@@ -41,7 +41,7 @@ class MigrationTests(unittest.TestCase):
             database = Database(path, root / "backups")
             self.assertTrue(database.initialize())
             with database.connection() as migrated:
-                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 4)
+                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 5)
                 self.assertEqual(migrated.execute("SELECT name FROM accounts WHERE id='a1'").fetchone()[0], "Page")
                 job = migrated.execute("SELECT status,dry_run FROM jobs WHERE id='j1'").fetchone()
                 self.assertEqual((job["status"], job["dry_run"]), ("queued", 1))
@@ -49,8 +49,50 @@ class MigrationTests(unittest.TestCase):
                 self.assertIn("content_items", tables)
                 self.assertIn("publishing_targets", tables)
                 self.assertIn("publish_job_events", tables)
+                self.assertIn("publication_plans", tables)
+                self.assertIn("publication_releases", tables)
             self.assertEqual(len(list((root / "backups").glob("tinix-pre-migration-v2-*.db"))), 1)
             self.assertTrue(database.integrity_check()["ok"])
+
+    def test_v4_publish_job_is_backfilled_as_plan_and_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "data" / "tinix_social.db"
+            path.parent.mkdir(parents=True)
+            connection = sqlite3.connect(path, isolation_level=None)
+            for version, sql in MIGRATIONS[:4]:
+                for statement in sql.split(";"):
+                    if statement.strip():
+                        connection.execute(statement)
+                connection.execute("INSERT INTO schema_version(version,applied_at) VALUES(?,?)", (version, utc_now()))
+            now = utc_now()
+            connection.execute(
+                "INSERT INTO accounts(id,name,platform,profile_key,created_at,updated_at) VALUES('a1','Page','facebook','a1',?,?)",
+                (now, now),
+            )
+            connection.execute(
+                "INSERT INTO publishing_targets(id,account_id,platform,target_type,external_id,name,created_at,updated_at) "
+                "VALUES('t1','a1','facebook','page','page-1','Main',?,?)",
+                (now, now),
+            )
+            connection.execute(
+                "INSERT INTO jobs(id,account_id,kind,status,payload_json,target_id,created_at,updated_at,dry_run,missed_policy) "
+                "VALUES('j1','a1','publish','queued','{\"caption\":\"legacy\"}','t1',?,?,1,'confirm')",
+                (now, now),
+            )
+            connection.close()
+
+            database = Database(path, root / "backups")
+            self.assertTrue(database.initialize())
+            with database.connection() as migrated:
+                job = migrated.execute("SELECT publication_release_id FROM jobs WHERE id='j1'").fetchone()
+                self.assertEqual(job[0], "legacy-release-j1")
+                release = migrated.execute(
+                    "SELECT plan_id,job_id,payload_snapshot_json FROM publication_releases WHERE id=?", (job[0],)
+                ).fetchone()
+                self.assertEqual((release["plan_id"], release["job_id"]), ("legacy-plan-j1", "j1"))
+                self.assertIn("legacy", release["payload_snapshot_json"])
+            self.assertEqual(len(list((root / "backups").glob("tinix-pre-migration-v5-*.db"))), 1)
 
 
 class StateMachineTests(unittest.TestCase):

@@ -337,6 +337,77 @@ MIGRATIONS: list[tuple[int, str]] = [
         FOREIGN KEY(attempt_id) REFERENCES publish_attempts(id) ON DELETE SET NULL
     );
     """),
+    (5, """
+    CREATE TABLE publication_plans (
+        id TEXT PRIMARY KEY,
+        content_id TEXT,
+        content_revision_id TEXT,
+        approval_id TEXT,
+        status TEXT NOT NULL,
+        dry_run INTEGER NOT NULL DEFAULT 1,
+        scheduled_at TEXT,
+        missed_policy TEXT NOT NULL DEFAULT 'confirm',
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(content_id) REFERENCES content_items(id) ON DELETE RESTRICT,
+        FOREIGN KEY(content_revision_id) REFERENCES content_revisions(id) ON DELETE RESTRICT,
+        FOREIGN KEY(approval_id) REFERENCES content_approvals(id) ON DELETE RESTRICT
+    );
+    CREATE INDEX idx_publication_plans_schedule ON publication_plans(status,scheduled_at,created_at);
+    CREATE TABLE publication_releases (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL,
+        content_id TEXT,
+        content_revision_id TEXT,
+        account_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        content_format TEXT NOT NULL DEFAULT 'post',
+        status TEXT NOT NULL,
+        scheduled_at TEXT,
+        settings_json TEXT NOT NULL DEFAULT '{}',
+        payload_snapshot_json TEXT NOT NULL DEFAULT '{}',
+        media_snapshot_json TEXT NOT NULL DEFAULT '[]',
+        selector_version TEXT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        job_id TEXT UNIQUE,
+        pending_data_json TEXT,
+        external_release_id TEXT,
+        external_url TEXT,
+        verification_method TEXT,
+        published_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(plan_id) REFERENCES publication_plans(id) ON DELETE CASCADE,
+        FOREIGN KEY(content_id) REFERENCES content_items(id) ON DELETE RESTRICT,
+        FOREIGN KEY(content_revision_id) REFERENCES content_revisions(id) ON DELETE RESTRICT,
+        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE RESTRICT,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE RESTRICT,
+        FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL
+    );
+    CREATE INDEX idx_publication_releases_range ON publication_releases(scheduled_at,status,platform);
+    CREATE INDEX idx_publication_releases_plan ON publication_releases(plan_id,created_at);
+    ALTER TABLE jobs ADD COLUMN publication_release_id TEXT REFERENCES publication_releases(id) ON DELETE SET NULL;
+    CREATE UNIQUE INDEX idx_jobs_publication_release ON jobs(publication_release_id) WHERE publication_release_id IS NOT NULL;
+    INSERT INTO publication_plans(
+        id,content_id,approval_id,status,dry_run,scheduled_at,missed_policy,idempotency_key,created_at,updated_at
+    ) SELECT
+        'legacy-plan-' || id,content_id,approval_id,status,dry_run,scheduled_at,missed_policy,
+        'legacy-plan-' || id,created_at,updated_at
+    FROM jobs WHERE kind='publish' AND account_id IS NOT NULL AND target_id IS NOT NULL;
+    INSERT INTO publication_releases(
+        id,plan_id,content_id,account_id,target_id,platform,status,scheduled_at,payload_snapshot_json,
+        idempotency_key,job_id,external_url,published_at,created_at,updated_at
+    ) SELECT
+        'legacy-release-' || j.id,'legacy-plan-' || j.id,j.content_id,j.account_id,j.target_id,a.platform,
+        j.status,j.scheduled_at,j.payload_json,'legacy-release-' || j.id,j.id,
+        json_extract(j.result_json,'$.post_url'),j.finished_at,j.created_at,j.updated_at
+    FROM jobs j JOIN accounts a ON a.id=j.account_id
+    WHERE j.kind='publish' AND j.account_id IS NOT NULL AND j.target_id IS NOT NULL;
+    UPDATE jobs SET publication_release_id='legacy-release-' || id
+    WHERE kind='publish' AND account_id IS NOT NULL AND target_id IS NOT NULL;
+    """),
 ]
 
 
@@ -440,7 +511,10 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     result = dict(row)
-    for key in ("payload_json", "result_json"):
+    for key in (
+        "payload_json", "result_json", "settings_json", "payload_snapshot_json",
+        "media_snapshot_json", "pending_data_json",
+    ):
         if key in result:
             value = result.pop(key)
             result[key.removesuffix("_json")] = json.loads(value) if value else None

@@ -34,6 +34,11 @@ class PublishContext:
 
 
 class Publisher(ABC):
+    platform_id = "unknown"
+    publication_transport = "chrome"
+    selector_version = "unversioned"
+    max_concurrent_jobs = 1
+
     @abstractmethod
     async def publish(self, context: PublishContext) -> PublishResult:
         raise NotImplementedError
@@ -58,6 +63,8 @@ class PreviewPublisher(Publisher):
 class UnsupportedPublisher(Publisher):
     def __init__(self, platform: str) -> None:
         self.platform = platform
+        self.platform_id = platform
+        self.selector_version = "scaffold"
 
     async def publish(self, context: PublishContext) -> PublishResult:
         return PublishResult(
@@ -87,7 +94,23 @@ class PublisherRegistry:
         self._preview = PreviewPublisher()
 
     def register(self, platform: str, publisher: Publisher) -> None:
-        self._publishers[platform.lower()] = publisher
+        normalized = platform.lower()
+        if getattr(publisher, "publication_transport", None) != "chrome":
+            raise ValueError("Tinix chỉ chấp nhận publisher dùng Chrome automation.")
+        publisher.platform_id = normalized
+        self._publishers[normalized] = publisher
+
+    def describe(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "platform": platform,
+                "transport": publisher.publication_transport,
+                "selector_version": publisher.selector_version,
+                "max_concurrent_jobs": publisher.max_concurrent_jobs,
+                "implementation": type(publisher).__name__,
+            }
+            for platform, publisher in sorted(self._publishers.items())
+        ]
 
     def get(self, platform: str, *, dry_run: bool) -> Publisher:
         registered = self._publishers.get(platform.lower())

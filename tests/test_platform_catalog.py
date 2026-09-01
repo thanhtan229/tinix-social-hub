@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.platforms import PLATFORM_CATALOG, capability_summary, get_platform
+from app.services.publishers import Publisher, PublisherRegistry
 
 
 class PlatformCatalogTests(unittest.TestCase):
@@ -24,6 +25,16 @@ class PlatformCatalogTests(unittest.TestCase):
     def test_capability_summary_accounts_for_every_boundary(self) -> None:
         for platform in PLATFORM_CATALOG:
             self.assertEqual(sum(capability_summary(platform).values()), 6)
+
+    def test_runtime_registry_rejects_non_chrome_publishers(self) -> None:
+        class ApiPublisher(Publisher):
+            publication_transport = "api"
+
+            async def publish(self, context):
+                raise AssertionError("must not run")
+
+        with self.assertRaises(ValueError):
+            PublisherRegistry().register("instagram", ApiPublisher())
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class FacebookPublisher(Publisher):
+    selector_version = "facebook-web-v1"
     def __init__(
         self,
         settings: Settings,
@@ -156,4 +157,3 @@ class FacebookPublisher(Publisher):
         finally:
             if self.settings.close_chrome_after_job and not keep_chrome:
                 await asyncio.to_thread(self.chrome.close, context.account["id"])
-

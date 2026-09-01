@@ -29,6 +29,7 @@ class PlatformDefinition:
     capabilities: PlatformCapabilities
     next_milestone: str
     publication_transport: str = "chrome"
+    selector_version: str = "scaffold"
     operational: bool = False
 
     def to_dict(self) -> dict[str, object]:
@@ -43,7 +44,8 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         account_label="Facebook account", target_label="Page", target_types=("page",),
         content_formats=("text", "multi_image", "video"),
         capabilities=PlatformCapabilities("ready", "ready", "ready", "review_required", "review_required", "review_required"),
-        next_milestone="Kiểm thử dry-run và đăng thật có giám sát trên Page thực tế.", operational=True,
+        next_milestone="Kiểm thử dry-run và đăng thật có giám sát trên Page thực tế.",
+        selector_version="facebook-web-v1", operational=True,
     ),
     PlatformDefinition(
         id="instagram", name="Instagram", phase="Architecture scaffold",

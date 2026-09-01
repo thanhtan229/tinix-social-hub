@@ -158,6 +158,36 @@ class JobRepository:
             (job_id, from_status, to_status, event_type, message, _json(metadata or {}), utc_now()),
         )
 
+    @staticmethod
+    def _sync_plan_status(connection: sqlite3.Connection, release_id: str | None) -> None:
+        if not release_id:
+            return
+        row = connection.execute("SELECT plan_id FROM publication_releases WHERE id=?", (release_id,)).fetchone()
+        if not row:
+            return
+        plan_id = row["plan_id"]
+        statuses = [item[0] for item in connection.execute(
+            "SELECT status FROM publication_releases WHERE plan_id=?", (plan_id,)
+        )]
+        terminal = {"succeeded", "dry_run_ready", "permanent_failure", "cancelled"}
+        successful = {"succeeded", "dry_run_ready"}
+        if statuses and all(status in successful for status in statuses):
+            aggregate = "completed"
+        elif statuses and all(status == "cancelled" for status in statuses):
+            aggregate = "cancelled"
+        elif statuses and all(status in terminal for status in statuses):
+            aggregate = "partially_failed"
+        elif any(status in {"opening_browser", "checking_login", "uploading", "publishing", "verifying"} for status in statuses):
+            aggregate = "active"
+        elif statuses and all(status == "scheduled" for status in statuses):
+            aggregate = "scheduled"
+        else:
+            aggregate = "queued"
+        connection.execute(
+            "UPDATE publication_plans SET status=?,updated_at=? WHERE id=?",
+            (aggregate, utc_now(), plan_id),
+        )
+
     def create(
         self,
         kind: str,
@@ -172,6 +202,7 @@ class JobRepository:
         idempotency_key: str | None = None,
         max_attempts: int = 3,
         missed_policy: str = "confirm",
+        publication_release_id: str | None = None,
     ) -> dict[str, Any]:
         job_id, now = str(uuid.uuid4()), utc_now()
         status = JobStatus.SCHEDULED if scheduled_at and scheduled_at > now else JobStatus.QUEUED
@@ -179,12 +210,13 @@ class JobRepository:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute(
-                    "INSERT INTO jobs(id,account_id,kind,status,payload_json,content_id,target_id,approval_id,scheduled_at,created_at,updated_at,dry_run,idempotency_key,max_attempts,correlation_id,missed_policy) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO jobs(id,account_id,kind,status,payload_json,content_id,target_id,approval_id,scheduled_at,created_at,updated_at,dry_run,idempotency_key,max_attempts,correlation_id,missed_policy,publication_release_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         job_id, account_id, kind, status.value, _json(payload), content_id, target_id,
                         approval_id, scheduled_at, now, now, int(dry_run), idempotency_key,
                         max(1, min(max_attempts, 10)), str(uuid.uuid4()), missed_policy,
+                        publication_release_id,
                     ),
                 )
                 self._event(connection, job_id, None, status.value, "created")
@@ -255,6 +287,17 @@ class JobRepository:
                         int(commit_reached), now, job_id,
                     ),
                 )
+                if row["publication_release_id"]:
+                    post_url = result.get("post_url") if result else None
+                    connection.execute(
+                        "UPDATE publication_releases SET status=?,external_url=COALESCE(?,external_url),"
+                        "published_at=CASE WHEN ?='succeeded' THEN COALESCE(published_at,?) ELSE published_at END,updated_at=? WHERE id=?",
+                        (
+                            validated_target.value, post_url, validated_target.value,
+                            finished_at, now, row["publication_release_id"],
+                        ),
+                    )
+                    self._sync_plan_status(connection, row["publication_release_id"])
                 if validated_target in TERMINAL_STATUSES | {
                     JobStatus.TEMPORARY_FAILURE, JobStatus.LOGIN_REQUIRED,
                     JobStatus.CHECKPOINT, JobStatus.UNKNOWN_RESULT,
@@ -301,6 +344,12 @@ class JobRepository:
                         "UPDATE jobs SET status=?,updated_at=?,next_attempt_at=NULL,finished_at=CASE WHEN ?='cancelled' THEN ? ELSE finished_at END WHERE id=?",
                         (target, now, target, now, row["id"]),
                     )
+                    connection.execute(
+                        "UPDATE publication_releases SET status=?,updated_at=? WHERE id=(SELECT publication_release_id FROM jobs WHERE id=?)",
+                        (target, now, row["id"]),
+                    )
+                    release = connection.execute("SELECT publication_release_id FROM jobs WHERE id=?", (row["id"],)).fetchone()
+                    self._sync_plan_status(connection, release[0] if release else None)
                     self._event(connection, row["id"], row["status"], target, event)
                     released += 1
                 connection.execute("COMMIT")
@@ -317,7 +366,7 @@ class JobRepository:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 rows = connection.execute(
-                    "SELECT id,kind,status FROM jobs WHERE status IN ('opening_browser','checking_login','uploading','publishing','verifying')"
+                    "SELECT id,kind,status,publication_release_id FROM jobs WHERE status IN ('opening_browser','checking_login','uploading','publishing','verifying')"
                 ).fetchall()
                 now = utc_now()
                 for row in rows:
@@ -327,6 +376,11 @@ class JobRepository:
                         "UPDATE jobs SET status=?,updated_at=?,started_at=NULL,locked_at=NULL,lease_expires_at=NULL,error=? WHERE id=?",
                         (target, now, message, row["id"]),
                     )
+                    connection.execute(
+                        "UPDATE publication_releases SET status=?,updated_at=? WHERE id=(SELECT publication_release_id FROM jobs WHERE id=?)",
+                        (target, now, row["id"]),
+                    )
+                    self._sync_plan_status(connection, row["publication_release_id"])
                     self._event(connection, row["id"], row["status"], target, "restart_recovery", message)
                     recovered += 1
                 connection.execute("COMMIT")
@@ -358,6 +412,12 @@ class JobRepository:
                     "UPDATE jobs SET status=?,attempts=attempts+1,started_at=?,updated_at=?,locked_at=?,error=NULL,failure_code=NULL WHERE id=? AND status='queued'",
                     (target.value, now, now, now, row["id"]),
                 )
+                if row["publication_release_id"]:
+                    connection.execute(
+                        "UPDATE publication_releases SET status=?,updated_at=? WHERE id=?",
+                        (target.value, now, row["publication_release_id"]),
+                    )
+                    self._sync_plan_status(connection, row["publication_release_id"])
                 attempt_number = row["attempts"] + 1
                 connection.execute(
                     "INSERT INTO publish_attempts(id,job_id,attempt_number,started_at) VALUES(?,?,?,?)",

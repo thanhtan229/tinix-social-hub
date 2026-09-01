@@ -196,6 +196,38 @@ async def list_jobs(request: Request, limit: int = Query(50, ge=1, le=200), offs
     return await asyncio.to_thread(services(request).jobs.list, limit, offset)
 
 
+@router.get("/publication-plans")
+async def list_publication_plans(
+    request: Request,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(services(request).publications.list_plans, limit, offset)
+
+
+@router.get("/publication-plans/{plan_id}")
+async def get_publication_plan(plan_id: str, request: Request) -> dict[str, Any]:
+    plan = await asyncio.to_thread(services(request).publications.get_plan, plan_id)
+    if not plan:
+        raise HTTPException(404, "Không tìm thấy publication plan.")
+    return plan
+
+
+@router.get("/publication-releases")
+async def list_publication_releases(
+    request: Request,
+    start: str | None = None,
+    end: str | None = None,
+    platform: str | None = None,
+    status: str | None = None,
+    limit: int = Query(500, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(
+        services(request).publications.list_releases,
+        start=start, end=end, platform=platform, status=status, limit=limit,
+    )
+
+
 @router.post("/jobs", status_code=201)
 async def create_job(body: JobCreate, request: Request) -> dict[str, Any]:
     svc = services(request)
