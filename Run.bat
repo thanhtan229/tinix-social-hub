@@ -17,6 +17,13 @@ if errorlevel 1 (
   set "PYTHON_CMD=py -3"
 )
 
+%PYTHON_CMD% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+if errorlevel 1 (
+  echo [LOI] Tinix Social Studio can Python 3.11 tro len.
+  pause
+  exit /b 1
+)
+
 if not exist ".venv\Scripts\python.exe" (
   echo [Tinix] Dang tao moi truong Python rieng...
   %PYTHON_CMD% -m venv .venv
@@ -24,12 +31,28 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "VENV_PY=.venv\Scripts\python.exe"
-"%VENV_PY%" -c "import fastapi,uvicorn,httpx" >nul 2>nul
+"%VENV_PY%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
 if errorlevel 1 (
-  echo [Tinix] Dang cai dependency lan dau...
+  echo [LOI] Moi truong .venv hien tai dung Python qua cu.
+  echo Hay doi ten thu muc .venv cu va chay lai Run.bat.
+  pause
+  exit /b 1
+)
+
+set "REQ_HASH="
+set "INSTALLED_HASH="
+for /f %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath 'requirements.txt').Hash"') do set "REQ_HASH=%%H"
+if exist ".venv\.requirements.sha256" set /p INSTALLED_HASH=<".venv\.requirements.sha256"
+
+if /I not "%REQ_HASH%"=="%INSTALLED_HASH%" (
+  echo [Tinix] Dang cap nhat dependency...
   "%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
   if errorlevel 1 goto :error
+  >".venv\.requirements.sha256" echo %REQ_HASH%
 )
+
+"%VENV_PY%" -c "import fastapi,uvicorn,httpx,multipart,psutil,playwright" >nul 2>nul
+if errorlevel 1 goto :error
 
 if not exist ".env" copy /y ".env.example" ".env" >nul
 
