@@ -1,6 +1,6 @@
 import {api,toast} from "./api.js";
 import {refreshOverview} from "./overview.js";
-import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.0-rc.18";
+import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.0-rc.19";
 import {initContent,refreshContent} from "./content.js";
 import {initMedia,refreshMedia} from "./media.js";
 import {initAnalytics,refreshAnalytics} from "./analytics.js";

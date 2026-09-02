@@ -39,6 +39,13 @@ async function openAccountDialog(account = null) {
   setTimeout(() => document.querySelector("#accountName")?.focus(), 0);
 }
 
+function openDeleteAccountDialog(account) {
+  const dialog = document.querySelector("#deleteAccountDialog");
+  dialog.dataset.accountId = account.id;
+  document.querySelector("#deleteAccountName").textContent = account.name;
+  dialog.showModal();
+}
+
 export async function refreshAccounts() {
   const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
   store.accounts = accounts; store.targets = targets;
@@ -130,7 +137,7 @@ function bindActions() {
       }
       if (action === "close") { const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
       if (action === "edit") { await openAccountDialog(account); return; }
-      if (action === "delete" && confirm("Chỉ xóa account không có Page/job. Chrome profile trên ổ đĩa sẽ được giữ lại. Tiếp tục?")) await api(`/accounts/${account.id}`, {method:"DELETE"});
+      if (action === "delete") { openDeleteAccountDialog(account); return; }
       await refreshAccounts();
     } catch (error) { toast(error.message); }
     finally { button.disabled = false; button.textContent = originalLabel; }
@@ -218,6 +225,23 @@ export function initAccounts() {
     }
   };
   document.querySelector("#closeAllChrome").onclick = async () => { const result = await api("/chrome/close-all", {method:"POST"}); toast(`Đã đóng ${result.closed} Chrome`); };
+  const deleteDialog = document.querySelector("#deleteAccountDialog");
+  const deleteAccount = async deleteProfile => {
+    const accountId = deleteDialog.dataset.accountId;
+    const account = store.accounts.find(item => item.id === accountId);
+    const buttons = deleteDialog.querySelectorAll("button");
+    buttons.forEach(button => button.disabled = true);
+    try {
+      const result = await api(`/accounts/${accountId}?delete_profile=${deleteProfile}`, {method:"DELETE"});
+      deleteDialog.close();
+      await refreshAccounts();
+      if (result.cleanup_warning) toast(result.cleanup_warning);
+      else toast(deleteProfile ? `Đã xóa account và Chrome profile của ${account?.name || "account"}` : "Đã xóa account; Chrome profile vẫn được giữ lại");
+    } catch (error) { toast(error.message); }
+    finally { buttons.forEach(button => button.disabled = false); }
+  };
+  document.querySelector("#deleteAccountKeepProfile").onclick = () => deleteAccount(false);
+  document.querySelector("#deleteAccountWithProfile").onclick = () => deleteAccount(true);
   document.querySelectorAll("[data-profile-action]").forEach(button => button.onclick = async () => {
     const account = store.accounts.find(item => item.id === document.querySelector("#profileAccount").value);
     try { if (await runProfileAction(button.dataset.profileAction, account)) await refreshAccounts(); } catch(error) { toast(error.message); }

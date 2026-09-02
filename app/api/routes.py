@@ -230,15 +230,41 @@ async def enable_account(account_id: str, body: EnabledUpdate, request: Request)
 
 
 @router.delete("/accounts/{account_id}")
-async def delete_account(account_id: str, request: Request) -> dict[str, bool]:
+async def delete_account(
+    account_id: str, request: Request, delete_profile: bool = Query(default=False),
+) -> dict[str, Any]:
     svc = services(request)
-    if not await asyncio.to_thread(svc.accounts.get, account_id):
+    account = await asyncio.to_thread(svc.accounts.get, account_id)
+    if not account:
         raise HTTPException(404, "Không tìm thấy account.")
+    profile_path = (svc.settings.chrome_profile_dir / account["profile_key"]).resolve()
+    profile_root = svc.settings.chrome_profile_dir.resolve()
+    backup_path = (svc.settings.backup_dir / "chrome_profiles" / account_id).resolve()
+    backup_root = (svc.settings.backup_dir / "chrome_profiles").resolve()
+    if profile_path.parent != profile_root or backup_path.parent != backup_root:
+        raise HTTPException(409, "Đường dẫn profile hoặc backup không hợp lệ.")
     await asyncio.to_thread(svc.chrome.close, account_id)
     deleted = await asyncio.to_thread(svc.accounts.delete_if_safe, account_id)
     if not deleted:
         raise HTTPException(409, "Account đang có Page hoặc lịch sử job; hãy tắt account thay vì xóa.")
-    return {"deleted": True}
+    profile_deleted = False
+    backup_deleted = False
+    cleanup_warning = ""
+    if delete_profile:
+        try:
+            if profile_path.exists():
+                await asyncio.to_thread(shutil.rmtree, profile_path)
+                profile_deleted = True
+            if backup_path.exists():
+                await asyncio.to_thread(shutil.rmtree, backup_path)
+                backup_deleted = True
+        except OSError as exc:
+            cleanup_warning = f"Account đã xóa nhưng không thể xóa hết dữ liệu profile: {exc}"
+            logger.warning("Account profile cleanup incomplete: account=%s error=%s", account_id, exc)
+    return {
+        "deleted": True, "profile_deleted": profile_deleted,
+        "backup_deleted": backup_deleted, "cleanup_warning": cleanup_warning,
+    }
 
 
 @router.post("/accounts/{account_id}/check-login")

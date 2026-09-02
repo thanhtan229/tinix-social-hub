@@ -202,6 +202,30 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(restored.status_code, 200)
 
+    def test_account_delete_can_keep_or_remove_profile_and_backups(self) -> None:
+        kept = self.client.post("/api/accounts", json={"name": "Keep", "platform": "facebook"}).json()
+        kept_profile = self.services.settings.chrome_profile_dir / kept["profile_key"]
+        kept_profile.mkdir(parents=True)
+        (kept_profile / "marker.txt").write_text("keep", encoding="utf-8")
+        kept_result = self.client.delete(f"/api/accounts/{kept['id']}")
+        self.assertEqual(kept_result.status_code, 200)
+        self.assertFalse(kept_result.json()["profile_deleted"])
+        self.assertTrue(kept_profile.is_dir())
+
+        removed = self.client.post("/api/accounts", json={"name": "Remove", "platform": "facebook"}).json()
+        removed_profile = self.services.settings.chrome_profile_dir / removed["profile_key"]
+        removed_profile.mkdir(parents=True)
+        (removed_profile / "marker.txt").write_text("remove", encoding="utf-8")
+        removed_backup = self.services.settings.backup_dir / "chrome_profiles" / removed["id"]
+        removed_backup.mkdir(parents=True)
+        (removed_backup / "backup.txt").write_text("remove", encoding="utf-8")
+        removed_result = self.client.delete(f"/api/accounts/{removed['id']}?delete_profile=true")
+        self.assertEqual(removed_result.status_code, 200)
+        self.assertTrue(removed_result.json()["profile_deleted"])
+        self.assertTrue(removed_result.json()["backup_deleted"])
+        self.assertFalse(removed_profile.exists())
+        self.assertFalse(removed_backup.exists())
+
     def test_platform_catalog_distinguishes_mvp_from_scaffolds(self) -> None:
         response = self.client.get("/api/platforms")
         self.assertEqual(response.status_code, 200)

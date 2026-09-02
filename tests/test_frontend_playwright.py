@@ -85,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.18")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.19")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -161,6 +161,12 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(edit_response.value.status, 200)
             page.locator("#accountDialog").wait_for(state="hidden")
             self.assertIn("Renamed UI Account", page.locator("#accountList").inner_text())
+            page.get_by_role("button", name="Xóa", exact=True).first.click()
+            page.locator("#deleteAccountDialog").wait_for(state="visible")
+            self.assertTrue(page.get_by_role("button", name="Chỉ xóa account", exact=True).is_visible())
+            self.assertTrue(page.get_by_role("button", name="Xóa account và profile", exact=True).is_visible())
+            page.locator("#deleteAccountDialog").get_by_role("button", name="Hủy", exact=True).click()
+            page.locator("#deleteAccountDialog").wait_for(state="hidden")
             open_flow: list[str] = []
 
             def fake_open(route):
