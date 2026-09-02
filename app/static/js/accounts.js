@@ -21,22 +21,18 @@ function platformIcon(platform) {
   return `<span class="platform-icon platform-${esc(key)}" title="${esc(platform)}" aria-label="Nền tảng ${esc(platform)}">${icon}</span>`;
 }
 
-function openAccountDialog(account = null) {
+async function openAccountDialog(account = null) {
   const dialog = document.querySelector("#accountDialog");
+  const credentials = account ? await api(`/accounts/${account.id}/credentials`) : {};
   document.querySelector("#accountId").value = account?.id || "";
   document.querySelector("#accountName").value = account?.name || "";
   document.querySelector("#accountPlatform").value = account?.platform || "facebook";
   document.querySelector("#accountUsername").value = account?.username || "";
   document.querySelector("#accountEmail").value = account?.email || "";
-  for (const [input, hint, stored] of [
-    ["#accountPassword", "#accountPasswordHint", account?.has_password],
-    ["#account2fa", "#account2faHint", account?.has_2fa],
-    ["#accountEmailPassword", "#accountEmailPasswordHint", account?.has_email_password],
-    ["#accountCookie", "#accountCookieHint", account?.has_cookie],
-  ]) {
-    document.querySelector(input).value = "";
-    document.querySelector(hint).textContent = stored ? "Đã lưu · để trống để giữ nguyên" : "Chưa lưu";
-  }
+  document.querySelector("#accountPassword").value = credentials.password || "";
+  document.querySelector("#account2fa").value = credentials.secret_2fa || "";
+  document.querySelector("#accountEmailPassword").value = credentials.email_pass || "";
+  document.querySelector("#accountCookie").value = credentials.cookie || "";
   document.querySelector("#accountDialogTitle").textContent = account ? "Sửa tài khoản" : "Thêm tài khoản";
   document.querySelector("#saveAccount").textContent = account ? "Lưu thay đổi" : "Tạo";
   dialog.showModal();
@@ -133,7 +129,7 @@ function bindActions() {
         }
       }
       if (action === "close") { const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
-      if (action === "edit") { openAccountDialog(account); return; }
+      if (action === "edit") { await openAccountDialog(account); return; }
       if (action === "delete" && confirm("Chỉ xóa account không có Page/job. Chrome profile trên ổ đĩa sẽ được giữ lại. Tiếp tục?")) await api(`/accounts/${account.id}`, {method:"DELETE"});
       await refreshAccounts();
     } catch (error) { toast(error.message); }

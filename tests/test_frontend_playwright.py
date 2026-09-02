@@ -85,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.17")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.18")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -105,6 +105,12 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 "accounts": [{
                     "account_name": "Imported UI Account",
                     "platform": "facebook",
+                    "username": "ui-user",
+                    "email": "ui@example.com",
+                    "password": "visible-password",
+                    "secret_2fa": "VISIBLE2FA",
+                    "email_pass": "visible-mail-password",
+                    "cookie": "visible-cookie",
                     "profile_path": "profiles/0001",
                 }],
             }
@@ -136,14 +142,19 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 ["Mở", "Đóng", "Sửa", "Xóa"],
             )
             page.get_by_role("button", name="Sửa", exact=True).first.click()
+            page.locator("#accountDialog").wait_for(state="visible")
             self.assertTrue(page.locator("#accountDialog").is_visible())
             self.assertEqual(page.locator("#accountDialogTitle").inner_text(), "Sửa tài khoản")
             self.assertEqual(page.locator("#accountName").input_value(), "Imported UI Account")
             self.assertEqual(page.locator("#accountPlatform").input_value(), "facebook")
-            self.assertEqual(page.locator("#accountUsername").input_value(), "")
-            self.assertEqual(page.locator("#accountEmail").input_value(), "")
-            self.assertEqual(page.locator("#accountPasswordHint").inner_text(), "Chưa lưu")
-            self.assertEqual(page.locator("#account2faHint").inner_text(), "Chưa lưu")
+            self.assertEqual(page.locator("#accountUsername").input_value(), "ui-user")
+            self.assertEqual(page.locator("#accountEmail").input_value(), "ui@example.com")
+            self.assertEqual(page.locator("#accountPassword").get_attribute("type"), "text")
+            self.assertEqual(page.locator("#accountPassword").input_value(), "visible-password")
+            self.assertEqual(page.locator("#account2fa").get_attribute("type"), "text")
+            self.assertEqual(page.locator("#account2fa").input_value(), "VISIBLE2FA")
+            self.assertEqual(page.locator("#accountEmailPassword").input_value(), "visible-mail-password")
+            self.assertEqual(page.locator("#accountCookie").input_value(), "visible-cookie")
             page.locator("#accountName").fill("Renamed UI Account")
             with page.expect_response(lambda item: "/api/accounts/" in item.url and item.request.method == "PUT") as edit_response:
                 page.get_by_role("button", name="Lưu thay đổi", exact=True).click()

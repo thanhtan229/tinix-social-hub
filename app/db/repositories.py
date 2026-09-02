@@ -68,9 +68,8 @@ class AccountRepository:
         ]
         for field in ("password", "secret_2fa", "email_pass", "cookie"):
             value = str(metadata.get(field) or "")
-            if value:
-                fields.append(f"{field}=?")
-                values.append(value)
+            fields.append(f"{field}=?")
+            values.append(value)
         fields.append("updated_at=?")
         values.extend([utc_now(), account_id])
         with self.db.connection() as connection:

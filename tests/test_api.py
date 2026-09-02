@@ -137,6 +137,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(created.json()["username"], "main-user")
         self.assertEqual(created.json()["email"], "main@example.com")
         account_id = created.json()["id"]
+        credentials = self.client.get(f"/api/accounts/{account_id}/credentials")
+        self.assertEqual(credentials.status_code, 200)
+        self.assertEqual(credentials.headers["cache-control"], "no-store")
+        self.assertEqual(credentials.json(), {
+            "password": "secret-password", "secret_2fa": "JBSWY3DPEHPK3PXP",
+            "email_pass": "mail-secret", "cookie": "cookie-secret",
+        })
         updated = self.client.put(
             f"/api/accounts/{account_id}", json={
                 "name": "Renamed", "platform": "facebook", "username": "renamed-user",
@@ -147,10 +154,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(updated.json()["name"], "Renamed")
         stored = self.services.accounts.get(account_id)
         self.assertEqual(stored["username"], "renamed-user")
-        self.assertEqual(stored["password"], "secret-password")
-        self.assertEqual(stored["secret_2fa"], "JBSWY3DPEHPK3PXP")
-        self.assertEqual(stored["email_pass"], "mail-secret")
-        self.assertEqual(stored["cookie"], "cookie-secret")
+        self.assertEqual(stored["password"], "")
+        self.assertEqual(stored["secret_2fa"], "")
+        self.assertEqual(stored["email_pass"], "")
+        self.assertEqual(stored["cookie"], "")
         disabled = self.client.patch(
             f"/api/accounts/{account_id}/enabled", json={"enabled": False, "reason": "manual"}
         )

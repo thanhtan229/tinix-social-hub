@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psutil
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app import __version__
@@ -179,6 +179,20 @@ async def runtime_readiness(request: Request) -> dict[str, Any]:
 async def list_accounts(request: Request) -> list[dict[str, Any]]:
     accounts = await asyncio.to_thread(services(request).accounts.list)
     return [public_account(account) for account in accounts]
+
+
+@router.get("/accounts/{account_id}/credentials")
+async def account_credentials(account_id: str, request: Request, response: Response) -> dict[str, str]:
+    account = await asyncio.to_thread(services(request).accounts.get, account_id)
+    if not account:
+        raise HTTPException(404, "Không tìm thấy account.")
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "password": str(account.get("password") or ""),
+        "secret_2fa": str(account.get("secret_2fa") or ""),
+        "email_pass": str(account.get("email_pass") or ""),
+        "cookie": str(account.get("cookie") or ""),
+    }
 
 
 @router.post("/accounts", status_code=201)
