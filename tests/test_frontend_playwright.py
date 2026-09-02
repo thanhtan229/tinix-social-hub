@@ -85,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.14")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.15")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -135,6 +135,17 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 account_actions.all_inner_texts(),
                 ["Mở", "Đóng", "Sửa", "Xóa"],
             )
+            page.get_by_role("button", name="Sửa", exact=True).first.click()
+            self.assertTrue(page.locator("#accountDialog").is_visible())
+            self.assertEqual(page.locator("#accountDialogTitle").inner_text(), "Sửa tài khoản")
+            self.assertEqual(page.locator("#accountName").input_value(), "Imported UI Account")
+            self.assertEqual(page.locator("#accountPlatform").input_value(), "facebook")
+            page.locator("#accountName").fill("Renamed UI Account")
+            with page.expect_response(lambda item: "/api/accounts/" in item.url and item.request.method == "PUT") as edit_response:
+                page.get_by_role("button", name="Lưu thay đổi", exact=True).click()
+            self.assertEqual(edit_response.value.status, 200)
+            page.locator("#accountDialog").wait_for(state="hidden")
+            self.assertIn("Renamed UI Account", page.locator("#accountList").inner_text())
             open_flow: list[str] = []
 
             def fake_open(route):

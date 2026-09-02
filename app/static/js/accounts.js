@@ -21,6 +21,17 @@ function platformIcon(platform) {
   return `<span class="platform-icon platform-${esc(key)}" title="${esc(platform)}" aria-label="Nền tảng ${esc(platform)}">${icon}</span>`;
 }
 
+function openAccountDialog(account = null) {
+  const dialog = document.querySelector("#accountDialog");
+  document.querySelector("#accountId").value = account?.id || "";
+  document.querySelector("#accountName").value = account?.name || "";
+  document.querySelector("#accountPlatform").value = account?.platform || "facebook";
+  document.querySelector("#accountDialogTitle").textContent = account ? "Sửa tài khoản" : "Thêm tài khoản";
+  document.querySelector("#saveAccount").textContent = account ? "Lưu thay đổi" : "Tạo";
+  dialog.showModal();
+  setTimeout(() => document.querySelector("#accountName")?.focus(), 0);
+}
+
 export async function refreshAccounts() {
   const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
   store.accounts = accounts; store.targets = targets;
@@ -111,7 +122,7 @@ function bindActions() {
         }
       }
       if (action === "close") { const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
-      if (action === "edit") { const name = prompt("Tên account", account.name); if (name) await api(`/accounts/${account.id}`, {method:"PUT", body:JSON.stringify({name, platform:account.platform})}); }
+      if (action === "edit") { openAccountDialog(account); return; }
       if (action === "delete" && confirm("Chỉ xóa account không có Page/job. Chrome profile trên ổ đĩa sẽ được giữ lại. Tiếp tục?")) await api(`/accounts/${account.id}`, {method:"DELETE"});
       await refreshAccounts();
     } catch (error) { toast(error.message); }
@@ -122,8 +133,24 @@ function bindActions() {
 
 export function initAccounts() {
   const dialog = document.querySelector("#accountDialog");
-  document.querySelector("#newAccount").onclick = () => dialog.showModal();
-  document.querySelector("#accountForm").onsubmit = async event => { event.preventDefault(); try { await api("/accounts", {method:"POST", body:JSON.stringify({name:document.querySelector("#accountName").value, platform:document.querySelector("#accountPlatform").value})}); dialog.close(); event.target.reset(); await refreshAccounts(); toast("Đã thêm account"); } catch(error) { toast(error.message); } };
+  document.querySelector("#newAccount").onclick = () => openAccountDialog();
+  document.querySelector("#accountForm").onsubmit = async event => {
+    event.preventDefault();
+    const accountId = document.querySelector("#accountId").value;
+    const payload = JSON.stringify({name:document.querySelector("#accountName").value.trim(), platform:document.querySelector("#accountPlatform").value});
+    const saveButton = document.querySelector("#saveAccount");
+    const originalLabel = saveButton.textContent;
+    saveButton.disabled = true;
+    saveButton.textContent = "Đang lưu…";
+    try {
+      await api(accountId ? `/accounts/${accountId}` : "/accounts", {method:accountId ? "PUT" : "POST", body:payload});
+      dialog.close();
+      event.target.reset();
+      await refreshAccounts();
+      toast(accountId ? "Đã cập nhật account" : "Đã thêm account");
+    } catch(error) { toast(error.message); }
+    finally { saveButton.disabled = false; saveButton.textContent = originalLabel; }
+  };
   document.querySelector("#profileImportForm").onsubmit = async event => {
     event.preventDefault();
     const archivePath = document.querySelector("#profileArchivePath").value.trim();
