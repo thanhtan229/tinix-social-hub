@@ -123,15 +123,34 @@ class ApiTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_account_crud_and_enable(self) -> None:
-        created = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"})
+        created = self.client.post("/api/accounts", json={
+            "name": "Main", "platform": "facebook", "username": "main-user",
+            "email": "main@example.com", "password": "secret-password",
+            "secret_2fa": "JBSWY3DPEHPK3PXP", "email_pass": "mail-secret", "cookie": "cookie-secret",
+        })
         self.assertEqual(created.status_code, 201)
         self.assertNotIn("password", created.json())
-        self.assertFalse(created.json()["has_password"])
+        self.assertTrue(created.json()["has_password"])
+        self.assertTrue(created.json()["has_2fa"])
+        self.assertTrue(created.json()["has_email_password"])
+        self.assertTrue(created.json()["has_cookie"])
+        self.assertEqual(created.json()["username"], "main-user")
+        self.assertEqual(created.json()["email"], "main@example.com")
         account_id = created.json()["id"]
         updated = self.client.put(
-            f"/api/accounts/{account_id}", json={"name": "Renamed", "platform": "facebook"}
+            f"/api/accounts/{account_id}", json={
+                "name": "Renamed", "platform": "facebook", "username": "renamed-user",
+                "email": "renamed@example.com", "password": "", "secret_2fa": "",
+                "email_pass": "", "cookie": "",
+            }
         )
         self.assertEqual(updated.json()["name"], "Renamed")
+        stored = self.services.accounts.get(account_id)
+        self.assertEqual(stored["username"], "renamed-user")
+        self.assertEqual(stored["password"], "secret-password")
+        self.assertEqual(stored["secret_2fa"], "JBSWY3DPEHPK3PXP")
+        self.assertEqual(stored["email_pass"], "mail-secret")
+        self.assertEqual(stored["cookie"], "cookie-secret")
         disabled = self.client.patch(
             f"/api/accounts/{account_id}/enabled", json={"enabled": False, "reason": "manual"}
         )

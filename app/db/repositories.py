@@ -56,11 +56,27 @@ class AccountRepository:
         with self.db.connection() as connection:
             return [row_to_dict(row) for row in connection.execute(query)]
 
-    def update(self, account_id: str, name: str, platform: str) -> dict[str, Any] | None:
+    def update(
+        self, account_id: str, name: str, platform: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        metadata = metadata or {}
+        fields = ["name=?", "platform=?", "username=?", "email=?"]
+        values: list[Any] = [
+            name.strip(), platform.strip().lower(),
+            str(metadata.get("username") or "").strip(), str(metadata.get("email") or "").strip(),
+        ]
+        for field in ("password", "secret_2fa", "email_pass", "cookie"):
+            value = str(metadata.get(field) or "")
+            if value:
+                fields.append(f"{field}=?")
+                values.append(value)
+        fields.append("updated_at=?")
+        values.extend([utc_now(), account_id])
         with self.db.connection() as connection:
             connection.execute(
-                "UPDATE accounts SET name=?,platform=?,updated_at=? WHERE id=?",
-                (name.strip(), platform.strip().lower(), utc_now(), account_id),
+                f"UPDATE accounts SET {','.join(fields)} WHERE id=?",
+                values,
             )
         return self.get(account_id)
 

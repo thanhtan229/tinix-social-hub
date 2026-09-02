@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     platform: str = Field(min_length=1, max_length=40)
+    username: str = Field(default="", max_length=500)
+    email: str = Field(default="", max_length=500)
+    password: str = Field(default="", max_length=2_000)
+    secret_2fa: str = Field(default="", max_length=500)
+    email_pass: str = Field(default="", max_length=2_000)
+    cookie: str = Field(default="", max_length=200_000)
 
 
 class AccountUpdate(AccountCreate):
@@ -179,7 +185,10 @@ async def list_accounts(request: Request) -> list[dict[str, Any]]:
 async def create_account(body: AccountCreate, request: Request) -> dict[str, Any]:
     if not get_platform(body.platform):
         raise HTTPException(422, "Nền tảng không được hỗ trợ.")
-    account = await asyncio.to_thread(services(request).accounts.create, body.name, body.platform)
+    account = await asyncio.to_thread(
+        services(request).accounts.create, body.name, body.platform,
+        metadata=body.model_dump(exclude={"name", "platform"}),
+    )
     return public_account(account)
 
 
@@ -187,7 +196,10 @@ async def create_account(body: AccountCreate, request: Request) -> dict[str, Any
 async def update_account(account_id: str, body: AccountUpdate, request: Request) -> dict[str, Any]:
     if not get_platform(body.platform):
         raise HTTPException(422, "Nền tảng không được hỗ trợ.")
-    account = await asyncio.to_thread(services(request).accounts.update, account_id, body.name, body.platform)
+    account = await asyncio.to_thread(
+        services(request).accounts.update, account_id, body.name, body.platform,
+        metadata=body.model_dump(exclude={"name", "platform"}),
+    )
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")
     return public_account(account)

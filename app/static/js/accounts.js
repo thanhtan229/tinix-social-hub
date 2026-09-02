@@ -26,6 +26,17 @@ function openAccountDialog(account = null) {
   document.querySelector("#accountId").value = account?.id || "";
   document.querySelector("#accountName").value = account?.name || "";
   document.querySelector("#accountPlatform").value = account?.platform || "facebook";
+  document.querySelector("#accountUsername").value = account?.username || "";
+  document.querySelector("#accountEmail").value = account?.email || "";
+  for (const [input, hint, stored] of [
+    ["#accountPassword", "#accountPasswordHint", account?.has_password],
+    ["#account2fa", "#account2faHint", account?.has_2fa],
+    ["#accountEmailPassword", "#accountEmailPasswordHint", account?.has_email_password],
+    ["#accountCookie", "#accountCookieHint", account?.has_cookie],
+  ]) {
+    document.querySelector(input).value = "";
+    document.querySelector(hint).textContent = stored ? "Đã lưu · để trống để giữ nguyên" : "Chưa lưu";
+  }
   document.querySelector("#accountDialogTitle").textContent = account ? "Sửa tài khoản" : "Thêm tài khoản";
   document.querySelector("#saveAccount").textContent = account ? "Lưu thay đổi" : "Tạo";
   dialog.showModal();
@@ -137,7 +148,16 @@ export function initAccounts() {
   document.querySelector("#accountForm").onsubmit = async event => {
     event.preventDefault();
     const accountId = document.querySelector("#accountId").value;
-    const payload = JSON.stringify({name:document.querySelector("#accountName").value.trim(), platform:document.querySelector("#accountPlatform").value});
+    const payload = JSON.stringify({
+      name:document.querySelector("#accountName").value.trim(),
+      platform:document.querySelector("#accountPlatform").value,
+      username:document.querySelector("#accountUsername").value.trim(),
+      email:document.querySelector("#accountEmail").value.trim(),
+      password:document.querySelector("#accountPassword").value,
+      secret_2fa:document.querySelector("#account2fa").value.trim(),
+      email_pass:document.querySelector("#accountEmailPassword").value,
+      cookie:document.querySelector("#accountCookie").value.trim(),
+    });
     const saveButton = document.querySelector("#saveAccount");
     const originalLabel = saveButton.textContent;
     saveButton.disabled = true;
