@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.0-rc.4`
+Phiên bản áp dụng: `1.0.0-rc.5`
 
 Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media, lập lịch và điều khiển Chrome đăng bài. Tinix không dùng API đăng bài của Facebook, Instagram, TikTok hoặc YouTube. Mỗi tài khoản sử dụng một Chrome profile riêng và bạn đăng nhập trực tiếp trong Chrome.
 

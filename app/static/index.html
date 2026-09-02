@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Tinix Social Studio</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=1.0.0-rc.4">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.0-rc.5">
 </head>
 <body>
   <aside class="sidebar">
@@ -119,9 +119,10 @@
   </main>
 
   <dialog id="accountDialog"><form id="accountForm"><h2>Thêm tài khoản</h2><label>Tên<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option value="facebook">Facebook Web</option><option value="instagram">Instagram Web</option><option value="tiktok">TikTok Studio Web</option><option value="youtube">YouTube Studio Web</option></select></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Tạo</button></div></form></dialog>
+  <dialog id="profileImportDialog"><form id="profileImportForm"><h2>Import Profiles ZIP</h2><p class="muted">Nhập đường dẫn tuyệt đối tới file ZIP đã Export từ một ứng dụng Tinix.</p><label>Đường dẫn file ZIP<input id="profileArchivePath" required placeholder="D:\...\Tinix-...-all-profiles.tinix-profiles.zip"></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Bắt đầu Import</button></div></form></dialog>
   <dialog id="contentDialog"><form id="contentForm"><h2 id="contentDialogTitle">Tạo nội dung</h2><input id="contentId" type="hidden"><label>Tiêu đề<input id="contentTitle" required maxlength="200"></label><label>Caption<textarea id="contentCaption" rows="7"></textarea></label><label>Hashtag, cách nhau bằng dấu cách<input id="contentHashtags"></label><label>CTA<input id="contentCta"></label><label>Ảnh/video<input id="contentMedia" type="file" accept="image/*,video/*" multiple></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Lưu bản nháp</button></div></form></dialog>
   <dialog id="jobDialog"><div><h2>Release detail</h2><div id="jobSummary"></div><h3>Attempts & events</h3><div id="jobEvents"></div><h3>Artifacts</h3><div id="jobArtifacts" class="status-list"></div><div id="jobFinalize" class="form-grid compact hidden"><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận thất bại</button><button id="finalizeSuccess" class="primary">Xác nhận thành công</button></div></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js?v=1.0.0-rc.4"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.0-rc.5"></script>
 </body>
 </html>

@@ -84,7 +84,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.4")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.5")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -96,6 +96,9 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 3)
             self.assertTrue(page.get_by_role("button", name="Import Profiles ZIP", exact=True).is_enabled())
             self.assertIn(".tinix-profiles.zip", page.locator("#profileHelp").inner_text())
+            page.get_by_role("button", name="Import Profiles ZIP", exact=True).click()
+            self.assertTrue(page.locator("#profileImportDialog").is_visible())
+            page.locator("#profileImportDialog [data-close]").click()
             self.assertEqual(errors, [])
             browser.close()
 

@@ -17,19 +17,26 @@ export async function refreshAccounts() {
 
 async function runProfileAction(action, account) {
   if (action === "import") {
-    const bundlePath = prompt("Nhập đường dẫn tuyệt đối tới file .tinix-profiles.zip đã Export từ một ứng dụng Tinix (vẫn hỗ trợ thư mục .tinix-profile cũ):");
-    if (!bundlePath) return false;
-    if (!confirm("Tinix sẽ tạo toàn bộ account cùng tên/nền tảng và sao chép các phiên Chrome từ file ZIP. Tiếp tục?")) return false;
-    const result = await api("/profiles/import", {method:"POST", body:JSON.stringify({bundle_path:bundlePath})});
-    toast(`Đã Import ${result.accounts_imported} account/profile từ ${result.source_app || "gói Tinix"}`);
-    return true;
+    const dialog = document.querySelector("#profileImportDialog");
+    dialog.showModal();
+    setTimeout(() => document.querySelector("#profileArchivePath")?.focus(), 0);
+    return false;
   }
   if (action === "export") {
     if (!store.accounts.length) { toast("App chưa có account để Export."); return false; }
-    if (!confirm("Đóng Chrome của TẤT CẢ account trước khi Export. File ZIP chứa toàn bộ phiên đăng nhập và cần được bảo mật. Tiếp tục?")) return false;
-    const result = await api("/profiles/export", {method:"POST"});
-    toast(`Đã Export ${result.accounts_exported} profile tới ${result.archive_path}`);
-    return true;
+    const button = document.querySelector('[data-profile-action="export"]');
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Đang sao chép và nén...";
+    toast("Đang Export toàn bộ profile. Vui lòng chờ, không đóng app...");
+    try {
+      const result = await api("/profiles/export", {method:"POST"});
+      toast(`Đã Export ${result.accounts_exported} profile tới ${result.archive_path}`);
+      return true;
+    } finally {
+      button.textContent = originalLabel;
+      button.disabled = !store.accounts.length;
+    }
   }
   if (!account) { toast("Hãy tạo hoặc chọn account trước."); return false; }
   if (action === "backup") {
@@ -73,6 +80,22 @@ export function initAccounts() {
   const dialog = document.querySelector("#accountDialog");
   document.querySelector("#newAccount").onclick = () => dialog.showModal();
   document.querySelector("#accountForm").onsubmit = async event => { event.preventDefault(); try { await api("/accounts", {method:"POST", body:JSON.stringify({name:document.querySelector("#accountName").value, platform:document.querySelector("#accountPlatform").value})}); dialog.close(); event.target.reset(); await refreshAccounts(); toast("Đã thêm account"); } catch(error) { toast(error.message); } };
+  document.querySelector("#profileImportForm").onsubmit = async event => {
+    event.preventDefault();
+    const archivePath = document.querySelector("#profileArchivePath").value.trim();
+    if (!archivePath) return;
+    const importDialog = document.querySelector("#profileImportDialog");
+    importDialog.close();
+    toast("Đang Import toàn bộ account/profile. Vui lòng chờ...");
+    try {
+      const result = await api("/profiles/import", {method:"POST", body:JSON.stringify({bundle_path:archivePath})});
+      event.target.reset();
+      await refreshAccounts();
+      toast(`Đã Import ${result.accounts_imported} account/profile từ ${result.source_app || "gói Tinix"}`);
+    } catch (error) {
+      toast(error.message);
+    }
+  };
   document.querySelector("#closeAllChrome").onclick = async () => { const result = await api("/chrome/close-all", {method:"POST"}); toast(`Đã đóng ${result.closed} Chrome`); };
   document.querySelectorAll("[data-profile-action]").forEach(button => button.onclick = async () => {
     const account = store.accounts.find(item => item.id === document.querySelector("#profileAccount").value);
