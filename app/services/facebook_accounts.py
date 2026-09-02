@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from app.automation.browser_session import BrowserSession
@@ -8,6 +9,9 @@ from app.automation.facebook.login_detector import FacebookLoginDetector, LoginS
 from app.automation.facebook.page_objects import FacebookPagesPage
 from app.db.repositories import AccountRepository, TargetRepository
 from app.services.chrome import ChromeManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class FacebookAccountService:
@@ -41,7 +45,9 @@ class FacebookAccountService:
             page = await session.page()
             await page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30_000)
             status = await self.detector.detect(page)
+            checked_url = page.url
         await asyncio.to_thread(self.accounts.update_login_status, account_id, status.value)
+        logger.info("Facebook login check: account=%s status=%s url=%s", account_id, status.value, checked_url)
         return {"account_id": account_id, "login_status": status.value}
 
     async def sync_pages(self, account_id: str) -> list[dict[str, Any]]:
@@ -68,4 +74,3 @@ class FacebookAccountService:
         except Exception as exc:
             await asyncio.to_thread(self.targets.set_sync_error, account_id, str(exc))
             raise
-
