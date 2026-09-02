@@ -66,6 +66,24 @@ dialog { border:1px solid var(--line); border-radius:16px; padding:24px; width:m
 .operation-status.error { border-color:#e5b8b3; background:#fff0ee; color:var(--red); }
 #toast { position:fixed; right:22px; bottom:22px; max-width:400px; padding:12px 16px; border-radius:10px; background:var(--ink); color:white; opacity:0; transform:translateY(8px); transition:.2s; pointer-events:none; z-index:20; } #toast.show { opacity:1; transform:none; }
 .muted { color:var(--muted); }
+.accounts-panel,.accounts-target-panel { grid-column:1/-1; }
+.account-filter-bar { display:grid; grid-template-columns:minmax(240px,1fr) minmax(170px,220px) minmax(180px,230px); gap:8px; margin-bottom:10px; }
+.account-platform-filters { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+.account-platform-filter { display:inline-flex; align-items:center; gap:6px; padding:6px 9px; }
+.account-platform-filter .platform-icon { width:17px; height:17px; flex-basis:17px; }
+.account-platform-filter b { display:grid; place-items:center; min-width:20px; height:20px; padding:0 5px; border-radius:99px; background:#e9ece8; font-size:10px; }
+.account-platform-filter.active { color:white; background:var(--ink); border-color:var(--ink); }
+.account-platform-filter.active b { color:var(--ink); background:var(--lime); }
+.account-table-wrap { overflow-x:auto; }
+.account-table { min-width:780px; }
+.account-table th,.account-table td { vertical-align:middle; }
+.account-table .account-index { width:52px; text-align:center; }
+.account-table .account-action-heading { text-align:right; }
+.account-table td:last-child { width:260px; }
+.account-contact,.account-table td small { display:block; }
+.account-table td small { color:var(--muted); font-size:11px; }
+.profile-maintenance { margin-top:4px; color:var(--amber)!important; }
+.account-empty { padding:18px 4px; text-align:center; }
 .account-identity { display:flex; align-items:center; gap:7px; margin-bottom:4px; }
 .platform-icon { display:inline-flex; width:20px; height:20px; flex:0 0 20px; border-radius:5px; overflow:hidden; vertical-align:middle; }
 .platform-icon svg { display:block; width:100%; height:100%; }
@@ -114,4 +132,4 @@ dialog { border:1px solid var(--line); border-radius:16px; padding:24px; width:m
 #jobDialog h3 { margin-top:18px; }
 @media(max-width:1100px) { .platform-grid { grid-template-columns:repeat(2,1fr); } }
 @media(max-width:1000px) { .stats { grid-template-columns:repeat(3,1fr); } .card-grid,.asset-grid { grid-template-columns:repeat(2,1fr); } }
-@media(max-width:760px) { .sidebar { position:static; width:auto; padding:12px; } .logo { margin-bottom:12px; } nav { display:flex; overflow:auto; } nav button { white-space:nowrap; } .connection { display:none; } main { margin:0; padding:25px 15px 60px; } .grid.two,.form-grid,.form-grid.compact { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } .card-grid,.platform-grid,.asset-grid { grid-template-columns:1fr; } .page-head,.profile-manager { align-items:start; flex-direction:column; } h1 { font-size:30px; } .calendar-grid.week-view,.calendar-grid.month-view { grid-template-columns:repeat(7,150px); } .calendar-list-row { grid-template-columns:1fr; } }
+@media(max-width:760px) { .sidebar { position:static; width:auto; padding:12px; } .logo { margin-bottom:12px; } nav { display:flex; overflow:auto; } nav button { white-space:nowrap; } .connection { display:none; } main { margin:0; padding:25px 15px 60px; } .grid.two,.form-grid,.form-grid.compact { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } .card-grid,.platform-grid,.asset-grid { grid-template-columns:1fr; } .page-head,.profile-manager { align-items:start; flex-direction:column; } h1 { font-size:30px; } .calendar-grid.week-view,.calendar-grid.month-view { grid-template-columns:repeat(7,150px); } .calendar-list-row { grid-template-columns:1fr; } .account-filter-bar { grid-template-columns:1fr; } .account-table { min-width:0; } .account-table thead { display:none; } .account-table,.account-table tbody,.account-table tr,.account-table td { display:block; width:100%; } .account-table tr { padding:12px 0; border-bottom:1px solid var(--line); } .account-table td { display:grid; grid-template-columns:110px minmax(0,1fr); gap:8px; padding:5px 0; border:0; white-space:normal; } .account-table td::before { content:attr(data-label); color:var(--muted); font-size:11px; font-weight:750; text-transform:uppercase; } .account-table .account-index { width:100%; text-align:left; } .account-table td:last-child { width:100%; } .account-actions { justify-content:flex-start; } }

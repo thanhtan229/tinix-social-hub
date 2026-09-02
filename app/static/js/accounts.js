@@ -15,6 +15,9 @@ const PLATFORM_ICONS = {
   youtube: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect y="3.5" width="24" height="17" rx="5" fill="#FF0000"/><path fill="#fff" d="m9.5 8 7 4-7 4V8Z"/></svg>',
 };
 
+const PLATFORM_LABELS = {facebook:"Facebook", instagram:"Instagram", tiktok:"TikTok", youtube:"YouTube"};
+const accountFilters = {search:"", platform:"", status:"", sort:"platform_name"};
+
 function platformIcon(platform) {
   const key = String(platform || "").toLowerCase();
   const icon = PLATFORM_ICONS[key] || '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#718078"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" fill="none" stroke="#fff" stroke-width="1.5"/></svg>';
@@ -46,6 +49,47 @@ function openDeleteAccountDialog(account) {
   dialog.showModal();
 }
 
+function renderPlatformFilters() {
+  const counts = store.accounts.reduce((result, account) => {
+    result[account.platform] = (result[account.platform] || 0) + 1;
+    return result;
+  }, {});
+  if (accountFilters.platform && !counts[accountFilters.platform]) accountFilters.platform = "";
+  const platforms = ["facebook", "instagram", "tiktok", "youtube"].filter(platform => counts[platform]);
+  const button = (platform, label, count, icon = "") => `<button type="button" class="account-platform-filter${accountFilters.platform === platform ? " active" : ""}" data-account-platform="${platform}">${icon}<span>${label}</span><b>${count}</b></button>`;
+  document.querySelector("#accountPlatformFilters").innerHTML = button("", "Tất cả", store.accounts.length) + platforms.map(platform => button(platform, PLATFORM_LABELS[platform] || platform, counts[platform], platformIcon(platform))).join("");
+  document.querySelectorAll("[data-account-platform]").forEach(filterButton => filterButton.onclick = () => {
+    accountFilters.platform = filterButton.dataset.accountPlatform;
+    renderAccountList();
+  });
+}
+
+function filteredAccounts() {
+  const search = accountFilters.search.trim().toLocaleLowerCase("vi");
+  const result = store.accounts.filter(account => {
+    const haystack = [account.name, account.username, account.email].join(" ").toLocaleLowerCase("vi");
+    return (!search || haystack.includes(search)) &&
+      (!accountFilters.platform || account.platform === accountFilters.platform) &&
+      (!accountFilters.status || account.login_status === accountFilters.status);
+  });
+  const byName = (left, right) => left.name.localeCompare(right.name, "vi", {numeric:true, sensitivity:"base"});
+  result.sort((left, right) => {
+    if (accountFilters.sort === "name_asc") return byName(left, right);
+    if (accountFilters.sort === "name_desc") return byName(right, left);
+    if (accountFilters.sort === "status") return (STATUS[left.login_status] || left.login_status).localeCompare(STATUS[right.login_status] || right.login_status, "vi") || byName(left, right);
+    return left.platform.localeCompare(right.platform) || byName(left, right);
+  });
+  return result;
+}
+
+function renderAccountList() {
+  renderPlatformFilters();
+  const accounts = filteredAccounts();
+  document.querySelector("#accountResultCount").textContent = `Hiển thị ${accounts.length}/${store.accounts.length}`;
+  document.querySelector("#accountList").innerHTML = accounts.length ? `<table class="account-table"><thead><tr><th class="account-index">STT</th><th>Account</th><th>Username / Email</th><th>Trạng thái</th><th class="account-action-heading">Thao tác</th></tr></thead><tbody>${accounts.map((account,index) => `<tr><td class="account-index" data-label="STT">${index+1}</td><td data-label="Account"><div class="account-identity"><strong>${esc(account.name)}</strong>${platformIcon(account.platform)}</div></td><td data-label="Username / Email"><span class="account-contact">${esc(account.username || account.email || "Chưa có username/email")}</span>${account.username && account.email ? `<small>${esc(account.email)}</small>` : ""}</td><td data-label="Trạng thái">${badge(account.login_status)}${account.profile_operation_locked ? '<small class="profile-maintenance">Profile đang bảo trì</small>' : ""}</td><td data-label="Thao tác"><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="close" data-id="${account.id}">Đóng</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></td></tr>`).join("")}</tbody></table>` : `<p class="muted account-empty">${store.accounts.length ? "Không có account phù hợp bộ lọc." : "Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công."}</p>`;
+  bindActions();
+}
+
 export async function refreshAccounts() {
   const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
   store.accounts = accounts; store.targets = targets;
@@ -55,9 +99,9 @@ export async function refreshAccounts() {
   if (accounts.some(account => account.id === selectedProfileAccount)) profileSelect.value = selectedProfileAccount;
   document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
   document.querySelector("#profileHelp").textContent = accounts.length ? "Export tạo ZIP chứa thông tin account, dữ liệu đăng nhập và phiên Chrome; hãy bảo quản file cẩn thận." : "Import file .tinix-profiles.zip để tạo toàn bộ account, thông tin đăng nhập và phiên Chrome trong một lần.";
-  document.querySelector("#accountList").innerHTML = accounts.length ? accounts.map(account => `<div class="list-row"><div><div class="account-identity"><strong>${esc(account.name)}</strong>${platformIcon(account.platform)}</div><small class="muted">${badge(account.login_status)}${account.profile_operation_locked ? " · profile đang bảo trì" : ""}</small></div><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="close" data-id="${account.id}">Đóng</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></div>`).join("") : '<p class="muted">Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công.</p>';
+  renderAccountList();
   document.querySelector("#targetList").innerHTML = targets.length ? targets.map(target => `<div class="list-row"><div><strong>${esc(target.name)}</strong><small class="muted">${esc(target.platform)} · ${esc(target.access_status)} · ${esc((accounts.find(a=>a.id===target.account_id)||{}).name||"")}</small></div><button data-target-id="${target.id}" data-enabled="${target.enabled}">${target.enabled ? "Tắt" : "Bật"}</button></div>`).join("") : '<p class="muted">Chưa có Page hoặc kênh được đồng bộ.</p>';
-  bindActions();
+  document.querySelectorAll("[data-target-id]").forEach(button => button.onclick = async () => { try { await api(`/targets/${button.dataset.targetId}/enabled`, {method:"PATCH", body:JSON.stringify({enabled:button.dataset.enabled !== "1"})}); await refreshAccounts(); } catch(error) { toast(error.message); } });
 }
 
 async function runProfileAction(action, account) {
@@ -142,7 +186,6 @@ function bindActions() {
     } catch (error) { toast(error.message); }
     finally { button.disabled = false; button.textContent = originalLabel; }
   });
-  document.querySelectorAll("[data-target-id]").forEach(button => button.onclick = async () => { try { await api(`/targets/${button.dataset.targetId}/enabled`, {method:"PATCH", body:JSON.stringify({enabled:button.dataset.enabled !== "1"})}); await refreshAccounts(); } catch(error) { toast(error.message); } });
 }
 
 export function initAccounts() {
@@ -247,4 +290,7 @@ export function initAccounts() {
     try { if (await runProfileAction(button.dataset.profileAction, account)) await refreshAccounts(); } catch(error) { toast(error.message); }
   });
   document.querySelector("#targetSearch").oninput = () => { clearTimeout(initAccounts.searchTimer); initAccounts.searchTimer = setTimeout(refreshAccounts, 350); };
+  document.querySelector("#accountSearch").oninput = event => { accountFilters.search = event.target.value; renderAccountList(); };
+  document.querySelector("#accountStatusFilter").onchange = event => { accountFilters.status = event.target.value; renderAccountList(); };
+  document.querySelector("#accountSort").onchange = event => { accountFilters.sort = event.target.value; renderAccountList(); };
 }

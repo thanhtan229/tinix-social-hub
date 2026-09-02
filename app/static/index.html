@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Tinix Social Studio</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=1.0.0-rc.19">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.0-rc.20">
 </head>
 <body>
   <aside class="sidebar">
@@ -102,7 +102,7 @@
     <section id="tab-accounts" class="tab">
       <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Kênh</h1><p>Mỗi account dùng Chrome profile riêng; đăng nhập được thực hiện thủ công trong Chrome.</p></div><button id="newAccount" class="primary">+ Thêm account</button></div>
       <article class="panel profile-manager"><div><h2>Quản lý Chrome profile</h2><p id="profileHelp" class="muted">Import/Export toàn bộ account và phiên đăng nhập bằng một file ZIP; chọn account khi Backup hoặc Khôi phục.</p></div><div class="profile-manager-actions"><select id="profileAccount" aria-label="Account quản lý profile"></select><button class="primary" data-profile-action="import">Import Profiles ZIP</button><button data-profile-action="export" title="ZIP chứa thông tin đăng nhập và phiên Chrome; hãy bảo quản cẩn thận">Export Account & Sessions ZIP</button><button data-profile-action="cleanup">Dọn dẹp profile</button><button data-profile-action="backup">Backup</button><button data-profile-action="restore">Khôi phục</button></div></article>
-      <div class="grid two"><article class="panel"><div class="panel-head"><h2>Accounts</h2><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div id="accountList"></div></article><article class="panel"><div class="panel-head"><h2>Page / Kênh đã đồng bộ</h2><input id="targetSearch" placeholder="Tìm Page hoặc kênh"></div><div id="targetList"></div></article></div>
+      <div class="grid two"><article class="panel accounts-panel"><div class="panel-head"><div><h2>Accounts</h2><span id="accountResultCount" class="muted"></span></div><button id="closeAllChrome">Đóng tất cả Chrome</button></div><div class="account-filter-bar"><input id="accountSearch" type="search" placeholder="Tìm tên, username hoặc email" aria-label="Tìm account"><select id="accountStatusFilter" aria-label="Lọc trạng thái account"><option value="">Mọi trạng thái</option><option value="logged_in">Đã đăng nhập</option><option value="unknown">Chưa kiểm tra</option><option value="logged_out">Chưa đăng nhập</option><option value="checkpoint">Checkpoint</option><option value="session_lost">Mất phiên</option></select><select id="accountSort" aria-label="Sắp xếp account"><option value="platform_name">Nền tảng, tên A–Z</option><option value="name_asc">Tên A–Z</option><option value="name_desc">Tên Z–A</option><option value="status">Trạng thái</option></select></div><div id="accountPlatformFilters" class="account-platform-filters" aria-label="Lọc theo nền tảng"></div><div id="accountList" class="account-table-wrap"></div></article><article class="panel accounts-target-panel"><div class="panel-head"><h2>Page / Kênh đã đồng bộ</h2><input id="targetSearch" placeholder="Tìm Page hoặc kênh"></div><div id="targetList"></div></article></div>
     </section>
 
     <section id="tab-analytics" class="tab">
@@ -125,6 +125,6 @@
   <dialog id="contentDialog"><form id="contentForm"><h2 id="contentDialogTitle">Tạo nội dung</h2><input id="contentId" type="hidden"><label>Tiêu đề<input id="contentTitle" required maxlength="200"></label><label>Caption<textarea id="contentCaption" rows="7"></textarea></label><label>Hashtag, cách nhau bằng dấu cách<input id="contentHashtags"></label><label>CTA<input id="contentCta"></label><label>Ảnh/video<input id="contentMedia" type="file" accept="image/*,video/*" multiple></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Lưu bản nháp</button></div></form></dialog>
   <dialog id="jobDialog"><div><h2>Release detail</h2><div id="jobSummary"></div><h3>Attempts & events</h3><div id="jobEvents"></div><h3>Artifacts</h3><div id="jobArtifacts" class="status-list"></div><div id="jobFinalize" class="form-grid compact hidden"><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận thất bại</button><button id="finalizeSuccess" class="primary">Xác nhận thành công</button></div></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js?v=1.0.0-rc.19"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.0-rc.20"></script>
 </body>
 </html>
