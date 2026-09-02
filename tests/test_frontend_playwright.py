@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 import urllib.request
+import zipfile
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -84,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.6")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.7")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -96,9 +97,31 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 4)
             self.assertTrue(page.get_by_role("button", name="Import Profiles ZIP", exact=True).is_enabled())
             self.assertIn(".tinix-profiles.zip", page.locator("#profileHelp").inner_text())
+            archive = Path(self.temp.name) / "frontend-import.tinix-profiles.zip"
+            manifest = {
+                "bundle_format": "tinix-profiles",
+                "format_version": 1,
+                "source_app": "Tinix UI regression test",
+                "accounts": [{
+                    "account_name": "Imported UI Account",
+                    "platform": "facebook",
+                    "profile_path": "profiles/0001",
+                }],
+            }
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("manifest.json", json.dumps(manifest))
+                bundle.writestr("profiles/0001/Local State", "{}")
+                bundle.writestr("profiles/0001/Default/Preferences", "{}")
+                bundle.writestr("profiles/0001/Default/Cookies", "session")
             page.get_by_role("button", name="Import Profiles ZIP", exact=True).click()
             self.assertTrue(page.locator("#profileImportDialog").is_visible())
-            page.locator("#profileImportDialog [data-close]").click()
+            page.locator("#profileArchivePath").fill(str(archive))
+            with page.expect_response(lambda item: item.url.endswith("/api/profiles/import")) as response:
+                page.get_by_role("button", name="Bắt đầu Import", exact=True).click()
+            self.assertEqual(response.value.status, 200)
+            page.locator("#profileImportDialog").wait_for(state="hidden")
+            self.assertFalse(page.locator("#profileImportDialog").is_visible())
+            self.assertIn("Imported UI Account", page.locator("#accountList").inner_text())
             self.assertEqual(errors, [])
             browser.close()
 

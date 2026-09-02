@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from datetime import datetime, timezone
 from typing import Any
@@ -14,6 +15,7 @@ from app.platforms import PLATFORM_CATALOG, get_platform
 from app.runtime import runtime_report
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 
 class AccountCreate(BaseModel):
@@ -237,11 +239,16 @@ async def _profile_operation(request: Request, account_id: str, method: str, *ar
     from app.services.profile_transfer import ProfileTransferError
     svc = services(request)
     try:
-        async with svc.application_lock:
-            return await asyncio.to_thread(getattr(svc.profile_transfer, method), account_id, *args)
+        # Mutating requests are already serialized by ``serialize_mutating_requests``
+        # in app.main. Acquiring the same non-reentrant asyncio.Lock here deadlocks.
+        logger.info("Profile operation started: %s account=%s", method, account_id)
+        result = await asyncio.to_thread(getattr(svc.profile_transfer, method), account_id, *args)
+        logger.info("Profile operation completed: %s account=%s", method, account_id)
+        return result
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy account.") from exc
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning("Profile operation failed: %s account=%s error=%s", method, account_id, exc)
         raise HTTPException(409, str(exc)) from exc
 
 
@@ -271,9 +278,12 @@ async def import_profile_bundle(body: ProfileBundleImportRequest, request: Reque
     from app.services.profile_transfer import ProfileTransferError
     svc = services(request)
     try:
-        async with svc.application_lock:
-            return await asyncio.to_thread(svc.profile_transfer.import_all_profiles, body.bundle_path)
+        logger.info("Profile bundle import started: %s", body.bundle_path)
+        result = await asyncio.to_thread(svc.profile_transfer.import_all_profiles, body.bundle_path)
+        logger.info("Profile bundle import completed: accounts=%s", result.get("accounts_imported", 0))
+        return result
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning("Profile bundle import failed: %s error=%s", body.bundle_path, exc)
         raise HTTPException(409, str(exc)) from exc
 
 
@@ -282,9 +292,12 @@ async def export_all_profiles(request: Request) -> dict[str, Any]:
     from app.services.profile_transfer import ProfileTransferError
     svc = services(request)
     try:
-        async with svc.application_lock:
-            return await asyncio.to_thread(svc.profile_transfer.export_all_profiles)
+        logger.info("Profile bundle export started")
+        result = await asyncio.to_thread(svc.profile_transfer.export_all_profiles)
+        logger.info("Profile bundle export completed: accounts=%s", result.get("accounts_exported", 0))
+        return result
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning("Profile bundle export failed: %s", exc)
         raise HTTPException(409, str(exc)) from exc
 
 
@@ -302,9 +315,16 @@ async def cleanup_profiles(request: Request) -> dict[str, Any]:
     from app.services.profile_transfer import ProfileTransferError
     svc = services(request)
     try:
-        async with svc.application_lock:
-            return await asyncio.to_thread(svc.profile_transfer.cleanup_profiles)
+        logger.info("Profile cleanup started")
+        result = await asyncio.to_thread(svc.profile_transfer.cleanup_profiles)
+        logger.info(
+            "Profile cleanup completed: profiles=%s bytes=%s",
+            result.get("profiles_cleaned", 0),
+            result.get("bytes_freed", 0),
+        )
+        return result
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning("Profile cleanup failed: %s", exc)
         raise HTTPException(409, str(exc)) from exc
 
 

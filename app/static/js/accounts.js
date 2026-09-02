@@ -25,6 +25,9 @@ export async function refreshAccounts() {
 async function runProfileAction(action, account) {
   if (action === "import") {
     const dialog = document.querySelector("#profileImportDialog");
+    const status = document.querySelector("#profileImportStatus");
+    status.textContent = "";
+    status.className = "operation-status hidden";
     dialog.showModal();
     setTimeout(() => document.querySelector("#profileArchivePath")?.focus(), 0);
     return false;
@@ -103,15 +106,32 @@ export function initAccounts() {
     const archivePath = document.querySelector("#profileArchivePath").value.trim();
     if (!archivePath) return;
     const importDialog = document.querySelector("#profileImportDialog");
-    importDialog.close();
+    const status = document.querySelector("#profileImportStatus");
+    const submitButton = document.querySelector("#confirmProfileImport");
+    const cancelButton = document.querySelector("#cancelProfileImport");
+    const pathInput = document.querySelector("#profileArchivePath");
+    status.className = "operation-status";
+    status.textContent = "Đang đọc file ZIP và khôi phục các phiên đăng nhập… Việc này có thể mất vài phút.";
+    submitButton.disabled = true;
+    submitButton.textContent = "Đang Import…";
+    cancelButton.disabled = true;
+    pathInput.disabled = true;
     toast("Đang Import toàn bộ account/profile. Vui lòng chờ...");
     try {
       const result = await api("/profiles/import", {method:"POST", body:JSON.stringify({bundle_path:archivePath})});
       event.target.reset();
       await refreshAccounts();
+      importDialog.close();
       toast(`Đã Import ${result.accounts_imported} account/profile từ ${result.source_app || "gói Tinix"}`);
     } catch (error) {
+      status.className = "operation-status error";
+      status.textContent = `Import thất bại: ${error.message}`;
       toast(error.message);
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Bắt đầu Import";
+      cancelButton.disabled = false;
+      pathInput.disabled = false;
     }
   };
   document.querySelector("#profileCleanupForm").onsubmit = async event => {
