@@ -63,7 +63,11 @@ dialog { border:1px solid var(--line); border-radius:16px; padding:24px; width:m
 .operation-status { margin:0; padding:11px 13px; border:1px solid #b9d4c7; border-radius:10px; background:#edf8f2; color:var(--green); font-weight:700; overflow-wrap:anywhere; }
 .operation-status.error { border-color:#e5b8b3; background:#fff0ee; color:var(--red); }
 #toast { position:fixed; right:22px; bottom:22px; max-width:400px; padding:12px 16px; border-radius:10px; background:var(--ink); color:white; opacity:0; transform:translateY(8px); transition:.2s; pointer-events:none; z-index:20; } #toast.show { opacity:1; transform:none; }
-.muted { color:var(--muted); } .account-actions { display:flex; flex-wrap:wrap; gap:5px; justify-content:flex-end; }
+.muted { color:var(--muted); }
+.account-identity { display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+.platform-icon { display:inline-flex; width:20px; height:20px; flex:0 0 20px; border-radius:5px; overflow:hidden; vertical-align:middle; }
+.platform-icon svg { display:block; width:100%; height:100%; }
+.account-actions { display:flex; flex-wrap:wrap; gap:5px; justify-content:flex-end; }
 .calendar-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px; margin-bottom:10px; }
 .calendar-toolbar .view-switch { display:flex; gap:4px; margin-right:auto; }
 .calendar-toolbar .view-switch .active { background:var(--ink); color:white; }

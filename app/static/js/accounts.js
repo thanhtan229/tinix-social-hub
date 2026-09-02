@@ -8,6 +8,19 @@ function formatBytes(value) {
   return `${(value / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
+const PLATFORM_ICONS = {
+  facebook: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.03 1.79-4.7 4.53-4.7 1.31 0 2.68.24 2.68.24v2.96h-1.51c-1.49 0-1.96.93-1.96 1.89v2.27h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07Z"/></svg>',
+  instagram: '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="ig" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#FFD600"/><stop offset=".48" stop-color="#FF0169"/><stop offset="1" stop-color="#7638FA"/></linearGradient></defs><rect width="24" height="24" rx="6" fill="url(#ig)"/><circle cx="12" cy="12" r="4.4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="18.1" cy="5.9" r="1.25" fill="#fff"/></svg>',
+  tiktok: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#101010"/><path fill="#25F4EE" d="M10.2 17.1a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V7.7c1 1.2 2.4 2 4 2.1V7.3a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/><path fill="#FE2C55" d="M11.1 17.5a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V8.1c1 1.2 2.4 2 4 2.1V7.7a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/><path fill="#fff" d="M10.65 17.3a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V7.9c1 1.2 2.4 2 4 2.1V7.5a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/></svg>',
+  youtube: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect y="3.5" width="24" height="17" rx="5" fill="#FF0000"/><path fill="#fff" d="m9.5 8 7 4-7 4V8Z"/></svg>',
+};
+
+function platformIcon(platform) {
+  const key = String(platform || "").toLowerCase();
+  const icon = PLATFORM_ICONS[key] || '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#718078"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" fill="none" stroke="#fff" stroke-width="1.5"/></svg>';
+  return `<span class="platform-icon platform-${esc(key)}" title="${esc(platform)}" aria-label="Nền tảng ${esc(platform)}">${icon}</span>`;
+}
+
 export async function refreshAccounts() {
   const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
   store.accounts = accounts; store.targets = targets;
@@ -17,7 +30,7 @@ export async function refreshAccounts() {
   if (accounts.some(account => account.id === selectedProfileAccount)) profileSelect.value = selectedProfileAccount;
   document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
   document.querySelector("#profileHelp").textContent = accounts.length ? "Export tạo ZIP gọn nhẹ chứa account và phiên đăng nhập; Dọn dẹp xóa cache nhưng giữ nguyên phiên." : "Import file .tinix-profiles.zip để tạo toàn bộ account và phiên đăng nhập trong một lần.";
-  document.querySelector("#accountList").innerHTML = accounts.length ? accounts.map(account => `<div class="list-row"><div><strong>${esc(account.name)}</strong><small class="muted">${esc(account.platform)} · ${badge(account.login_status)}${account.profile_operation_locked ? " · profile đang bảo trì" : ""}</small></div><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="close" data-id="${account.id}">Đóng</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></div>`).join("") : '<p class="muted">Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công.</p>';
+  document.querySelector("#accountList").innerHTML = accounts.length ? accounts.map(account => `<div class="list-row"><div><div class="account-identity"><strong>${esc(account.name)}</strong>${platformIcon(account.platform)}</div><small class="muted">${badge(account.login_status)}${account.profile_operation_locked ? " · profile đang bảo trì" : ""}</small></div><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="close" data-id="${account.id}">Đóng</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></div>`).join("") : '<p class="muted">Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công.</p>';
   document.querySelector("#targetList").innerHTML = targets.length ? targets.map(target => `<div class="list-row"><div><strong>${esc(target.name)}</strong><small class="muted">${esc(target.platform)} · ${esc(target.access_status)} · ${esc((accounts.find(a=>a.id===target.account_id)||{}).name||"")}</small></div><button data-target-id="${target.id}" data-enabled="${target.enabled}">${target.enabled ? "Tắt" : "Bật"}</button></div>`).join("") : '<p class="muted">Chưa có Page hoặc kênh được đồng bộ.</p>';
   bindActions();
 }

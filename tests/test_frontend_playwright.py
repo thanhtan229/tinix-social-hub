@@ -85,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.13")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.14")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -122,6 +122,10 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.locator("#profileImportDialog").wait_for(state="hidden")
             self.assertFalse(page.locator("#profileImportDialog").is_visible())
             self.assertIn("Imported UI Account", page.locator("#accountList").inner_text())
+            platform_icon = page.locator('#accountList .platform-icon[aria-label="Nền tảng facebook"]')
+            self.assertEqual(platform_icon.count(), 1)
+            self.assertEqual(platform_icon.locator("svg").count(), 1)
+            self.assertNotIn("facebook ·", page.locator("#accountList").inner_text())
             unknown_badge = page.locator("#accountList .badge.unknown")
             self.assertEqual(unknown_badge.count(), 1)
             self.assertEqual(unknown_badge.evaluate("element => getComputedStyle(element).color"), "rgb(89, 102, 116)")
