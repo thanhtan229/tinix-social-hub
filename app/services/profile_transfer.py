@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import tempfile
 import uuid
-import json
 import zipfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import psutil
 
@@ -25,11 +26,24 @@ class ProfileTransferError(RuntimeError):
 class ChromeProfileTransferService:
     """Copy Chrome user-data directories without ever sharing a live profile."""
 
-    CACHE_DIRECTORIES = {
+    CACHE_DIRECTORIES = frozenset({
         "cache", "code cache", "gpucache", "shadercache", "grshadercache",
         "dawncache", "crashpad", "component_crx_cache",
-    }
-    LOCK_FILES = {"singletonlock", "singletoncookie", "singletonsocket", "lockfile"}
+    })
+    CLEANUP_DIRECTORIES = CACHE_DIRECTORIES | frozenset({
+        "browsermetrics", "cache_storage", "cachestorage", "crash reports",
+        "media cache", "optimization_guide_model_store", "safe browsing",
+        "wasmttsengine",
+    })
+    SESSION_ROOT_FILES = frozenset({"local state"})
+    SESSION_PROFILE_FILES = frozenset({
+        "cookies", "cookies-journal", "cookies-shm", "cookies-wal",
+        "preferences", "secure preferences",
+    })
+    SESSION_PROFILE_DIRECTORIES = frozenset({
+        "indexeddb", "local storage", "session storage", "webstorage",
+    })
+    LOCK_FILES = frozenset({"singletonlock", "singletoncookie", "singletonsocket", "lockfile"})
     REPARSE_POINT = 0x400
     BUNDLE_FORMAT = "tinix-profile"
     BUNDLE_VERSION = 1
@@ -132,6 +146,143 @@ class ChromeProfileTransferService:
 
         copy_directory(source, destination)
         return files, total
+
+    @classmethod
+    def _copy_session_profile(cls, source: Path, destination: Path) -> tuple[int, int]:
+        """Copy only Chrome state required to carry a signed-in web session."""
+        files = 0
+        total = 0
+        destination.mkdir(parents=True, exist_ok=False)
+
+        def copy_file(source_file: Path, destination_file: Path) -> None:
+            nonlocal files, total
+            if not source_file.is_file() or cls._is_reparse(source_file):
+                return
+            destination_file.parent.mkdir(parents=True, exist_ok=True)
+            size = source_file.stat(follow_symlinks=False).st_size
+            shutil.copy2(source_file, destination_file)
+            files += 1
+            total += size
+
+        for item in source.iterdir():
+            if item.is_file() and item.name.lower() in cls.SESSION_ROOT_FILES:
+                copy_file(item, destination / item.name)
+
+        profile_directories = [source / "Default", *source.glob("Profile *")]
+        for profile in profile_directories:
+            if not profile.is_dir() or cls._is_reparse(profile):
+                continue
+            target_profile = destination / profile.name
+            target_profile.mkdir(parents=True, exist_ok=True)
+            for item in profile.iterdir():
+                lowered = item.name.lower()
+                if item.is_file() and lowered in cls.SESSION_PROFILE_FILES:
+                    copy_file(item, target_profile / item.name)
+                elif item.is_dir() and lowered == "network":
+                    for network_file in item.iterdir():
+                        if network_file.is_file() and network_file.name.lower() in cls.SESSION_PROFILE_FILES:
+                            copy_file(network_file, target_profile / item.name / network_file.name)
+                elif item.is_dir() and lowered in cls.SESSION_PROFILE_DIRECTORIES:
+                    copied_files, copied_size = cls._copy_tree(item, target_profile / item.name)
+                    files += copied_files
+                    total += copied_size
+
+        cls._validate_profile(destination)
+        return files, total
+
+    @classmethod
+    def _cleanup_candidates(cls, profile: Path) -> list[tuple[Path, int, int]]:
+        candidates: list[tuple[Path, int, int]] = []
+
+        def directory_size(path: Path) -> tuple[int, int]:
+            count = 0
+            size = 0
+            for root, directories, filenames in os.walk(path, followlinks=False):
+                directories[:] = [name for name in directories if not cls._is_reparse(Path(root) / name)]
+                for name in filenames:
+                    item = Path(root) / name
+                    if cls._is_reparse(item):
+                        continue
+                    try:
+                        size += item.stat(follow_symlinks=False).st_size
+                        count += 1
+                    except OSError:
+                        continue
+            return count, size
+
+        def visit(current: Path) -> None:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                    item = Path(entry.path)
+                    if cls._is_reparse(item):
+                        continue
+                    if entry.name.lower() in cls.CLEANUP_DIRECTORIES:
+                        count, size = directory_size(item)
+                        candidates.append((item, count, size))
+                    else:
+                        visit(item)
+
+        visit(profile)
+        return candidates
+
+    def profile_cleanup_preview(self) -> dict[str, Any]:
+        profiles = []
+        total_files = 0
+        total_bytes = 0
+        chrome_running = 0
+        for account in self.accounts.list():
+            _, profile = self._account_and_target(account["id"])
+            if not profile.exists():
+                continue
+            self._validate_profile(profile)
+            candidates = self._cleanup_candidates(profile)
+            files = sum(item[1] for item in candidates)
+            size = sum(item[2] for item in candidates)
+            running = self.path_in_use(profile)
+            chrome_running += int(running)
+            total_files += files
+            total_bytes += size
+            profiles.append({
+                "account_id": account["id"], "account_name": account["name"],
+                "files": files, "bytes": size, "chrome_running": running,
+            })
+        return {
+            "profiles_scanned": len(profiles), "chrome_running": chrome_running,
+            "files_removable": total_files, "bytes_removable": total_bytes,
+            "profiles": profiles,
+        }
+
+    def cleanup_profiles(self) -> dict[str, Any]:
+        preview = self.profile_cleanup_preview()
+        if preview["chrome_running"]:
+            raise ProfileTransferError("Chrome đang sử dụng một hoặc nhiều profile. Hãy đóng tất cả Chrome trước khi dọn dẹp.")
+        removed_directories = 0
+        removed_files = 0
+        bytes_freed = 0
+        profiles_cleaned = 0
+        for account in self.accounts.list():
+            _, profile = self._account_and_target(account["id"])
+            if not profile.exists():
+                continue
+            self._validate_profile(profile)
+            self._ensure_available(profile)
+            candidates = self._cleanup_candidates(profile)
+            if candidates:
+                profiles_cleaned += 1
+            for path, files, size in candidates:
+                shutil.rmtree(path)
+                removed_directories += 1
+                removed_files += files
+                bytes_freed += size
+        return {
+            "profiles_scanned": preview["profiles_scanned"],
+            "profiles_cleaned": profiles_cleaned,
+            "directories_removed": removed_directories,
+            "files_removed": removed_files,
+            "bytes_freed": bytes_freed,
+        }
 
     @staticmethod
     def _safe_label(value: str) -> str:
@@ -327,7 +478,7 @@ class ChromeProfileTransferService:
         try:
             for index, (account, source) in enumerate(sources, 1):
                 relative = f"profiles/{index:04d}"
-                copied_files, copied_size = self._copy_tree(source, staging / relative)
+                copied_files, copied_size = self._copy_session_profile(source, staging / relative)
                 files += copied_files
                 size += copied_size
                 manifest_accounts.append({
@@ -341,6 +492,7 @@ class ChromeProfileTransferService:
                 "format_version": self.COLLECTION_VERSION,
                 "source_app": "Tinix Social Hub",
                 "source_app_version": __version__,
+                "profile_content": "session-only-v1",
                 "exported_at": utc_now(),
                 "accounts": manifest_accounts,
             }
@@ -408,7 +560,7 @@ class ChromeProfileTransferService:
             self.accounts.end_profile_operation(account_id)
 
     def import_profile(self, account_id: str, source_path: str) -> dict[str, Any]:
-        account, target = self._account_and_target(account_id)
+        _, target = self._account_and_target(account_id)
         source = Path(os.path.expandvars(os.path.expanduser(source_path))).resolve()
 
         def action() -> dict[str, Any]:
@@ -454,7 +606,7 @@ class ChromeProfileTransferService:
             staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent))
             try:
                 profile_destination = staging / "chrome-profile"
-                files, size = self._copy_tree(source, profile_destination)
+                files, size = self._copy_session_profile(source, profile_destination)
                 self._validate_profile(profile_destination)
                 from app import __version__
                 manifest = {
@@ -464,6 +616,7 @@ class ChromeProfileTransferService:
                     "platform": account["platform"],
                     "source_app": "Tinix Social Hub",
                     "source_app_version": __version__,
+                    "profile_content": "session-only-v1",
                     "source_account_id": account["id"],
                     "exported_at": utc_now(),
                 }

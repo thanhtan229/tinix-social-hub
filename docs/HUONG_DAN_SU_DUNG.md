@@ -61,7 +61,8 @@ Mỗi account có một profile tại `chrome_profiles/<UUID>`. Không đăng nh
 Trong **Tài khoản & Page**, mỗi account có bốn thao tác quản lý profile:
 
 - **Import Profiles ZIP**: đọc một file `.tinix-profiles.zip`, tự tạo toàn bộ account cùng tên/nền tảng và sao chép các phiên Chrome trong một lần. Vẫn hỗ trợ thư mục `.tinix-profile` cũ.
-- **Export All Profiles ZIP**: tạo một file ZIP di động tại `exports/chrome_profiles/`, gồm manifest chung và toàn bộ Chrome profile của app.
+- **Export Sessions ZIP**: tạo một file ZIP di động tại `exports/chrome_profiles/`, gồm manifest chung, tên account và dữ liệu phiên đăng nhập cần thiết. Cache/model Chromium không được đưa vào ZIP.
+- **Dọn dẹp profile**: quét dung lượng trước, sau đó xóa cache và dữ liệu tạm của mọi profile khi Chrome đã đóng. Chức năng này giữ cookies, Preferences, Local/Session Storage và IndexedDB.
 - **Backup**: tạo điểm khôi phục nội bộ tại `data/backups/chrome_profiles/<ACCOUNT_ID>/`.
 - **Khôi phục**: thay profile hiện tại bằng một backup đã chọn; profile trước khôi phục lại được backup tự động.
 

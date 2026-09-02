@@ -11,7 +11,7 @@ Tinix-...-all-profiles.tinix-profiles.zip
     └── ...
 ```
 
-`manifest.json` có `bundle_format: "tinix-profiles"`, `format_version: 1` và mảng `accounts`. Mỗi account lưu tên, nền tảng, nguồn và đường dẫn profile tương ứng trong ZIP.
+`manifest.json` có `bundle_format: "tinix-profiles"`, `format_version: 1`, `profile_content: "session-only-v1"` và mảng `accounts`. Mỗi account lưu tên, nền tảng, nguồn và đường dẫn profile tương ứng trong ZIP. Phần profile chỉ chứa trạng thái cần cho phiên đăng nhập (Local State, Preferences, cookies, Local/Session Storage, IndexedDB và WebStorage), không chứa cache hay model Chromium.
 
 Trước khi Export, phải đóng Chrome của tất cả account. File ZIP chứa bản sao phiên đăng nhập Chrome nên cần được bảo mật. Cache, lock file, mật khẩu, mã 2FA, mật khẩu email và cookie lưu riêng trong cơ sở dữ liệu ứng dụng không được đưa vào ZIP.
 

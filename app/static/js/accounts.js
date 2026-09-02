@@ -1,6 +1,13 @@
 import {api, badge, esc, toast} from "./api.js";
 import {store} from "./store.js";
 
+function formatBytes(value) {
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
 export async function refreshAccounts() {
   const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
   store.accounts = accounts; store.targets = targets;
@@ -9,7 +16,7 @@ export async function refreshAccounts() {
   profileSelect.innerHTML = accounts.length ? accounts.map(account => `<option value="${account.id}">${esc(account.name)} · ${esc(account.platform)}</option>`).join("") : '<option value="">Chưa có account</option>';
   if (accounts.some(account => account.id === selectedProfileAccount)) profileSelect.value = selectedProfileAccount;
   document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
-  document.querySelector("#profileHelp").textContent = accounts.length ? "Export tạo một file ZIP chứa toàn bộ account/profile; Import file đó một lần ở app Tinix khác." : "Import file .tinix-profiles.zip để tạo toàn bộ account và Chrome profile trong một lần.";
+  document.querySelector("#profileHelp").textContent = accounts.length ? "Export tạo ZIP gọn nhẹ chứa account và phiên đăng nhập; Dọn dẹp xóa cache nhưng giữ nguyên phiên." : "Import file .tinix-profiles.zip để tạo toàn bộ account và phiên đăng nhập trong một lần.";
   document.querySelector("#accountList").innerHTML = accounts.length ? accounts.map(account => `<div class="list-row"><div><strong>${esc(account.name)}</strong><small class="muted">${esc(account.platform)} · ${badge(account.login_status)}${account.profile_operation_locked ? " · profile đang bảo trì" : ""}</small></div><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở Chrome</button><button data-account-action="login" data-id="${account.id}">Kiểm tra login</button><button data-account-action="sync" data-id="${account.id}">Đồng bộ ${account.platform==="facebook"?"Page":"kênh"}</button><button data-account-action="backup" data-id="${account.id}">Backup</button><button data-account-action="restore" data-id="${account.id}">Khôi phục</button><button data-account-action="toggle" data-id="${account.id}">${account.enabled ? "Tắt" : "Bật"}</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></div>`).join("") : '<p class="muted">Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công.</p>';
   document.querySelector("#targetList").innerHTML = targets.length ? targets.map(target => `<div class="list-row"><div><strong>${esc(target.name)}</strong><small class="muted">${esc(target.platform)} · ${esc(target.access_status)} · ${esc((accounts.find(a=>a.id===target.account_id)||{}).name||"")}</small></div><button data-target-id="${target.id}" data-enabled="${target.enabled}">${target.enabled ? "Tắt" : "Bật"}</button></div>`).join("") : '<p class="muted">Chưa có Page hoặc kênh được đồng bộ.</p>';
   bindActions();
@@ -31,12 +38,23 @@ async function runProfileAction(action, account) {
     toast("Đang Export toàn bộ profile. Vui lòng chờ, không đóng app...");
     try {
       const result = await api("/profiles/export", {method:"POST"});
-      toast(`Đã Export ${result.accounts_exported} profile tới ${result.archive_path}`);
+      toast(`Đã Export ${result.accounts_exported} phiên (${formatBytes(result.bytes_copied)}) tới ${result.archive_path}`);
       return true;
     } finally {
       button.textContent = originalLabel;
       button.disabled = !store.accounts.length;
     }
+  }
+  if (action === "cleanup") {
+    const preview = await api("/profiles/cleanup-preview");
+    const summary = document.querySelector("#profileCleanupSummary");
+    summary.textContent = `Có thể giải phóng khoảng ${formatBytes(preview.bytes_removable)} (${preview.files_removable} file) trong ${preview.profiles_scanned} profile.`;
+    const confirmButton = document.querySelector("#confirmProfileCleanup");
+    confirmButton.disabled = preview.chrome_running > 0 || preview.bytes_removable === 0;
+    if (preview.chrome_running) summary.textContent += ` Có ${preview.chrome_running} profile đang được Chrome sử dụng; hãy đóng Chrome trước.`;
+    if (!preview.bytes_removable) summary.textContent += " Hiện không có dữ liệu cần dọn.";
+    document.querySelector("#profileCleanupDialog").showModal();
+    return false;
   }
   if (!account) { toast("Hãy tạo hoặc chọn account trước."); return false; }
   if (action === "backup") {
@@ -94,6 +112,23 @@ export function initAccounts() {
       toast(`Đã Import ${result.accounts_imported} account/profile từ ${result.source_app || "gói Tinix"}`);
     } catch (error) {
       toast(error.message);
+    }
+  };
+  document.querySelector("#profileCleanupForm").onsubmit = async event => {
+    event.preventDefault();
+    const dialog = document.querySelector("#profileCleanupDialog");
+    const button = document.querySelector("#confirmProfileCleanup");
+    button.disabled = true;
+    button.textContent = "Đang dọn dẹp...";
+    try {
+      const result = await api("/profiles/cleanup", {method:"POST"});
+      dialog.close();
+      toast(`Đã dọn ${result.profiles_cleaned} profile, giải phóng ${formatBytes(result.bytes_freed)}.`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.textContent = "Dọn dẹp ngay";
+      button.disabled = false;
     }
   };
   document.querySelector("#closeAllChrome").onclick = async () => { const result = await api("/chrome/close-all", {method:"POST"}); toast(`Đã đóng ${result.closed} Chrome`); };

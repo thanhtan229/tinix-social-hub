@@ -5,14 +5,13 @@ import shutil
 from datetime import datetime, timezone
 from typing import Any
 
+import psutil
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-import psutil
 
 from app import __version__
 from app.platforms import PLATFORM_CATALOG, get_platform
 from app.runtime import runtime_report
-
 
 router = APIRouter(prefix="/api")
 
@@ -285,6 +284,26 @@ async def export_all_profiles(request: Request) -> dict[str, Any]:
     try:
         async with svc.application_lock:
             return await asyncio.to_thread(svc.profile_transfer.export_all_profiles)
+    except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/profiles/cleanup-preview")
+async def preview_profile_cleanup(request: Request) -> dict[str, Any]:
+    from app.services.profile_transfer import ProfileTransferError
+    try:
+        return await asyncio.to_thread(services(request).profile_transfer.profile_cleanup_preview)
+    except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/profiles/cleanup")
+async def cleanup_profiles(request: Request) -> dict[str, Any]:
+    from app.services.profile_transfer import ProfileTransferError
+    svc = services(request)
+    try:
+        async with svc.application_lock:
+            return await asyncio.to_thread(svc.profile_transfer.cleanup_profiles)
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
 

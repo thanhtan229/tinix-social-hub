@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
-import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 from app.db.database import Database
 from app.db.repositories import AccountRepository, JobRepository
-from app.services.profile_transfer import ChromeProfileTransferService, ProfileTransferError
+from app.services.profile_transfer import (
+    ChromeProfileTransferService,
+    ProfileTransferError,
+)
 
 
 def make_profile(path: Path, cookie: str) -> Path:
@@ -18,6 +21,8 @@ def make_profile(path: Path, cookie: str) -> Path:
     (path / "Default" / "Preferences").write_text("{}", encoding="utf-8")
     (path / "Default" / "Cookies").write_text(cookie, encoding="utf-8")
     (path / "Default" / "Cache" / "ignored.bin").write_bytes(b"cache")
+    (path / "optimization_guide_model_store").mkdir()
+    (path / "optimization_guide_model_store" / "model.tflite").write_bytes(b"model-cache")
     (path / "SingletonLock").write_text("locked", encoding="utf-8")
     return path
 
@@ -104,7 +109,11 @@ class ProfileTransferTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as bundle:
             manifest = json.loads(bundle.read("manifest.json"))
             self.assertEqual(manifest["bundle_format"], "tinix-profiles")
+            self.assertEqual(manifest["profile_content"], "session-only-v1")
             self.assertEqual({item["account_name"] for item in manifest["accounts"]}, {"Main Account", "Video Account"})
+            self.assertIn("profiles/0001/Default/Cookies", bundle.namelist())
+            self.assertNotIn("profiles/0001/Default/Cache/ignored.bin", bundle.namelist())
+            self.assertNotIn("profiles/0001/optimization_guide_model_store/model.tflite", bundle.namelist())
 
         imported = self.service.import_all_profiles(str(archive))
         self.assertEqual(imported["accounts_imported"], 2)
@@ -115,6 +124,22 @@ class ProfileTransferTests(unittest.TestCase):
             for item in imported_accounts
         }
         self.assertEqual(cookies, {"Main Account": "facebook-session", "Video Account": "youtube-session"})
+
+    def test_cleanup_preview_and_execute_keep_session_state(self) -> None:
+        make_profile(self.target, "keep-session")
+        (self.target / "Default" / "Local Storage" / "leveldb").mkdir(parents=True)
+        (self.target / "Default" / "Local Storage" / "leveldb" / "state").write_text("keep")
+
+        preview = self.service.profile_cleanup_preview()
+        self.assertEqual(preview["profiles_scanned"], 1)
+        self.assertGreaterEqual(preview["bytes_removable"], len(b"cache") + len(b"model-cache"))
+
+        result = self.service.cleanup_profiles()
+        self.assertEqual(result["profiles_cleaned"], 1)
+        self.assertFalse((self.target / "Default" / "Cache").exists())
+        self.assertFalse((self.target / "optimization_guide_model_store").exists())
+        self.assertEqual((self.target / "Default" / "Cookies").read_text(), "keep-session")
+        self.assertEqual((self.target / "Default" / "Local Storage" / "leveldb" / "state").read_text(), "keep")
 
     def test_import_rejects_zip_path_traversal(self) -> None:
         archive = self.root / "unsafe.tinix-profiles.zip"
