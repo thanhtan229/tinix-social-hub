@@ -85,7 +85,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.12")
+            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.13")
             for name in (
                 "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
                 "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
@@ -131,6 +131,22 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 account_actions.all_inner_texts(),
                 ["Mở", "Đóng", "Sửa", "Xóa"],
             )
+            open_flow: list[str] = []
+
+            def fake_open(route):
+                open_flow.append("open")
+                route.fulfill(status=200, content_type="application/json", body='{"state":"ready"}')
+
+            def fake_login_check(route):
+                open_flow.append("check-login")
+                route.fulfill(status=200, content_type="application/json", body='{"login_status":"logged_in"}')
+
+            page.route("**/api/accounts/*/chrome/open", fake_open)
+            page.route("**/api/accounts/*/check-login", fake_login_check)
+            page.get_by_role("button", name="Mở", exact=True).first.click()
+            page.wait_for_function("() => document.querySelector('#toast')?.textContent.includes('Đã đăng nhập')")
+            self.assertEqual(open_flow, ["open", "check-login"])
+            self.assertIn("Đã đăng nhập", page.locator("#toast").inner_text())
             self.assertEqual(errors, [])
             browser.close()
 

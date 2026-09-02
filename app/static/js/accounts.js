@@ -1,4 +1,4 @@
-import {api, badge, esc, toast} from "./api.js";
+import {api, badge, esc, STATUS, toast} from "./api.js";
 import {store} from "./store.js";
 
 function formatBytes(value) {
@@ -83,13 +83,26 @@ async function runProfileAction(action, account) {
 function bindActions() {
   document.querySelectorAll("[data-account-action]").forEach(button => button.onclick = async () => {
     const account = store.accounts.find(item => item.id === button.dataset.id); const action = button.dataset.accountAction;
+    const originalLabel = button.textContent;
     try {
-      if (action === "chrome") { await api(`/accounts/${account.id}/chrome/open`, {method:"POST"}); toast(`Đã mở Chrome cho ${account.name}`); }
+      if (action === "chrome") {
+        button.disabled = true;
+        button.textContent = "Đang mở…";
+        await api(`/accounts/${account.id}/chrome/open`, {method:"POST"});
+        button.textContent = "Đang kiểm tra…";
+        try {
+          const result = await api(`/accounts/${account.id}/check-login`, {method:"POST"});
+          toast(`${account.name}: ${STATUS[result.login_status] || result.login_status}`);
+        } catch (error) {
+          throw new Error(`Đã mở Chrome nhưng kiểm tra đăng nhập thất bại: ${error.message}`);
+        }
+      }
       if (action === "close") { const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
       if (action === "edit") { const name = prompt("Tên account", account.name); if (name) await api(`/accounts/${account.id}`, {method:"PUT", body:JSON.stringify({name, platform:account.platform})}); }
       if (action === "delete" && confirm("Chỉ xóa account không có Page/job. Chrome profile trên ổ đĩa sẽ được giữ lại. Tiếp tục?")) await api(`/accounts/${account.id}`, {method:"DELETE"});
       await refreshAccounts();
     } catch (error) { toast(error.message); }
+    finally { button.disabled = false; button.textContent = originalLabel; }
   });
   document.querySelectorAll("[data-target-id]").forEach(button => button.onclick = async () => { try { await api(`/targets/${button.dataset.targetId}/enabled`, {method:"PATCH", body:JSON.stringify({enabled:button.dataset.enabled !== "1"})}); await refreshAccounts(); } catch(error) { toast(error.message); } });
 }
