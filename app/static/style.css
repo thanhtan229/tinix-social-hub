@@ -46,6 +46,11 @@ button.danger { color:var(--red); } button:disabled { opacity:.45; cursor:not-al
 .badge.warn,.badge.pending_approval,.badge.checkpoint,.badge.login_required,.badge.unknown_result { background:#f8ead1; color:var(--amber); }
 .badge.bad,.badge.permanent_failure,.badge.cancelled { background:#f7dfdc; color:var(--red); }
 .badge.working,.badge.opening_browser,.badge.checking_login,.badge.uploading,.badge.publishing,.badge.verifying { background:#e6edc1; color:#526218; }
+.badge.logged_in { background:#d9f2e4; color:#176443; border:1px solid #acd9bf; }
+.badge.unknown { background:#e9edf2; color:#596674; border:1px solid #cbd3dc; }
+.badge.checkpoint { background:#fff0c9; color:#8a5700; border:1px solid #e9c66e; }
+.badge.logged_out { background:#fde5dc; color:#9a3f24; border:1px solid #efb9a7; }
+.badge.session_lost { background:#f8d9d7; color:#9b2825; border:1px solid #e8a4a1; }
 .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; } .form-grid .full { grid-column:1/-1; }
 label { display:grid; gap:6px; font-weight:650; } label.check { display:flex; align-items:center; gap:9px; } label.check input { width:auto; } label.check span, label.check small { display:block; }
 input,select,textarea { width:100%; padding:10px; border:1px solid #cfd3cd; border-radius:9px; background:white; color:var(--ink); font:inherit; } select[multiple] { padding:5px; }
