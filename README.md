@@ -4,7 +4,7 @@ Hướng dẫn thao tác đầy đủ: [docs/HUONG_DAN_SU_DUNG.md](docs/HUONG_DA
 
 Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 
-> Bản `1.0.0-rc.3` bổ sung gói Chrome profile dùng chung giữa các ứng dụng Tinix. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
+> Bản `1.0.0-rc.4` cho phép Export/Import toàn bộ account và Chrome profile bằng một file ZIP dùng chung giữa các ứng dụng Tinix. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
 
 ## Cài đặt và chạy
 
@@ -54,7 +54,7 @@ API key chỉ được đọc ở backend, không gửi xuống frontend. Loggin
 
 Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa account hoặc xóa account khác.
 
-Có thể dùng **Export profile** để tạo gói `.tinix-profile` chứa tên account, nền tảng và bản sao phiên Chrome; **Import profile** tự tạo lại account từ gói đó. Tinix không dùng chung thư mục sống và không đưa password/2FA/cookie database vào manifest.
+Có thể dùng **Export All Profiles ZIP** để tạo một file `.tinix-profiles.zip` chứa toàn bộ tên account, nền tảng và bản sao các phiên Chrome; **Import Profiles ZIP** tự tạo lại tất cả account trong một lần. Tinix không dùng chung thư mục sống và không đưa password/2FA/cookie database vào manifest.
 
 ### 2. Nội dung và duyệt
 

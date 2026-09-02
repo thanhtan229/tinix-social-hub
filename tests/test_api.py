@@ -157,7 +157,15 @@ class ApiTests(unittest.TestCase):
             "/api/profiles/import", json={"bundle_path": exported.json()["bundle_path"]}
         )
         self.assertEqual(imported_bundle.status_code, 200)
-        self.assertEqual(imported_bundle.json()["account"]["name"], "Main")
+        self.assertEqual(imported_bundle.json()["accounts"][0]["name"], "Main")
+        exported_all = self.client.post("/api/profiles/export")
+        self.assertEqual(exported_all.status_code, 200)
+        self.assertEqual(exported_all.json()["accounts_exported"], 2)
+        imported_all = self.client.post(
+            "/api/profiles/import", json={"bundle_path": exported_all.json()["archive_path"]}
+        )
+        self.assertEqual(imported_all.status_code, 200)
+        self.assertEqual(imported_all.json()["accounts_imported"], 2)
         listed = self.client.get(f"/api/accounts/{account['id']}/profile/backups").json()
         self.assertEqual(listed[0]["name"], backup.json()["backup_name"])
         restored = self.client.post(

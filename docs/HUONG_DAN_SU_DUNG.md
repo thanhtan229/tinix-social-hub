@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.0-rc.3`
+Phiên bản áp dụng: `1.0.0-rc.4`
 
 Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media, lập lịch và điều khiển Chrome đăng bài. Tinix không dùng API đăng bài của Facebook, Instagram, TikTok hoặc YouTube. Mỗi tài khoản sử dụng một Chrome profile riêng và bạn đăng nhập trực tiếp trong Chrome.
 
@@ -60,8 +60,8 @@ Mỗi account có một profile tại `chrome_profiles/<UUID>`. Không đăng nh
 
 Trong **Tài khoản & Page**, mỗi account có bốn thao tác quản lý profile:
 
-- **Import profile**: đọc một thư mục `.tinix-profile`, tự tạo account cùng tên/nền tảng và sao chép phiên Chrome. Không cần tạo account trước.
-- **Export profile**: tạo gói di động tại `exports/chrome_profiles/`, gồm `manifest.json` và thư mục `chrome-profile/`.
+- **Import Profiles ZIP**: đọc một file `.tinix-profiles.zip`, tự tạo toàn bộ account cùng tên/nền tảng và sao chép các phiên Chrome trong một lần. Vẫn hỗ trợ thư mục `.tinix-profile` cũ.
+- **Export All Profiles ZIP**: tạo một file ZIP di động tại `exports/chrome_profiles/`, gồm manifest chung và toàn bộ Chrome profile của app.
 - **Backup**: tạo điểm khôi phục nội bộ tại `data/backups/chrome_profiles/<ACCOUNT_ID>/`.
 - **Khôi phục**: thay profile hiện tại bằng một backup đã chọn; profile trước khôi phục lại được backup tự động.
 

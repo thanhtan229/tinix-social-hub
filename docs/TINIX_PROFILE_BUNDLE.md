@@ -1,13 +1,18 @@
-# Tinix Profile Bundle v1
+# Tinix Profiles ZIP v1
 
-A portable profile is a directory ending in `.tinix-profile`:
+Tinix Social Hub và Tinix FB Down dùng chung một file ZIP để chuyển toàn bộ account và Chrome profile trong một lần:
 
 ```text
-Account-name.tinix-profile/
+Tinix-...-all-profiles.tinix-profiles.zip
 ├── manifest.json
-└── chrome-profile/
+└── profiles/
+    ├── 0001/
+    ├── 0002/
+    └── ...
 ```
 
-Required manifest fields are `bundle_format: "tinix-profile"`, `format_version: 1`, `account_name` and `platform`. Optional provenance fields include `source_app`, `source_app_version`, `source_account_id`, `username` and `exported_at`.
+`manifest.json` có `bundle_format: "tinix-profiles"`, `format_version: 1` và mảng `accounts`. Mỗi account lưu tên, nền tảng, nguồn và đường dẫn profile tương ứng trong ZIP.
 
-The bundle transfers account identity metadata and a copied Chrome session. It never includes passwords, 2FA secrets, email passwords or cookie fields read from an application database. Chrome must be closed before Import or Export.
+Trước khi Export, phải đóng Chrome của tất cả account. File ZIP chứa bản sao phiên đăng nhập Chrome nên cần được bảo mật. Cache, lock file, mật khẩu, mã 2FA, mật khẩu email và cookie lưu riêng trong cơ sở dữ liệu ứng dụng không được đưa vào ZIP.
+
+Import vẫn chấp nhận thư mục `.tinix-profile` v1 cũ để tương thích ngược. FB Down chỉ nhập các profile Facebook; profile nền tảng khác trong ZIP sẽ được báo là đã bỏ qua.

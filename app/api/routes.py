@@ -273,7 +273,18 @@ async def import_profile_bundle(body: ProfileBundleImportRequest, request: Reque
     svc = services(request)
     try:
         async with svc.application_lock:
-            return await asyncio.to_thread(svc.profile_transfer.import_bundle, body.bundle_path)
+            return await asyncio.to_thread(svc.profile_transfer.import_all_profiles, body.bundle_path)
+    except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/profiles/export")
+async def export_all_profiles(request: Request) -> dict[str, Any]:
+    from app.services.profile_transfer import ProfileTransferError
+    svc = services(request)
+    try:
+        async with svc.application_lock:
+            return await asyncio.to_thread(svc.profile_transfer.export_all_profiles)
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
 

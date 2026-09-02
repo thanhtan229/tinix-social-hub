@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import uuid
 import json
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +33,10 @@ class ChromeProfileTransferService:
     REPARSE_POINT = 0x400
     BUNDLE_FORMAT = "tinix-profile"
     BUNDLE_VERSION = 1
+    COLLECTION_FORMAT = "tinix-profiles"
+    COLLECTION_VERSION = 1
+    MAX_ARCHIVE_FILES = 250_000
+    MAX_ARCHIVE_BYTES = 100 * 1024 * 1024 * 1024
 
     def __init__(
         self,
@@ -225,6 +230,164 @@ class ChromeProfileTransferService:
             "source_app": manifest.get("source_app"),
             "source_account_id": manifest.get("source_account_id"),
         }
+
+    @classmethod
+    def _extract_archive(cls, archive: Path, destination: Path) -> None:
+        if not archive.is_absolute() or not archive.is_file() or cls._is_reparse(archive):
+            raise ProfileTransferError("File ZIP Tinix profile không tồn tại hoặc không an toàn.")
+        try:
+            with zipfile.ZipFile(archive) as bundle:
+                entries = bundle.infolist()
+                if len(entries) > cls.MAX_ARCHIVE_FILES:
+                    raise ProfileTransferError("File ZIP chứa quá nhiều mục.")
+                declared_size = sum(item.file_size for item in entries)
+                if declared_size > cls.MAX_ARCHIVE_BYTES:
+                    raise ProfileTransferError("File ZIP vượt giới hạn dung lượng giải nén 100 GB.")
+                seen: set[str] = set()
+                copied = 0
+                root = destination.resolve()
+                for item in entries:
+                    relative = item.filename.replace("\\", "/").strip("/")
+                    parts = [part for part in relative.split("/") if part]
+                    if not parts:
+                        continue
+                    if any(part in {".", ".."} for part in parts) or ":" in parts[0]:
+                        raise ProfileTransferError("File ZIP chứa đường dẫn không an toàn.")
+                    key = "/".join(parts).lower()
+                    if key in seen:
+                        raise ProfileTransferError("File ZIP chứa đường dẫn trùng lặp.")
+                    seen.add(key)
+                    mode = (item.external_attr >> 16) & 0o170000
+                    if mode == 0o120000:
+                        raise ProfileTransferError("File ZIP chứa symlink không an toàn.")
+                    target = (root.joinpath(*parts)).resolve()
+                    if root not in target.parents and target != root:
+                        raise ProfileTransferError("File ZIP chứa đường dẫn vượt ra ngoài thư mục giải nén.")
+                    if item.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with bundle.open(item) as source, target.open("wb") as output:
+                        while chunk := source.read(1024 * 1024):
+                            copied += len(chunk)
+                            if copied > cls.MAX_ARCHIVE_BYTES:
+                                raise ProfileTransferError("File ZIP vượt giới hạn dung lượng giải nén 100 GB.")
+                            output.write(chunk)
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise ProfileTransferError("Không đọc được file ZIP Tinix profile.") from exc
+
+    def _read_collection(self, root: Path) -> tuple[dict[str, Any], list[tuple[dict[str, Any], Path]]]:
+        try:
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProfileTransferError("File ZIP thiếu manifest.json hợp lệ.") from exc
+        if manifest.get("bundle_format") != self.COLLECTION_FORMAT or manifest.get("format_version") != self.COLLECTION_VERSION:
+            raise ProfileTransferError("Định dạng ZIP đa profile không được hỗ trợ.")
+        raw_accounts = manifest.get("accounts")
+        if not isinstance(raw_accounts, list) or not raw_accounts or len(raw_accounts) > 10_000:
+            raise ProfileTransferError("Danh sách account trong ZIP không hợp lệ.")
+        result: list[tuple[dict[str, Any], Path]] = []
+        profiles_root = (root / "profiles").resolve()
+        for raw in raw_accounts:
+            if not isinstance(raw, dict):
+                raise ProfileTransferError("Metadata account trong ZIP không hợp lệ.")
+            name = str(raw.get("account_name") or "").strip()
+            platform = str(raw.get("platform") or "").strip().lower()
+            profile_key = str(raw.get("profile_path") or "").replace("\\", "/").strip("/")
+            if not name or len(name) > 100 or platform not in {"facebook", "instagram", "tiktok", "youtube"}:
+                raise ProfileTransferError("Tên hoặc nền tảng account trong ZIP không hợp lệ.")
+            profile = (root / profile_key).resolve()
+            if profiles_root not in profile.parents or profile == profiles_root:
+                raise ProfileTransferError("Đường dẫn profile trong manifest không hợp lệ.")
+            self._validate_profile(profile)
+            result.append(({**raw, "account_name": name, "platform": platform}, profile))
+        return manifest, result
+
+    def export_all_profiles(self) -> dict[str, Any]:
+        accounts = self.accounts.list()
+        if not accounts:
+            raise ProfileTransferError("App chưa có account để Export.")
+        sources: list[tuple[dict[str, Any], Path]] = []
+        for account in accounts:
+            _, source = self._account_and_target(account["id"])
+            try:
+                self._validate_profile(source)
+                self._ensure_available(source)
+            except ProfileTransferError as exc:
+                raise ProfileTransferError(f"Không thể Export account “{account['name']}”: {exc}") from exc
+            sources.append((account, source))
+
+        from app import __version__
+        destination = self.export_root / f"Tinix-Social-Hub-all-profiles-{self._timestamp()}.tinix-profiles.zip"
+        staging = Path(tempfile.mkdtemp(prefix=".tinix-profiles-", dir=self.export_root))
+        temporary_zip = destination.with_suffix(destination.suffix + ".tmp")
+        files = 0
+        size = 0
+        manifest_accounts: list[dict[str, Any]] = []
+        try:
+            for index, (account, source) in enumerate(sources, 1):
+                relative = f"profiles/{index:04d}"
+                copied_files, copied_size = self._copy_tree(source, staging / relative)
+                files += copied_files
+                size += copied_size
+                manifest_accounts.append({
+                    "account_name": account["name"],
+                    "platform": account["platform"],
+                    "source_account_id": account["id"],
+                    "profile_path": relative,
+                })
+            manifest = {
+                "bundle_format": self.COLLECTION_FORMAT,
+                "format_version": self.COLLECTION_VERSION,
+                "source_app": "Tinix Social Hub",
+                "source_app_version": __version__,
+                "exported_at": utc_now(),
+                "accounts": manifest_accounts,
+            }
+            (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            with zipfile.ZipFile(temporary_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=6) as archive:
+                for item in staging.rglob("*"):
+                    if item.is_file():
+                        archive.write(item, item.relative_to(staging).as_posix())
+            os.replace(temporary_zip, destination)
+        except Exception:
+            if temporary_zip.exists():
+                temporary_zip.unlink()
+            raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        return {
+            "archive_path": str(destination), "bundle_path": str(destination),
+            "accounts_exported": len(manifest_accounts), "files_copied": files, "bytes_copied": size,
+        }
+
+    def import_all_profiles(self, bundle_path: str) -> dict[str, Any]:
+        source = Path(os.path.expandvars(os.path.expanduser(bundle_path))).resolve()
+        if source.is_dir():
+            imported = self.import_bundle(bundle_path)
+            return {"accounts_imported": 1, "accounts": [imported["account"]], "source_app": imported.get("source_app")}
+        extraction = Path(tempfile.mkdtemp(prefix="tinix-profiles-import-"))
+        created: list[dict[str, Any]] = []
+        try:
+            self._extract_archive(source, extraction)
+            manifest, entries = self._read_collection(extraction)
+            for metadata, profile in entries:
+                account = self.accounts.create(metadata["account_name"], metadata["platform"])
+                created.append(account)
+                self.import_profile(account["id"], str(profile))
+            return {
+                "accounts_imported": len(created), "accounts": [self.accounts.get(item["id"]) for item in created],
+                "source_app": manifest.get("source_app"),
+            }
+        except Exception:
+            for account in reversed(created):
+                target = (self.settings.chrome_profile_dir / account["profile_key"]).resolve()
+                if target.exists() and target.parent == self.settings.chrome_profile_dir.resolve():
+                    shutil.rmtree(target)
+                self.accounts.delete_if_safe(account["id"])
+            raise
+        finally:
+            shutil.rmtree(extraction, ignore_errors=True)
 
     def _run(self, account_id: str, operation: str, source: Path | None, destination: Path | None, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         self.accounts.begin_profile_operation(account_id)

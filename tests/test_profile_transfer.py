@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,6 +90,39 @@ class ProfileTransferTests(unittest.TestCase):
         with self.assertRaisesRegex(ProfileTransferError, "Chrome đang sử dụng"):
             busy_service.import_profile(self.account["id"], str(source))
         self.assertEqual(self.accounts.get(self.account["id"])["profile_operation_locked"], 0)
+
+    def test_export_and_import_all_profiles_in_one_zip(self) -> None:
+        make_profile(self.target, "facebook-session")
+        second = self.accounts.create("Video Account", "youtube")
+        second_target = self.root / "profiles" / second["profile_key"]
+        make_profile(second_target, "youtube-session")
+
+        exported = self.service.export_all_profiles()
+        archive = Path(exported["archive_path"])
+        self.assertTrue(archive.is_file())
+        self.assertEqual(exported["accounts_exported"], 2)
+        with zipfile.ZipFile(archive) as bundle:
+            manifest = json.loads(bundle.read("manifest.json"))
+            self.assertEqual(manifest["bundle_format"], "tinix-profiles")
+            self.assertEqual({item["account_name"] for item in manifest["accounts"]}, {"Main Account", "Video Account"})
+
+        imported = self.service.import_all_profiles(str(archive))
+        self.assertEqual(imported["accounts_imported"], 2)
+        imported_accounts = imported["accounts"]
+        self.assertEqual({item["name"] for item in imported_accounts}, {"Main Account", "Video Account"})
+        cookies = {
+            item["name"]: (self.root / "profiles" / item["profile_key"] / "Default" / "Cookies").read_text(encoding="utf-8")
+            for item in imported_accounts
+        }
+        self.assertEqual(cookies, {"Main Account": "facebook-session", "Video Account": "youtube-session"})
+
+    def test_import_rejects_zip_path_traversal(self) -> None:
+        archive = self.root / "unsafe.tinix-profiles.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("../outside.txt", "unsafe")
+        with self.assertRaisesRegex(ProfileTransferError, "không an toàn"):
+            self.service.import_all_profiles(str(archive))
+        self.assertFalse((self.root / "outside.txt").exists())
 
     def test_profile_operation_is_blocked_by_unfinished_job_and_blocks_new_jobs(self) -> None:
         self.jobs.create("publish", {}, self.account["id"], None)
