@@ -15,7 +15,7 @@ Tinix không dùng API của Facebook, Instagram, TikTok hoặc YouTube để đ
 Mỗi tích hợp nền tảng sẽ đi qua cùng các ranh giới:
 
 1. **Content variant**: caption, hashtag, title, hook và video script riêng.
-2. **Account session**: profile Chrome riêng, phát hiện login/checkpoint, không lưu mật khẩu.
+2. **Account session**: profile Chrome riêng, phát hiện login/checkpoint; metadata đăng nhập Import từ gói Tinix được lưu để chuyển profile giữa các app.
 3. **Target discovery**: Page, Profile hoặc Channel có external ID ổn định.
 4. **Composer adapter**: chuẩn bị caption/media và dry-run dừng trước commit point.
 5. **Publisher adapter**: thao tác đăng thật sau khi được duyệt.

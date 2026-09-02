@@ -125,6 +125,8 @@ class ApiTests(unittest.TestCase):
     def test_account_crud_and_enable(self) -> None:
         created = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"})
         self.assertEqual(created.status_code, 201)
+        self.assertNotIn("password", created.json())
+        self.assertFalse(created.json()["has_password"])
         account_id = created.json()["id"]
         updated = self.client.put(
             f"/api/accounts/{account_id}", json={"name": "Renamed", "platform": "facebook"}

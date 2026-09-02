@@ -54,7 +54,7 @@ API key chỉ được đọc ở backend, không gửi xuống frontend. Loggin
 
 Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa account hoặc xóa account khác.
 
-Có thể dùng **Export Sessions ZIP** để tạo một file `.tinix-profiles.zip` gọn nhẹ chứa toàn bộ tên account, nền tảng và dữ liệu phiên Chrome cần thiết; cache, model Chromium và file tạm không được đóng gói. **Import Profiles ZIP** tự tạo lại tất cả account trong một lần. Tinix không dùng chung thư mục sống và không đưa password/2FA/cookie database vào manifest.
+Có thể dùng **Export Account & Sessions ZIP** để tạo một file `.tinix-profiles.zip` chứa toàn bộ tên account, nền tảng, username/UID, email, password, secret 2FA, mật khẩu email, cookie lưu trong database và dữ liệu phiên Chrome cần thiết; cache, model Chromium và file tạm không được đóng gói. **Import Profiles ZIP** tự tạo lại tất cả account trong một lần. Tinix không dùng chung thư mục profile sống. File ZIP không mã hóa và phải được bảo quản như dữ liệu đăng nhập.
 
 Nút **Dọn dẹp profile** quét trước dung lượng có thể giải phóng rồi xóa cache/model có thể tạo lại của mọi profile. Cần đóng Chrome trước khi chạy; cookies, Local State, Preferences, Local Storage, Session Storage và IndexedDB được giữ nguyên.
 

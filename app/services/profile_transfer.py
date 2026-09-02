@@ -51,6 +51,10 @@ class ChromeProfileTransferService:
     COLLECTION_VERSION = 1
     MAX_ARCHIVE_FILES = 250_000
     MAX_ARCHIVE_BYTES = 100 * 1024 * 1024 * 1024
+    ACCOUNT_FIELD_LIMITS = {
+        "username": 500, "email": 500, "password": 2_000,
+        "secret_2fa": 500, "email_pass": 2_000, "cookie": 200_000,
+    }
 
     def __init__(
         self,
@@ -104,6 +108,18 @@ class ChromeProfileTransferService:
         if target.parent != root:
             raise ProfileTransferError("Đường dẫn profile account không hợp lệ.")
         return account, target
+
+    @classmethod
+    def _validate_account_metadata(cls, metadata: dict[str, Any]) -> dict[str, Any]:
+        result = dict(metadata)
+        for field, limit in cls.ACCOUNT_FIELD_LIMITS.items():
+            value = metadata.get(field, "")
+            if value is None:
+                value = ""
+            if not isinstance(value, str) or len(value) > limit:
+                raise ProfileTransferError(f"Trường {field} trong ZIP không hợp lệ.")
+            result[field] = value
+        return result
 
     @classmethod
     def _validate_profile(cls, path: Path) -> None:
@@ -362,11 +378,11 @@ class ChromeProfileTransferService:
         if profile.parent != bundle:
             raise ProfileTransferError("Đường dẫn Chrome profile trong gói không hợp lệ.")
         self._validate_profile(profile)
-        return bundle, manifest, profile
+        return bundle, self._validate_account_metadata(manifest), profile
 
     def import_bundle(self, bundle_path: str) -> dict[str, Any]:
         _, manifest, profile = self._read_bundle(bundle_path)
-        account = self.accounts.create(manifest["account_name"], manifest["platform"])
+        account = self.accounts.create(manifest["account_name"], manifest["platform"], metadata=manifest)
         target = (self.settings.chrome_profile_dir / account["profile_key"]).resolve()
         try:
             transfer = self.import_profile(account["id"], str(profile))
@@ -451,7 +467,7 @@ class ChromeProfileTransferService:
             if profiles_root not in profile.parents or profile == profiles_root:
                 raise ProfileTransferError("Đường dẫn profile trong manifest không hợp lệ.")
             self._validate_profile(profile)
-            result.append(({**raw, "account_name": name, "platform": platform}, profile))
+            result.append((self._validate_account_metadata({**raw, "account_name": name, "platform": platform}), profile))
         return manifest, result
 
     def export_all_profiles(self) -> dict[str, Any]:
@@ -484,6 +500,12 @@ class ChromeProfileTransferService:
                 manifest_accounts.append({
                     "account_name": account["name"],
                     "platform": account["platform"],
+                    "username": account.get("username") or "",
+                    "email": account.get("email") or "",
+                    "password": account.get("password") or "",
+                    "secret_2fa": account.get("secret_2fa") or "",
+                    "email_pass": account.get("email_pass") or "",
+                    "cookie": account.get("cookie") or "",
                     "source_account_id": account["id"],
                     "profile_path": relative,
                 })
@@ -493,6 +515,7 @@ class ChromeProfileTransferService:
                 "source_app": "Tinix Social Hub",
                 "source_app_version": __version__,
                 "profile_content": "session-only-v1",
+                "contains_account_secrets": True,
                 "exported_at": utc_now(),
                 "accounts": manifest_accounts,
             }
@@ -524,7 +547,7 @@ class ChromeProfileTransferService:
             self._extract_archive(source, extraction)
             manifest, entries = self._read_collection(extraction)
             for metadata, profile in entries:
-                account = self.accounts.create(metadata["account_name"], metadata["platform"])
+                account = self.accounts.create(metadata["account_name"], metadata["platform"], metadata=metadata)
                 created.append(account)
                 self.import_profile(account["id"], str(profile))
             return {
@@ -614,9 +637,16 @@ class ChromeProfileTransferService:
                     "format_version": self.BUNDLE_VERSION,
                     "account_name": account["name"],
                     "platform": account["platform"],
+                    "username": account.get("username") or "",
+                    "email": account.get("email") or "",
+                    "password": account.get("password") or "",
+                    "secret_2fa": account.get("secret_2fa") or "",
+                    "email_pass": account.get("email_pass") or "",
+                    "cookie": account.get("cookie") or "",
                     "source_app": "Tinix Social Hub",
                     "source_app_version": __version__,
                     "profile_content": "session-only-v1",
+                    "contains_account_secrets": True,
                     "source_account_id": account["id"],
                     "exported_at": utc_now(),
                 }

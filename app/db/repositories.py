@@ -18,16 +18,24 @@ class AccountRepository:
     def __init__(self, database: Database) -> None:
         self.db = database
 
-    def create(self, name: str, platform: str) -> dict[str, Any]:
+    def create(self, name: str, platform: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         account_id = str(uuid.uuid4())
         profile_id = str(uuid.uuid4())
         now = utc_now()
+        metadata = metadata or {}
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute(
-                    "INSERT INTO accounts(id,name,platform,profile_key,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                    (account_id, name.strip(), platform.strip().lower(), account_id, now, now),
+                    """INSERT INTO accounts(
+                        id,name,platform,profile_key,username,email,password,secret_2fa,email_pass,cookie,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        account_id, name.strip(), platform.strip().lower(), account_id,
+                        str(metadata.get("username") or ""), str(metadata.get("email") or ""),
+                        str(metadata.get("password") or ""), str(metadata.get("secret_2fa") or ""),
+                        str(metadata.get("email_pass") or ""), str(metadata.get("cookie") or ""), now, now,
+                    ),
                 )
                 connection.execute(
                     "INSERT INTO chrome_profiles(id,account_id,profile_key,created_at,updated_at) VALUES(?,?,?,?,?)",

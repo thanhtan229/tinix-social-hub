@@ -100,6 +100,20 @@ def services(request: Request) -> Any:
     return request.app.state.services
 
 
+def public_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
+    if account is None:
+        return None
+    hidden = {"password", "secret_2fa", "email_pass", "cookie"}
+    public = {key: value for key, value in account.items() if key not in hidden}
+    public.update({
+        "has_password": bool(account.get("password")),
+        "has_2fa": bool(account.get("secret_2fa")),
+        "has_email_password": bool(account.get("email_pass")),
+        "has_cookie": bool(account.get("cookie")),
+    })
+    return public
+
+
 @router.get("/platforms")
 async def list_platforms() -> list[dict[str, object]]:
     """Expose the architecture roadmap without enabling unfinished features."""
@@ -157,14 +171,16 @@ async def runtime_readiness(request: Request) -> dict[str, Any]:
 
 @router.get("/accounts")
 async def list_accounts(request: Request) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(services(request).accounts.list)
+    accounts = await asyncio.to_thread(services(request).accounts.list)
+    return [public_account(account) for account in accounts]
 
 
 @router.post("/accounts", status_code=201)
 async def create_account(body: AccountCreate, request: Request) -> dict[str, Any]:
     if not get_platform(body.platform):
         raise HTTPException(422, "Nền tảng không được hỗ trợ.")
-    return await asyncio.to_thread(services(request).accounts.create, body.name, body.platform)
+    account = await asyncio.to_thread(services(request).accounts.create, body.name, body.platform)
+    return public_account(account)
 
 
 @router.put("/accounts/{account_id}")
@@ -174,7 +190,7 @@ async def update_account(account_id: str, body: AccountUpdate, request: Request)
     account = await asyncio.to_thread(services(request).accounts.update, account_id, body.name, body.platform)
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")
-    return account
+    return public_account(account)
 
 
 @router.patch("/accounts/{account_id}/enabled")
@@ -184,7 +200,7 @@ async def enable_account(account_id: str, body: EnabledUpdate, request: Request)
     )
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")
-    return account
+    return public_account(account)
 
 
 @router.delete("/accounts/{account_id}")
@@ -280,6 +296,8 @@ async def import_profile_bundle(body: ProfileBundleImportRequest, request: Reque
     try:
         logger.info("Profile bundle import started: %s", body.bundle_path)
         result = await asyncio.to_thread(svc.profile_transfer.import_all_profiles, body.bundle_path)
+        if "accounts" in result:
+            result["accounts"] = [public_account(account) for account in result["accounts"]]
         logger.info("Profile bundle import completed: accounts=%s", result.get("accounts_imported", 0))
         return result
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:

@@ -575,6 +575,14 @@ MIGRATIONS: list[tuple[int, str]] = [
     CREATE INDEX idx_profile_operations_account_created
         ON chrome_profile_operations(account_id,created_at DESC);
     """),
+    (12, """
+    ALTER TABLE accounts ADD COLUMN username TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN email TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN password TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN secret_2fa TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN email_pass TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN cookie TEXT NOT NULL DEFAULT '';
+    """),
 ]
 
 

@@ -35,7 +35,10 @@ class ProfileTransferTests(unittest.TestCase):
         self.database.initialize()
         self.accounts = AccountRepository(self.database)
         self.jobs = JobRepository(self.database)
-        self.account = self.accounts.create("Main Account", "facebook")
+        self.account = self.accounts.create("Main Account", "facebook", metadata={
+            "username": "main-user", "email": "main@example.com", "password": "fb-password",
+            "secret_2fa": "JBSWY3DPEHPK3PXP", "email_pass": "mail-password", "cookie": "db-cookie",
+        })
         settings = SimpleNamespace(
             chrome_profile_dir=self.root / "profiles",
             backup_dir=self.root / "backups",
@@ -110,6 +113,13 @@ class ProfileTransferTests(unittest.TestCase):
             manifest = json.loads(bundle.read("manifest.json"))
             self.assertEqual(manifest["bundle_format"], "tinix-profiles")
             self.assertEqual(manifest["profile_content"], "session-only-v1")
+            self.assertTrue(manifest["contains_account_secrets"])
+            main_metadata = next(item for item in manifest["accounts"] if item["account_name"] == "Main Account")
+            self.assertEqual(main_metadata["email"], "main@example.com")
+            self.assertEqual(main_metadata["password"], "fb-password")
+            self.assertEqual(main_metadata["secret_2fa"], "JBSWY3DPEHPK3PXP")
+            self.assertEqual(main_metadata["email_pass"], "mail-password")
+            self.assertEqual(main_metadata["cookie"], "db-cookie")
             self.assertEqual({item["account_name"] for item in manifest["accounts"]}, {"Main Account", "Video Account"})
             self.assertIn("profiles/0001/Default/Cookies", bundle.namelist())
             self.assertNotIn("profiles/0001/Default/Cache/ignored.bin", bundle.namelist())
@@ -124,6 +134,9 @@ class ProfileTransferTests(unittest.TestCase):
             for item in imported_accounts
         }
         self.assertEqual(cookies, {"Main Account": "facebook-session", "Video Account": "youtube-session"})
+        imported_main = next(item for item in imported_accounts if item["name"] == "Main Account")
+        self.assertEqual(imported_main["email"], "main@example.com")
+        self.assertEqual(imported_main["secret_2fa"], "JBSWY3DPEHPK3PXP")
 
     def test_cleanup_preview_and_execute_keep_session_state(self) -> None:
         make_profile(self.target, "keep-session")

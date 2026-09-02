@@ -20,6 +20,16 @@ router=APIRouter(prefix="/api/v1",tags=["local-automation-v1"])
 def svc(request:Request)->Any:return request.app.state.services
 
 
+def public_account(account:dict[str,Any])->dict[str,Any]:
+    hidden={"password","secret_2fa","email_pass","cookie"}
+    result={key:value for key,value in account.items() if key not in hidden}
+    result.update({
+        "has_password":bool(account.get("password")),"has_2fa":bool(account.get("secret_2fa")),
+        "has_email_password":bool(account.get("email_pass")),"has_cookie":bool(account.get("cookie")),
+    })
+    return result
+
+
 async def authorize(request:Request,scope:str)->dict[str,Any]:
     authorization=request.headers.get("authorization","")
     if not authorization.startswith("Bearer "):
@@ -51,7 +61,7 @@ async def platforms(request:Request)->list[dict[str,object]]:
 
 @router.get("/accounts")
 async def accounts(request:Request)->list[dict[str,Any]]:
-    await authorize(request,"read");return await asyncio.to_thread(svc(request).accounts.list)
+    await authorize(request,"read");items=await asyncio.to_thread(svc(request).accounts.list);return [public_account(item) for item in items]
 
 
 @router.get("/targets")
