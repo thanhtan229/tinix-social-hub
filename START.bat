@@ -60,8 +60,11 @@ if not defined BROWSER_APP_EXE if exist "%ProgramFiles(x86)%\Microsoft\Edge\Appl
 if not defined BROWSER_APP_EXE if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set "BROWSER_APP_EXE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
 
 echo [Tinix] Dang mo ung dung che do App Mode doc lap...
+set "APP_DATA_DIR=%~dp0data\app_browser_profile"
+if not exist "%APP_DATA_DIR%" mkdir "%APP_DATA_DIR%" 2>nul
+
 if defined BROWSER_APP_EXE (
-  start "" "%BROWSER_APP_EXE%" --app="http://127.0.0.1:%TINIX_PORT%"
+  start "" "%BROWSER_APP_EXE%" --app="http://127.0.0.1:%TINIX_PORT%" --user-data-dir="%APP_DATA_DIR%" --no-first-run --no-default-browser-check
 ) else (
   start "" "http://127.0.0.1:%TINIX_PORT%"
 )
