@@ -333,8 +333,11 @@ nav button.active .tab-num {
    ========================================================================== */
 main {
   margin-left: 240px;
-  padding: 40px clamp(20px, 4vw, 56px) 80px;
-  max-width: 1440px;
+  width: calc(100% - 240px);
+  min-width: 0;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 32px clamp(24px, 3vw, 48px) 80px;
 }
 
 .tab {
@@ -574,7 +577,7 @@ button:disabled {
 
 .platform-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -893,7 +896,7 @@ select[multiple] {
    ========================================================================== */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
 }
 
@@ -929,7 +932,7 @@ select[multiple] {
 
 .asset-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 
@@ -1906,15 +1909,18 @@ dialog h2 {
 /* ==========================================================================
    Responsive Design & Breakpoints (Design.md Specs)
    ========================================================================== */
-@media (max-width: 1200px) {
+@media (max-width: 1280px) {
   .platform-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
 @media (max-width: 1000px) {
   .stats {
     grid-template-columns: repeat(3, 1fr);
+  }
+  .platform-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
   .card-grid, .asset-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -1952,6 +1958,7 @@ dialog h2 {
 
   main {
     margin: 0;
+    width: 100%;
     padding: 24px 16px 60px;
   }
 
