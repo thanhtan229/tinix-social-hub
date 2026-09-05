@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Tinix Social Studio
+title Tinix Social Hub
 
 where py >nul 2>nul
 if errorlevel 1 (
@@ -19,7 +19,7 @@ if errorlevel 1 (
 
 %PYTHON_CMD% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
 if errorlevel 1 (
-  echo [LOI] Tinix Social Studio can Python 3.11 tro len.
+  echo [LOI] Tinix Social Hub can Python 3.11 tro len.
   pause
   exit /b 1
 )
@@ -65,6 +65,9 @@ if not defined CHROME_FOUND (
   echo Ban van co the dung WebUI; hay cai Chrome hoac dat TINIX_CHROME_PATH trong .env.
 )
 
+echo [Tinix] Dang kiem tra va dong phien lam viec cu (neu co)...
+"%VENV_PY%" -m app.cleanup
+
 echo [Tinix] WebUI local se tu dong mo sau khi backend san sang.
 echo [Tinix] Nhan Ctrl+C de dung an toan.
 "%VENV_PY%" -m app
@@ -73,6 +76,6 @@ exit /b 0
 
 :error
 echo.
-echo [LOI] Tinix Social Studio khong the khoi dong. Xem logs\tinix.log neu co.
+echo [LOI] Tinix Social Hub khong the khoi dong. Xem logs\tinix.log neu co.
 pause
 exit /b 1

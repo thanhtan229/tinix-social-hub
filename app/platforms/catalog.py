@@ -39,6 +39,18 @@ class PlatformCapabilities:
 
 
 @dataclass(frozen=True, slots=True)
+class TransportDefinition:
+    id: str
+    readiness: CapabilityState
+    content_formats: tuple[str, ...]
+    authentication: CapabilityState
+    target_discovery: CapabilityState
+    publishing: CapabilityState
+    result_verification: CapabilityState
+    required_scopes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PlatformDefinition:
     id: str
     name: str
@@ -53,11 +65,61 @@ class PlatformDefinition:
     selector_version: str = "scaffold"
     operational: bool = False
     format_schemas: tuple[FormatSchema, ...] = ()
+    transports: tuple[TransportDefinition, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)
         result["readiness"] = capability_summary(self)
+        if not self.transports:
+            result["transports"] = [asdict(default_chrome_transport(self))]
         return result
+
+    def transport(self, transport_id: str) -> TransportDefinition | None:
+        candidates = self.transports or (default_chrome_transport(self),)
+        return next((item for item in candidates if item.id == transport_id), None)
+
+
+def default_chrome_transport(platform: PlatformDefinition) -> TransportDefinition:
+    return TransportDefinition(
+        id="chrome",
+        readiness="ready" if platform.operational else "scaffold",
+        content_formats=platform.content_formats,
+        authentication=platform.capabilities.account_session,
+        target_discovery=platform.capabilities.target_discovery,
+        publishing=platform.capabilities.publishing,
+        result_verification=platform.capabilities.result_verification,
+    )
+
+
+def foundation_transports(content_formats: tuple[str, ...]) -> tuple[TransportDefinition, ...]:
+    return (
+        TransportDefinition(
+            id="chrome", readiness="ready", content_formats=content_formats,
+            authentication="ready", target_discovery="review_required",
+            publishing="review_required", result_verification="review_required",
+        ),
+        TransportDefinition(
+            id="official_api", readiness="scaffold", content_formats=(),
+            authentication="scaffold", target_discovery="scaffold",
+            publishing="scaffold", result_verification="scaffold",
+        ),
+    )
+
+
+def youtube_transports() -> tuple[TransportDefinition, ...]:
+    chrome, _scaffold = foundation_transports(("video", "short", "community_post"))
+    return (
+        chrome,
+        TransportDefinition(
+            id="official_api", readiness="ready", content_formats=("video", "short"),
+            authentication="ready", target_discovery="ready",
+            publishing="ready", result_verification="ready",
+            required_scopes=(
+                "https://www.googleapis.com/auth/youtube.upload",
+                "https://www.googleapis.com/auth/youtube.readonly",
+            ),
+        ),
+    )
 
 
 PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
@@ -68,6 +130,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         capabilities=PlatformCapabilities("ready", "ready", "ready", "review_required", "review_required", "review_required"),
         next_milestone="Kiểm thử dry-run và đăng thật có giám sát trên Page thực tế.",
         selector_version="facebook-web-v1", operational=True,
+        transports=foundation_transports(("text", "multi_image", "video")),
         format_schemas=(
             FormatSchema("post", "Bài viết", 63206, 0, 10, ("image", "video"), (
                 SettingSchema("first_comment", "Bình luận đầu tiên", "textarea"),
@@ -82,6 +145,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
         next_milestone="Dry-run thủ công trên profile thật; Reel/Story tiếp tục bị khóa.",
         selector_version="instagram-web-v1", operational=True,
+        transports=foundation_transports(("image", "carousel", "reel", "story")),
         format_schemas=(
             FormatSchema("image", "Ảnh", 2200, 1, 1, ("image",)),
             FormatSchema("carousel", "Carousel", 2200, 2, 10, ("image",)),
@@ -96,6 +160,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
         next_milestone="Dry-run TikTok Studio và xác nhận privacy/comment trên UI thật.",
         selector_version="tiktok-studio-web-v1", operational=True,
+        transports=foundation_transports(("short_video", "photo_post")),
         format_schemas=(
             FormatSchema("short_video", "Video ngắn", 2200, 1, 1, ("video",), (
                 SettingSchema("privacy", "Quyền riêng tư", "select", True, "public", ("public", "friends", "private")),
@@ -111,6 +176,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
         next_milestone="Dry-run YouTube Studio trên channel thật; community post tiếp tục bị khóa.",
         selector_version="youtube-studio-web-v1", operational=True,
+        transports=youtube_transports(),
         format_schemas=(
             FormatSchema("video", "Video", 5000, 1, 1, ("video",), (
                 SettingSchema("title", "Tiêu đề", "text", True),
@@ -122,6 +188,21 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
                 SettingSchema("privacy", "Quyền riêng tư", "select", True, "private", ("private", "unlisted", "public")),
             )),
             FormatSchema("community_post", "Community post", 1500, 0, 5, ("image",)),
+        ),
+    ),
+    PlatformDefinition(
+        id="x", name="X", phase="Chrome adapter · post",
+        account_label="X account", target_label="Profile", target_types=("profile",),
+        content_formats=("post",),
+        capabilities=PlatformCapabilities(
+            "ready", "review_required", "review_required", "review_required",
+            "review_required", "review_required",
+        ),
+        next_milestone="Dry-run X composer trên profile thật và xác nhận selector sau mỗi thay đổi UI.",
+        selector_version="x-web-v1", operational=True,
+        transports=foundation_transports(("post",)),
+        format_schemas=(
+            FormatSchema("post", "Bài post", 280, 0, 4, ("image", "video")),
         ),
     ),
 )

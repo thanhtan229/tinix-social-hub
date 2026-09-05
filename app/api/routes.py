@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import psutil
@@ -36,6 +37,12 @@ class AccountUpdate(AccountCreate):
 class EnabledUpdate(BaseModel):
     enabled: bool
     reason: str | None = Field(default=None, max_length=500)
+
+
+class RoutingPreferenceUpdate(BaseModel):
+    routing_preference: str = Field(
+        pattern="^(official_api_preferred|chrome_preferred|official_api_only|chrome_only)$"
+    )
 
 
 class TargetGroupCreate(BaseModel):
@@ -71,6 +78,11 @@ class ProfileRestoreRequest(BaseModel):
     backup_name: str = Field(min_length=1, max_length=200)
 
 
+class ProfileAutoCleanupSettings(BaseModel):
+    enabled: bool = True
+    threshold_gb: float = Field(default=5, ge=0.5, le=100)
+
+
 class PostingSlotItem(BaseModel):
     weekday: int = Field(ge=0, le=6)
     minute_of_day: int = Field(ge=0, le=1439)
@@ -95,6 +107,19 @@ class JobFinalize(BaseModel):
 class BulkRetry(BaseModel):
     job_ids: list[str] = Field(min_length=1, max_length=200)
     preview: bool = True
+
+
+class JobHistoryCleanup(BaseModel):
+    mode: str = Field(pattern="^(older_than|custom|all|selected)$")
+    older_than_days: int | None = Field(default=None, ge=1, le=3650)
+    from_date: datetime | None = None
+    to_date: datetime | None = None
+    status_filter: str = Field(default="all", pattern="^(all|succeeded|dry_run|failed)$")
+    job_ids: list[str] = Field(default_factory=list, max_length=5000)
+    candidate_ids: list[str] = Field(default_factory=list, max_length=5000)
+    delete_artifacts: bool = True
+    preview: bool = True
+    confirm: bool = False
 
 
 class ReleaseConnect(BaseModel):
@@ -135,6 +160,8 @@ async def health(request: Request) -> dict[str, Any]:
     memory = psutil.virtual_memory()
     process_memory = psutil.Process().memory_info().rss
     queue_health = await asyncio.to_thread(svc.jobs.health_counts)
+    provider_connections = getattr(svc, "provider_connections", None)
+    provider_health = await asyncio.to_thread(provider_connections.health_counts) if provider_connections else {}
     warnings = []
     if queue_health["stuck"]:
         warnings.append({"code": "stuck_jobs", "severity": "warning", "count": queue_health["stuck"]})
@@ -158,6 +185,7 @@ async def health(request: Request) -> dict[str, Any]:
         "memory": {"available_bytes": memory.available, "total_bytes": memory.total, "process_bytes": process_memory},
         "ai_configured": svc.ai.configured,
         "queue_health": queue_health,
+        "provider_connections": provider_health,
         "warnings": warnings,
         "maintenance": {
             "state": getattr(maintenance, "state", "unavailable"),
@@ -227,6 +255,74 @@ async def enable_account(account_id: str, body: EnabledUpdate, request: Request)
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")
     return public_account(account)
+
+
+@router.patch("/accounts/{account_id}/routing-preference")
+async def update_account_routing(
+    account_id: str, body: RoutingPreferenceUpdate, request: Request,
+) -> dict[str, Any]:
+    try:
+        account = await asyncio.to_thread(
+            services(request).accounts.set_routing_preference, account_id, body.routing_preference,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not account:
+        raise HTTPException(404, "Không tìm thấy account.")
+    return public_account(account)
+
+
+@router.get("/accounts/{account_id}/connections")
+async def list_account_connections(account_id: str, request: Request) -> list[dict[str, Any]]:
+    svc = services(request)
+    if not await asyncio.to_thread(svc.accounts.get, account_id):
+        raise HTTPException(404, "Không tìm thấy account.")
+    return await asyncio.to_thread(svc.provider_connections.list, account_id=account_id)
+
+
+@router.get("/connections")
+async def list_provider_connections(request: Request) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(services(request).provider_connections.list)
+
+
+@router.post("/accounts/{account_id}/connections/{provider}/authorize")
+async def authorize_provider_connection(account_id: str, provider: str, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(services(request).provider_accounts.authorize_url, account_id, provider)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.delete("/accounts/{account_id}/connections/{connection_id}")
+async def delete_provider_connection(account_id: str, connection_id: str, request: Request) -> dict[str, bool]:
+    deleted = await asyncio.to_thread(
+        services(request).provider_connections.delete, connection_id, account_id=account_id,
+    )
+    if not deleted:
+        raise HTTPException(404, "Không tìm thấy kết nối API.")
+    return {"deleted": True}
+
+
+@router.get("/oauth/youtube/callback")
+async def youtube_oauth_callback(code: str, state: str, request: Request) -> dict[str, Any]:
+    try:
+        connection = await services(request).provider_accounts.youtube_callback(code, state)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.warning("YouTube OAuth callback failed: %s", exc)
+        raise HTTPException(409, f"Không thể kết nối YouTube: {exc}") from exc
+    return {
+        "connected": True,
+        "provider": "youtube",
+        "account_id": connection["account_id"],
+        "channel_title": connection.get("channel_title"),
+        "message": "Đã kết nối YouTube API. Bạn có thể đóng tab này và quay lại Tinix Social Hub.",
+    }
 
 
 @router.delete("/accounts/{account_id}")
@@ -429,6 +525,16 @@ async def enable_target(target_id: str, body: EnabledUpdate, request: Request) -
     if not target:
         raise HTTPException(404, "Không tìm thấy Page.")
     return target
+
+
+@router.post("/targets/{target_id}/chrome/open")
+async def open_target_in_chrome(target_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return await services(request).platform_accounts.open_target(target_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy Page/Kênh.") from exc
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/targets/{target_id}/posting-slots")
@@ -658,6 +764,103 @@ async def retry_jobs_bulk(body: BulkRetry, request: Request) -> dict[str, Any]:
     return {"preview": body.preview, "eligible": eligible, "blocked": blocked, "count": len(eligible)}
 
 
+def _artifact_file_stats(settings: Any, artifacts: list[dict[str, Any]]) -> tuple[int, list[Path]]:
+    root = settings.screenshot_dir.resolve()
+    total = 0
+    files: list[Path] = []
+    for artifact in artifacts:
+        candidate = (root / artifact["relative_path"]).resolve()
+        if root not in candidate.parents or candidate.is_symlink() or not candidate.is_file():
+            continue
+        try:
+            total += candidate.stat().st_size
+            files.append(candidate)
+        except OSError:
+            continue
+    return total, files
+
+
+@router.post("/jobs/history/cleanup")
+async def cleanup_job_history(body: JobHistoryCleanup, request: Request) -> dict[str, Any]:
+    svc = services(request)
+    before: str | None = None
+    after: str | None = None
+    selected_ids: list[str] | None = None
+    if body.mode == "older_than":
+        if body.older_than_days is None:
+            raise HTTPException(422, "Hãy chọn số ngày cần giữ lại.")
+        before = (datetime.now(timezone.utc) - timedelta(days=body.older_than_days)).isoformat()
+    elif body.mode == "custom":
+        if body.from_date is None or body.to_date is None:
+            raise HTTPException(422, "Hãy chọn đầy đủ ngày bắt đầu và kết thúc.")
+        start = body.from_date.astimezone(timezone.utc)
+        end = body.to_date.astimezone(timezone.utc)
+        if start > end:
+            raise HTTPException(422, "Ngày bắt đầu phải trước ngày kết thúc.")
+        after, before = start.isoformat(), end.isoformat()
+    elif body.mode == "selected":
+        if not body.job_ids:
+            raise HTTPException(422, "Hãy chọn ít nhất một tác vụ trong bảng.")
+        selected_ids = body.job_ids
+
+    try:
+        candidates = await asyncio.to_thread(
+            svc.jobs.history_candidates,
+            before=before,
+            after=after,
+            status_filter=body.status_filter,
+            job_ids=selected_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    candidate_ids = [job["id"] for job in candidates["jobs"]]
+    artifact_bytes, _ = await asyncio.to_thread(
+        _artifact_file_stats, svc.settings, candidates["artifacts"]
+    )
+    if body.preview:
+        return {
+            "preview": True,
+            "count": len(candidate_ids),
+            "candidate_ids": candidate_ids,
+            "artifact_count": len(candidates["artifacts"]),
+            "artifact_bytes": artifact_bytes,
+            "blocked_active": candidates["blocked_active"],
+        }
+    if not body.confirm:
+        raise HTTPException(409, "Cần xác nhận lần cuối trước khi xóa lịch sử.")
+    expected = list(dict.fromkeys(body.candidate_ids))
+    if not expected:
+        raise HTTPException(409, "Hãy xem trước phạm vi trước khi xóa.")
+    # Delete only the immutable preview set, while rechecking active statuses.
+    current = set(candidate_ids)
+    approved_ids = [job_id for job_id in expected if job_id in current]
+    deleted = await asyncio.to_thread(svc.jobs.delete_history, approved_ids)
+    removed_files = 0
+    removed_bytes = 0
+    if body.delete_artifacts:
+        _, files = await asyncio.to_thread(_artifact_file_stats, svc.settings, deleted["artifacts"])
+        for path in files:
+            try:
+                size = path.stat().st_size
+                path.unlink()
+                removed_files += 1
+                removed_bytes += size
+                try:
+                    path.parent.rmdir()
+                except OSError:
+                    pass
+            except OSError:
+                logger.warning("Không thể xóa artifact lịch sử %s", path)
+    return {
+        "preview": False,
+        "deleted": deleted["deleted"],
+        "removed_artifacts": removed_files,
+        "removed_bytes": removed_bytes,
+        "blocked_active": max(deleted["blocked_active"], candidates["blocked_active"]),
+        "skipped_changed": len(expected) - len(approved_ids),
+    }
+
+
 @router.get("/notifications")
 async def list_notifications(
     request: Request, unread_only: bool = False, limit: int = Query(100, ge=1, le=500)
@@ -766,3 +969,23 @@ async def run_maintenance(request: Request) -> dict[str, Any]:
     if not maintenance:
         raise HTTPException(503, "Maintenance service không khả dụng.")
     return await asyncio.to_thread(maintenance.run_once)
+
+
+@router.get("/settings/profile-cleanup")
+async def get_profile_cleanup_settings(request: Request) -> dict[str, Any]:
+    maintenance = getattr(services(request), "maintenance", None)
+    if not maintenance:
+        raise HTTPException(503, "Maintenance service không khả dụng.")
+    return await asyncio.to_thread(maintenance.profile_cleanup_settings)
+
+
+@router.put("/settings/profile-cleanup")
+async def update_profile_cleanup_settings(
+    body: ProfileAutoCleanupSettings, request: Request,
+) -> dict[str, Any]:
+    maintenance = getattr(services(request), "maintenance", None)
+    if not maintenance:
+        raise HTTPException(503, "Maintenance service không khả dụng.")
+    return await asyncio.to_thread(
+        maintenance.update_profile_cleanup_settings, body.enabled, body.threshold_gb
+    )

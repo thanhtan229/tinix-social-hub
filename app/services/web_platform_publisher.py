@@ -14,7 +14,12 @@ from app.core.config import Settings
 from app.db.repositories import AccountRepository, ArtifactRepository
 from app.services.chrome import ChromeManager
 from app.services.media import MediaService
-from app.services.publishers import PublishContext, PublishOutcome, Publisher, PublishResult
+from app.services.publishers import (
+    PublishContext,
+    Publisher,
+    PublishOutcome,
+    PublishResult,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,7 @@ class WebSelectorSpec:
     target_link_selector: str
     post_url_fragments: tuple[str, ...]
     formats: tuple[str, ...]
+    authenticated_cookie_names: tuple[str, ...] = ()
 
 
 SPECS: dict[str, WebSelectorSpec] = {
@@ -59,10 +65,11 @@ SPECS: dict[str, WebSelectorSpec] = {
         "tiktok", "tiktok-studio-web-v1", "https://www.tiktok.com/", "https://www.tiktok.com/tiktokstudio/upload",
         ("tiktok.com",), 'a[href*="/login"],button[data-e2e*="login"]',
         '[data-e2e="profile-icon"],a[href*="tiktokstudio"],a[href^="/@"]',
-        ("login", "captcha", "verify", "checkpoint"), None, 'input[type="file"]',
+        ("captcha", "verify", "checkpoint"), None, 'input[type="file"]',
         '[contenteditable="true"][data-e2e*="caption"],div[contenteditable="true"]', None,
         'button[data-e2e*="post"],button:has-text("Post")', '[class*="progress" i],[data-e2e*="uploading"]',
         'text=/uploaded|posted|đã đăng/i', 'a[href^="/@"]', ("/video/",), ("short_video",),
+        authenticated_cookie_names=("sessionid", "sessionid_ss", "sid_tt"),
     ),
     "youtube": WebSelectorSpec(
         "youtube", "youtube-studio-web-v1", "https://studio.youtube.com/", "https://studio.youtube.com/",
@@ -75,6 +82,20 @@ SPECS: dict[str, WebSelectorSpec] = {
         '#done-button,#save-button', 'ytcp-video-upload-progress,[class*="progress" i]',
         'text=/Checks complete|Upload complete|Đã tải lên/i', 'a[href*="/channel/"]',
         ("youtu.be/", "youtube.com/watch", "youtube.com/shorts"), ("video", "short"),
+    ),
+    "x": WebSelectorSpec(
+        "x", "x-web-v1", "https://x.com/home", "https://x.com/compose/post",
+        ("x.com", "twitter.com"),
+        'input[autocomplete="username"],input[name="text"],input[autocomplete="current-password"]',
+        'a[data-testid="AppTabBar_Profile_Link"],button[data-testid="SideNav_AccountSwitcher_Button"]',
+        ("account/access", "account/locked", "account/suspended"), None,
+        'input[data-testid="fileInput"],input[type="file"][accept*="image"]',
+        'div[data-testid="tweetTextarea_0"][contenteditable="true"]', None,
+        'button[data-testid="tweetButtonInline"],button[data-testid="tweetButton"]',
+        'div[role="progressbar"]',
+        'text=/Your post was sent|Bài đăng của bạn đã được gửi/i',
+        'a[data-testid="AppTabBar_Profile_Link"],a[href*="/status/"]',
+        ("/status/",), ("post",), authenticated_cookie_names=("auth_token",),
     ),
 }
 
@@ -114,11 +135,26 @@ class ChromeWebPublisher(Publisher):
             await asyncio.sleep(.5)
         raise RuntimeError("Chrome khởi động quá thời gian chờ.")
 
+    @staticmethod
+    async def _any_visible(locator: Locator, limit: int = 10) -> bool:
+        for index in range(min(await locator.count(), limit)):
+            if await locator.nth(index).is_visible():
+                return True
+        return False
+
     async def detect_login(self, page: Page) -> str:
         url = page.url.lower()
         if any(fragment in url for fragment in self.spec.checkpoint_fragments): return "checkpoint"
-        if await page.locator(self.spec.login_selector).count(): return "logged_out"
-        if await page.locator(self.spec.logged_in_selector).count(): return "logged_in"
+        if await self._any_visible(page.locator(self.spec.logged_in_selector)): return "logged_in"
+        if await self._any_visible(page.locator(self.spec.login_selector)): return "logged_out"
+        if self.spec.authenticated_cookie_names:
+            cookies = await page.context.cookies(self.spec.home_url)
+            if any(
+                cookie.get("name") in self.spec.authenticated_cookie_names and cookie.get("value")
+                for cookie in cookies
+            ):
+                return "logged_in"
+        if "/login" in url or "/signin" in url: return "logged_out"
         return "unknown"
 
     async def discover_targets(self, page: Page) -> list[dict[str, str]]:
@@ -130,7 +166,8 @@ class ChromeWebPublisher(Publisher):
             if not url or url in seen or not any(urlparse(url).netloc.lower().endswith(host) for host in self.spec.allowed_hosts): continue
             seen.add(url)
             external = urlparse(url).path.strip("/") or self.spec.platform
-            result.append({"external_id": external[:255], "name": (item.get("name") or external)[:255], "url": url, "target_type": "profile" if self.spec.platform=="instagram" else "channel"})
+            target_type = "profile" if self.spec.platform in {"instagram", "x"} else "channel"
+            result.append({"external_id": external[:255], "name": (item.get("name") or external)[:255], "url": url, "target_type": target_type})
         return result[:20]
 
     async def _visible(self, page: Page, selector: str) -> Locator:
@@ -254,3 +291,7 @@ class TikTokChromePublisher(ChromeWebPublisher):
 
 class YouTubeChromePublisher(ChromeWebPublisher):
     def __init__(self,*args,**kwargs):super().__init__(SPECS["youtube"],*args,**kwargs)
+
+
+class XChromePublisher(ChromeWebPublisher):
+    def __init__(self,*args,**kwargs):super().__init__(SPECS["x"],*args,**kwargs)

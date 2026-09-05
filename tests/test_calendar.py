@@ -87,6 +87,29 @@ class CalendarAndSlotTests(unittest.TestCase):
         with self.assertRaises(PlatformValidationError) as context:
             validate_publication("instagram", "carousel", "Caption", [{"type": "image"}], {})
         self.assertIn("2-10 media", str(context.exception))
+        self.assertEqual(validate_publication("x", "post", "Hello X", [], {}).id, "post")
+        with self.assertRaises(PlatformValidationError):
+            validate_publication("x", "post", "x" * 281, [], {})
+
+    def test_x_schedule_counts_hashtags_toward_character_limit(self) -> None:
+        x_account = self.accounts.create("X profile", "x")
+        x_target = self.targets.sync(
+            x_account["id"], "x",
+            [{"external_id": "tinix", "name": "Tinix", "url": "https://x.com/tinix"}],
+        )[0]
+        content = self.contents.create({
+            "title": "Long X post", "caption": "x" * 275, "hashtags": ["#tinix"],
+            "platform_variants": {},
+        })
+        scheduling = SchedulingService(
+            self.jobs, self.accounts, self.targets, self.contents,
+            random.Random(1), self.publications,
+        )
+        with self.assertRaisesRegex(ValueError, "280"):
+            scheduling.schedule(
+                content["id"], x_account["id"], [x_target["id"]],
+                None, True, 0, 0, "confirm", "post", {},
+            )
 
 
 if __name__ == "__main__":

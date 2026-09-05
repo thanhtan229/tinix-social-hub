@@ -9,6 +9,7 @@ from app.db.repositories import AccountRepository, JobRepository
 from app.domain.jobs import JobStatus
 from app.services.ai import OpenAICompatibleProvider
 from app.services.publishers import PublishContext, PublishOutcome, PublisherRegistry
+from app.services.publisher_router import PublisherRouter
 
 
 logger = logging.getLogger(__name__)
@@ -22,12 +23,14 @@ class LocalWorker:
         accounts: AccountRepository,
         ai: OpenAICompatibleProvider,
         publishers: PublisherRegistry,
+        publisher_router: PublisherRouter | None = None,
     ) -> None:
         self.settings = settings
         self.jobs = jobs
         self.accounts = accounts
         self.ai = ai
         self.publishers = publishers
+        self.publisher_router = publisher_router or PublisherRouter(publishers)
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
         self._runner: asyncio.Task[None] | None = None
@@ -85,13 +88,36 @@ class LocalWorker:
                         event_type="account_disabled", error="Account đang bị tắt.", failure_code="account_disabled",
                     )
                     return
-                await asyncio.to_thread(self.jobs.transition, job["id"], JobStatus.CHECKING_LOGIN, event_type="publisher_started")
-                publisher = self.publishers.get(account["platform"], dry_run=bool(job["dry_run"]))
+                detail = await asyncio.to_thread(self.jobs.detail, job["id"])
+                release = (detail or {}).get("release") or {}
+                route = self.publisher_router.resolve(
+                    account,
+                    content_format=str(job["payload"].get("content_format") or "post"),
+                    dry_run=bool(job["dry_run"]),
+                    preference=job["payload"].get("routing_preference") or release.get("requested_routing_policy"),
+                    frozen_transport=release.get("publication_transport"),
+                )
+                await asyncio.to_thread(
+                    self.jobs.record_route, job["id"], transport=route.transport, reason=route.reason,
+                    provider=route.provider, provider_version=getattr(route.publisher, "provider_version", None),
+                    connection_id=route.connection_id,
+                )
+                await asyncio.to_thread(
+                    self.jobs.transition, job["id"], JobStatus.CHECKING_LOGIN,
+                    event_type="publisher_started", metadata={"transport": route.transport, "routing_reason": route.reason},
+                )
+                publisher = route.publisher
 
                 async def publisher_transition(target: str, event_type: str, commit_reached: bool = False) -> None:
                     await asyncio.to_thread(
                         self.jobs.transition, job["id"], target,
                         event_type=event_type, commit_reached=commit_reached,
+                    )
+
+                async def record_provider_request(request_id: str, commit_possible: bool = False) -> None:
+                    await asyncio.to_thread(
+                        self.jobs.record_provider_request, job["id"], request_id,
+                        commit_possible=commit_possible,
                     )
 
                 publish_result = await publisher.publish(
@@ -101,13 +127,14 @@ class LocalWorker:
                         payload=job["payload"],
                         is_cancelled=lambda: asyncio.to_thread(self.jobs.is_cancel_requested, job["id"]),
                         transition=publisher_transition,
+                        record_provider_request=record_provider_request,
                     )
                 )
                 result = {
                     "outcome": publish_result.outcome.value,
                     "message": publish_result.message,
                     "post_url": publish_result.post_url,
-                    "metadata": publish_result.metadata,
+                    "metadata": {**publish_result.metadata, "transport": route.transport, "provider": route.provider},
                 }
                 if publish_result.outcome == PublishOutcome.DRY_RUN_READY:
                     current = await asyncio.to_thread(self.jobs.get, job["id"])

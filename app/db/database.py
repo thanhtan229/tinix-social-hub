@@ -583,6 +583,54 @@ MIGRATIONS: list[tuple[int, str]] = [
     ALTER TABLE accounts ADD COLUMN email_pass TEXT NOT NULL DEFAULT '';
     ALTER TABLE accounts ADD COLUMN cookie TEXT NOT NULL DEFAULT '';
     """),
+    (13, """
+    ALTER TABLE accounts ADD COLUMN routing_preference TEXT NOT NULL DEFAULT 'chrome_preferred';
+    CREATE TABLE account_connections (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        external_account_id TEXT,
+        status TEXT NOT NULL DEFAULT 'disconnected',
+        scopes_json TEXT NOT NULL DEFAULT '[]',
+        access_token_protected TEXT,
+        refresh_token_protected TEXT,
+        expires_at TEXT,
+        refresh_metadata_json TEXT NOT NULL DEFAULT '{}',
+        granted_at TEXT,
+        last_validated_at TEXT,
+        last_error_code TEXT,
+        last_error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+        UNIQUE(account_id,transport,provider)
+    );
+    CREATE INDEX idx_account_connections_status ON account_connections(account_id,transport,status);
+    CREATE TABLE oauth_states (
+        id TEXT PRIMARY KEY,
+        state_hash TEXT NOT NULL UNIQUE,
+        account_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        pkce_verifier_protected TEXT,
+        redirect_uri TEXT,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_oauth_states_expiry ON oauth_states(expires_at,consumed_at);
+    ALTER TABLE publication_releases ADD COLUMN requested_routing_policy TEXT NOT NULL DEFAULT 'chrome_preferred';
+    ALTER TABLE publication_releases ADD COLUMN publication_transport TEXT;
+    ALTER TABLE publication_releases ADD COLUMN provider TEXT;
+    ALTER TABLE publication_releases ADD COLUMN provider_version TEXT;
+    ALTER TABLE publication_releases ADD COLUMN routing_reason TEXT;
+    ALTER TABLE publication_releases ADD COLUMN connection_id TEXT REFERENCES account_connections(id) ON DELETE SET NULL;
+    ALTER TABLE publish_attempts ADD COLUMN transport TEXT;
+    ALTER TABLE publish_attempts ADD COLUMN provider TEXT;
+    ALTER TABLE publish_attempts ADD COLUMN provider_request_id TEXT;
+    ALTER TABLE publish_attempts ADD COLUMN commit_possible INTEGER NOT NULL DEFAULT 0;
+    """),
 ]
 
 

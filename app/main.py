@@ -21,11 +21,12 @@ from app.db.database import Database
 from app.db.calendar_repositories import PostingSlotRepository
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.publication_repositories import PublicationRepository
+from app.db.provider_repositories import OAuthStateRepository, ProviderConnectionRepository
 from app.db.notification_repositories import NotificationRepository
 from app.db.media_repositories import MediaAssetRepository
 from app.db.analytics_repositories import AnalyticsRepository
 from app.db.automation_repositories import APITokenRepository, WebhookRepository
-from app.db.repositories import AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
+from app.db.repositories import AppSettingsRepository, AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
 from app.services.ai import OpenAICompatibleProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.chrome import ChromeManager
@@ -35,7 +36,15 @@ from app.services.scheduling import SchedulingService
 from app.services.facebook_accounts import FacebookAccountService
 from app.services.facebook_publisher import FacebookPublisher
 from app.services.publishers import PublisherRegistry
-from app.services.web_platform_publisher import InstagramChromePublisher, TikTokChromePublisher, YouTubeChromePublisher
+from app.services.publisher_router import PublisherRouter
+from app.services.provider_accounts import ProviderAccountService
+from app.platforms.providers import YouTubeOfficialPublisher
+from app.services.web_platform_publisher import (
+    InstagramChromePublisher,
+    TikTokChromePublisher,
+    XChromePublisher,
+    YouTubeChromePublisher,
+)
 from app.services.platform_accounts import PlatformAccountService
 from app.services.profile_transfer import ChromeProfileTransferService
 from app.services.ui_analytics import UIAnalyticsCollector
@@ -68,6 +77,10 @@ class Services:
     chrome: ChromeManager
     ai: OpenAICompatibleProvider
     publishers: PublisherRegistry
+    publisher_router: PublisherRouter
+    provider_connections: ProviderConnectionRepository
+    oauth_states: OAuthStateRepository
+    provider_accounts: ProviderAccountService
     worker: LocalWorker
     scheduler: Scheduler
     maintenance: MaintenanceService
@@ -106,27 +119,44 @@ def build_services(settings: Settings) -> Services:
     chrome = ChromeManager(settings, chrome_profiles)
     ai = OpenAICompatibleProvider(settings)
     publishers = PublisherRegistry()
-    worker = LocalWorker(settings, jobs, accounts, ai, publishers)
+    provider_connections = ProviderConnectionRepository(database, secret_store)
+    oauth_states = OAuthStateRepository(database, secret_store)
+    provider_accounts = ProviderAccountService(settings, accounts, provider_connections, oauth_states, targets)
+    publisher_router = PublisherRouter(publishers, provider_connections)
+    worker = LocalWorker(settings, jobs, accounts, ai, publishers, publisher_router)
     scheduler = Scheduler(settings, jobs, worker)
-    maintenance = MaintenanceService(settings)
     facebook_accounts = FacebookAccountService(accounts, targets, chrome)
     media = MediaService(settings, contents, media_assets, storage)
     publishers.register("facebook", FacebookPublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("instagram", InstagramChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("tiktok", TikTokChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("youtube", YouTubeChromePublisher(settings, chrome, accounts, artifacts, media))
+    publishers.register("x", XChromePublisher(settings, chrome, accounts, artifacts, media))
+    if provider_accounts.youtube_configured:
+        publishers.register(
+            "youtube",
+            YouTubeOfficialPublisher(settings, provider_connections, provider_accounts, media),
+            transport="official_api",
+        )
     platform_accounts = PlatformAccountService(accounts, targets, chrome, publishers)
     analytics_collector = UIAnalyticsCollector(accounts, publications, analytics, publishers)
     webhook_dispatcher = WebhookDispatcher(webhooks)
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
-    scheduling = SchedulingService(jobs, accounts, targets, contents, publications=publications)
+    scheduling = SchedulingService(
+        jobs, accounts, targets, contents, publications=publications, publisher_router=publisher_router,
+    )
     profile_transfer = ChromeProfileTransferService(settings, database, accounts)
+    app_settings = AppSettingsRepository(database)
+    maintenance = MaintenanceService(settings, profile_transfer, app_settings, notifications)
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
         posting_slots=posting_slots, notifications=notifications, media_assets=media_assets, analytics=analytics,
         api_tokens=api_tokens, webhooks=webhooks,
-        chrome=chrome, ai=ai, publishers=publishers, worker=worker, scheduler=scheduler,
+        chrome=chrome, ai=ai, publishers=publishers, publisher_router=publisher_router,
+        provider_connections=provider_connections, oauth_states=oauth_states,
+        provider_accounts=provider_accounts,
+        worker=worker, scheduler=scheduler,
         maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
         analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher,
         storage=storage, secrets=secret_store, media=media,
@@ -154,7 +184,7 @@ async def lifespan(application: FastAPI):
     await services.webhook_dispatcher.start()
     if settings.open_browser:
         threading.Timer(1.2, lambda: webbrowser.open(settings.web_url)).start()
-    logger.info("Tinix Social Studio %s is ready at %s", __version__, settings.web_url)
+    logger.info("Tinix Social Hub %s is ready at %s", __version__, settings.web_url)
     try:
         yield
     finally:
@@ -169,7 +199,7 @@ async def lifespan(application: FastAPI):
         logger.info("Shutdown complete; closed %s managed Chrome processes", closed)
 
 
-app = FastAPI(title="Tinix Social Studio", version=__version__, lifespan=lifespan)
+app = FastAPI(title="Tinix Social Hub", version=__version__, lifespan=lifespan)
 app.include_router(router)
 app.include_router(content_router)
 app.include_router(v1_router)

@@ -59,7 +59,7 @@ class AIGenerateBody(BaseModel):
     operation: str = Field(default="write", pattern="^(write|rewrite|shorten|expand|hook|cta|hashtags|variants|cross_platform|video_script|connection_test)$")
     brief: str = Field(min_length=1, max_length=12000)
     brand_profile_id: str | None = None
-    platforms: list[str] = Field(default_factory=lambda: ["facebook"], min_length=1, max_length=4)
+    platforms: list[str] = Field(default_factory=lambda: ["facebook"], min_length=1, max_length=5)
     save_draft: bool = True
 
 
@@ -74,6 +74,10 @@ class ScheduleBody(BaseModel):
     missed_policy: str = Field(default="confirm", pattern="^(publish|skip|confirm)$")
     content_format: str = Field(default="post", min_length=1, max_length=50)
     platform_settings: dict[str, Any] = Field(default_factory=dict)
+    routing_preference: str | None = Field(
+        default=None,
+        pattern="^(official_api_preferred|chrome_preferred|official_api_only|chrome_only)$",
+    )
 
 
 class MediaAssetUpdate(BaseModel):
@@ -315,6 +319,7 @@ async def create_schedule(body: ScheduleBody, request: Request) -> list[dict[str
             body.content_id, body.account_id, body.target_ids, body.scheduled_at,
             body.dry_run, body.delay_seconds, body.random_delay_seconds, body.missed_policy,
             body.content_format, body.platform_settings,
+            body.routing_preference,
         )
         services(request).worker.notify()
         return jobs

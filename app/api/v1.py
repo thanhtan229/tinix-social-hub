@@ -51,7 +51,11 @@ class WebhookCreate(BaseModel):
 @router.get("/health")
 async def health(request:Request)->dict[str,Any]:
     await authorize(request,"read")
-    return {"status":"ok","api_version":"v1","transport":"local-http","publication_transport":"chrome"}
+    return {
+        "status":"ok", "api_version":"v1", "transport":"local-http",
+        "publication_transport":"chrome",
+        "publication_transports":["chrome","official_api"],
+    }
 
 
 @router.get("/platforms")
@@ -102,6 +106,7 @@ async def create_plan(body:ScheduleBody,request:Request)->list[dict[str,Any]]:
             svc(request).scheduling.schedule,body.content_id,body.account_id,body.target_ids,
             body.scheduled_at.astimezone(timezone.utc) if body.scheduled_at else None,body.dry_run,
             body.delay_seconds,body.random_delay_seconds,body.missed_policy,body.content_format,body.platform_settings,
+            body.routing_preference,
         );svc(request).worker.notify();return jobs
     except SchedulingError as exc:raise HTTPException(409,str(exc)) from exc
 

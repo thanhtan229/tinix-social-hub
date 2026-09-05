@@ -22,12 +22,13 @@ from app.db.automation_repositories import APITokenRepository, WebhookRepository
 from app.api.v1 import router as v1_router
 from app.core.secrets import SecretProtector
 from app.runtime import LocalPathStorage
-from app.db.repositories import AccountRepository, JobRepository, TargetRepository
+from app.db.repositories import AppSettingsRepository, AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
 from app.services.profile_transfer import ChromeProfileTransferService
+from app.services.maintenance import MaintenanceService
 
 
 class WorkerStub:
@@ -77,9 +78,17 @@ class ApiTests(unittest.TestCase):
         profile_settings = SimpleNamespace(
             data_dir=root / "data", max_chrome=2,
             chrome_profile_dir=root / "profiles", backup_dir=root / "backups", export_dir=root / "exports",
+            screenshot_dir=root / "screenshots", maintenance_seconds=21600,
         )
         profile_settings.chrome_profile_dir.mkdir()
         profile_settings.export_dir.mkdir()
+        profile_settings.screenshot_dir.mkdir()
+        profile_transfer = ChromeProfileTransferService(
+            profile_settings, database, accounts, path_in_use=lambda _: False
+        )
+        maintenance = MaintenanceService(
+            profile_settings, profile_transfer, AppSettingsRepository(database)
+        )
         services = SimpleNamespace(
             database=database,
             accounts=accounts,
@@ -105,9 +114,8 @@ class ApiTests(unittest.TestCase):
             settings=profile_settings,
             ai=SimpleNamespace(configured=False),
             analytics_collector=SimpleNamespace(),
-            profile_transfer=ChromeProfileTransferService(
-                profile_settings, database, accounts, path_in_use=lambda _: False
-            ),
+            profile_transfer=profile_transfer,
+            maintenance=maintenance,
             application_lock=asyncio.Lock(),
         )
         app = FastAPI()
@@ -230,11 +238,12 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/api/platforms")
         self.assertEqual(response.status_code, 200)
         platforms = {item["id"]: item for item in response.json()}
-        self.assertEqual(set(platforms), {"facebook", "instagram", "tiktok", "youtube"})
+        self.assertEqual(set(platforms), {"facebook", "instagram", "tiktok", "youtube", "x"})
         self.assertTrue(platforms["facebook"]["operational"])
         self.assertTrue(platforms["instagram"]["operational"])
         self.assertEqual(platforms["tiktok"]["capabilities"]["publishing"], "review_required")
         self.assertEqual(platforms["instagram"]["format_schemas"][1]["id"], "carousel")
+        self.assertEqual(platforms["x"]["format_schemas"][0]["max_caption_length"], 280)
 
     def test_posting_slots_and_next_slot_api(self) -> None:
         account = self.services.accounts.create("Main", "facebook")
@@ -264,6 +273,37 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(retry.status_code, 200)
         self.assertEqual(retry.json()["status"], "queued")
 
+    def test_history_cleanup_requires_preview_and_protects_active_jobs(self) -> None:
+        account = self.services.accounts.create("Main", "facebook")
+        completed = self.services.jobs.create("publish", {}, account["id"], None)
+        active = self.services.jobs.create("publish", {"slot": 2}, account["id"], None)
+        with self.services.database.connection() as connection:
+            connection.execute(
+                "UPDATE jobs SET status='succeeded',created_at='2020-01-01T00:00:00+00:00' WHERE id=?",
+                (completed["id"],),
+            )
+
+        preview = self.client.post("/api/jobs/history/cleanup", json={
+            "mode": "all", "status_filter": "all", "preview": True,
+        })
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json()["candidate_ids"], [completed["id"]])
+
+        missing_confirmation = self.client.post("/api/jobs/history/cleanup", json={
+            "mode": "all", "status_filter": "all", "preview": False,
+            "candidate_ids": preview.json()["candidate_ids"],
+        })
+        self.assertEqual(missing_confirmation.status_code, 409)
+
+        deleted = self.client.post("/api/jobs/history/cleanup", json={
+            "mode": "all", "status_filter": "all", "preview": False, "confirm": True,
+            "candidate_ids": preview.json()["candidate_ids"],
+        })
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["deleted"], 1)
+        self.assertIsNone(self.services.jobs.get(completed["id"]))
+        self.assertIsNotNone(self.services.jobs.get(active["id"]))
+
     def test_analytics_summary_marks_missing_data_unsupported(self) -> None:
         response = self.client.get("/api/analytics/summary?days=30")
         self.assertEqual(response.status_code, 200)
@@ -276,7 +316,7 @@ class ApiTests(unittest.TestCase):
             "/api/v1/platforms", headers={"Authorization": f"Bearer {self.local_token}"}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.json()), 4)
+        self.assertEqual(len(response.json()), 5)
 
     def test_runtime_endpoint_reports_contracts_and_vps_blockers(self) -> None:
         response = self.client.get("/api/runtime")
@@ -310,6 +350,27 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["database"]["result"], "ok")
+
+    def test_profile_auto_cleanup_settings_api_persists_selection(self) -> None:
+        defaults = self.client.get("/api/settings/profile-cleanup")
+        self.assertEqual(defaults.status_code, 200)
+        self.assertTrue(defaults.json()["enabled"])
+        self.assertEqual(defaults.json()["threshold_gb"], 5)
+
+        updated = self.client.put(
+            "/api/settings/profile-cleanup",
+            json={"enabled": False, "threshold_gb": 2},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertFalse(updated.json()["enabled"])
+        self.assertEqual(updated.json()["threshold_gb"], 2)
+        self.assertEqual(self.client.get("/api/settings/profile-cleanup").json(), updated.json())
+
+        invalid = self.client.put(
+            "/api/settings/profile-cleanup",
+            json={"enabled": True, "threshold_gb": 0.1},
+        )
+        self.assertEqual(invalid.status_code, 422)
 
     def test_content_revision_and_approval_api(self) -> None:
         created = self.client.post("/api/contents", json={

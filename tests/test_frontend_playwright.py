@@ -14,6 +14,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from app import __version__
+
 
 def find_chrome() -> Path | None:
     candidates = []
@@ -71,7 +73,10 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 cls.server.kill()
         if hasattr(cls, "temp"):
-            cls.temp.cleanup()
+            try:
+                cls.temp.cleanup()
+            except Exception:
+                pass
 
     def test_all_tabs_load_without_console_errors(self) -> None:
         errors: list[str] = []
@@ -82,21 +87,32 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             self.assertEqual(response.status, 200)
             self.assertEqual(page.locator("#nav button").count(), 9)
-            self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 4)
-            self.assertEqual(page.locator("#platformRoadmap .operational").count(), 4)
+            self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 5)
+            self.assertEqual(page.locator("#platformRoadmap .operational").count(), 5)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
-            self.assertEqual(page.locator("#version").inner_text(), "v1.0.0-rc.20")
-            for name in (
-                "Tổng quan", "AI Content Studio", "Kho nội dung", "Media Library", "Calendar",
-                "Hàng đợi & Lịch sử", "Analytics", "Tài khoản & Page", "Cài đặt",
+            self.assertEqual(page.locator("#version").inner_text(), f"v{__version__}")
+            for tab, name in (
+                ("overview", "Tổng quan"), ("ai", "AI Content Studio"),
+                ("content", "Kho nội dung"), ("media", "Media Library"),
+                ("compose", "Calendar"), ("jobs", "Hàng đợi & Lịch sử"),
+                ("analytics", "Analytics"), ("accounts", "Tài khoản & Page"),
+                ("settings", "Cài đặt"),
             ):
-                page.get_by_role("button", name=name, exact=True).click()
+                button = page.locator(f'#nav button[data-tab="{tab}"]')
+                self.assertIn(name, button.inner_text())
+                button.click()
                 page.wait_for_timeout(150)
-            page.get_by_role("button", name="Tài khoản & Page", exact=True).click()
-            self.assertEqual(page.locator("[data-profile-action]").count(), 5)
-            self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 4)
-            self.assertTrue(page.get_by_role("button", name="Import Profiles ZIP", exact=True).is_enabled())
-            self.assertIn(".tinix-profiles.zip", page.locator("#profileHelp").inner_text())
+            self.assertEqual(page.locator('#accountPlatform option[value="x"]').count(), 1)
+            self.assertEqual(page.locator('#calendarPlatform option[value="x"]').count(), 1)
+            self.assertEqual(page.locator('#analyticsPlatform option[value="x"]').count(), 1)
+            self.assertEqual(page.locator("#aiX").count(), 1)
+            page.locator('#nav button[data-tab="accounts"]').click()
+            self.assertEqual(page.locator("[data-profile-action]").count(), 2)
+            self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 1)
+            self.assertTrue(page.get_by_role("button", name="Import Profiles", exact=True).is_enabled())
+            self.assertEqual(page.locator(".profile-manager").count(), 0)
+            self.assertEqual(page.locator(".accounts-panel [data-profile-action]").count(), 2)
+            self.assertEqual(page.locator("#targetSyncStatus").count(), 1)
             archive = Path(self.temp.name) / "frontend-import.tinix-profiles.zip"
             manifest = {
                 "bundle_format": "tinix-profiles",
@@ -119,7 +135,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 bundle.writestr("profiles/0001/Local State", "{}")
                 bundle.writestr("profiles/0001/Default/Preferences", "{}")
                 bundle.writestr("profiles/0001/Default/Cookies", "session")
-            page.get_by_role("button", name="Import Profiles ZIP", exact=True).click()
+            page.get_by_role("button", name="Import Profiles", exact=True).click()
             self.assertTrue(page.locator("#profileImportDialog").is_visible())
             page.locator("#profileArchivePath").fill(str(archive))
             with page.expect_response(lambda item: item.url.endswith("/api/profiles/import")) as response:
@@ -131,6 +147,14 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#accountList .account-table tbody tr").count(), 1)
             self.assertEqual(page.locator("#accountList .account-index").last.inner_text(), "1")
             self.assertEqual(page.locator("#accountResultCount").inner_text(), "Hiển thị 1/1")
+            account_row = page.locator("#accountList .account-table tbody tr").first
+            account_row.locator("td").nth(1).click()
+            self.assertIn("selected", account_row.get_attribute("class"))
+            self.assertIn("Account: Imported UI Account", page.locator("#targetAccountFilter").inner_text())
+            self.assertIn("chưa có page hoặc kênh", page.locator("#targetList").inner_text().lower())
+            account_row.locator("td").nth(1).click()
+            self.assertNotIn("selected", account_row.get_attribute("class"))
+            self.assertEqual(page.locator("#targetAccountFilter").inner_text(), "Tất cả account")
             self.assertEqual(page.locator('[data-account-platform="facebook"] b').inner_text(), "1")
             page.locator('[data-account-platform="facebook"]').click()
             self.assertTrue(page.locator('[data-account-platform="facebook"]').get_attribute("class").endswith("active"))
@@ -148,13 +172,35 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertNotIn("facebook ·", page.locator("#accountList").inner_text())
             unknown_badge = page.locator("#accountList .badge.unknown")
             self.assertEqual(unknown_badge.count(), 1)
-            self.assertEqual(unknown_badge.evaluate("element => getComputedStyle(element).color"), "rgb(89, 102, 116)")
+            self.assertEqual(unknown_badge.evaluate("element => getComputedStyle(element).color"), "rgb(95, 99, 104)")
             account_actions = page.locator("#accountList [data-account-action]")
             self.assertEqual(account_actions.count(), 4)
             self.assertEqual(
                 account_actions.all_inner_texts(),
-                ["Mở", "Đóng", "Sửa", "Xóa"],
+                ["Mở", "Quét Page/Kênh", "Sửa", "Xóa"],
             )
+            sync_flow: list[str] = []
+
+            def fake_target_sync(route):
+                sync_flow.append("sync")
+                route.fulfill(status=200, content_type="application/json", body=json.dumps([
+                    {"external_id": "page-1", "name": "Page hợp lệ"},
+                    {"external_id": "url:latest", "name": "Meta Business Suite"},
+                ]))
+
+            def fake_account_close(route):
+                sync_flow.append("close")
+                route.fulfill(status=200, content_type="application/json", body='{"closed":true}')
+
+            page.route("**/api/accounts/*/sync-targets", fake_target_sync)
+            page.route("**/api/accounts/*/chrome/close", fake_account_close)
+            page.get_by_role("button", name="Quét Page/Kênh", exact=True).click()
+            page.locator("#targetSyncStatus").wait_for(state="visible")
+            page.get_by_text("Chrome đã đóng.", exact=False).wait_for()
+            self.assertEqual(sync_flow, ["sync", "close"])
+            self.assertIn("tìm thấy 1 Page/Kênh", page.locator("#targetSyncStatus").inner_text())
+            page.unroute("**/api/accounts/*/sync-targets", fake_target_sync)
+            page.unroute("**/api/accounts/*/chrome/close", fake_account_close)
             page.get_by_role("button", name="Sửa", exact=True).first.click()
             page.locator("#accountDialog").wait_for(state="visible")
             self.assertTrue(page.locator("#accountDialog").is_visible())

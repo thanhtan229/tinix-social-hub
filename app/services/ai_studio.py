@@ -13,7 +13,8 @@ SYSTEM_PROMPT = """Bạn là AI Content Studio. Chỉ trả về JSON hợp lệ
     "facebook":{"caption":"","hashtags":[],"cta":"","pinned_comment":""},
     "instagram":{"caption":"","hashtags":[],"cta":""},
     "tiktok":{"caption":"","hashtags":[],"video_hook":"","video_script":""},
-    "youtube":{"title":"","caption":"","hashtags":[],"video_hook":"","video_script":""}
+    "youtube":{"title":"","caption":"","hashtags":[],"video_hook":"","video_script":""},
+    "x":{"caption":"","hashtags":[],"cta":""}
   }, "media_suggestions":[], "warnings":[]
 }
 Không tự lập lịch hoặc đăng. Tuân thủ brand profile và cảnh báo nếu brief xung đột từ khóa cấm."""
@@ -68,7 +69,13 @@ class AIContentStudioService:
             raise
         content = None
         if save_draft:
-            facebook = result.content.platform_variants.get("facebook")
+            primary = result.content.platform_variants.get("facebook")
+            if not primary:
+                primary = next(
+                    (result.content.platform_variants.get(platform) for platform in platforms
+                     if result.content.platform_variants.get(platform)),
+                    None,
+                )
             content = self.contents.create(
                 {
                     "brand_profile_id": brand_profile_id,
@@ -76,9 +83,9 @@ class AIContentStudioService:
                     "title": result.content.topic or "AI draft",
                     "topic": result.content.topic,
                     "summary": result.content.summary,
-                    "caption": facebook.caption if facebook else "",
-                    "hashtags": facebook.hashtags if facebook else [],
-                    "cta": facebook.cta if facebook else None,
+                    "caption": primary.caption if primary else "",
+                    "hashtags": primary.hashtags if primary else [],
+                    "cta": primary.cta if primary else None,
                     "platform_variants": {
                         platform: variant.model_dump() for platform, variant in result.content.platform_variants.items()
                     },

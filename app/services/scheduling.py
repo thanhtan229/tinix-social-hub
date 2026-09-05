@@ -11,6 +11,7 @@ from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.platforms import get_platform
 from app.platforms.validation import PlatformValidationError, validate_publication
+from app.services.publisher_router import PublisherRouter, RoutingPreference
 
 
 class SchedulingError(ValueError):
@@ -26,6 +27,7 @@ class SchedulingService:
         contents: ContentRepository,
         rng: random.Random | None = None,
         publications: PublicationRepository | None = None,
+        publisher_router: PublisherRouter | None = None,
     ) -> None:
         self.jobs = jobs
         self.accounts = accounts
@@ -33,16 +35,18 @@ class SchedulingService:
         self.contents = contents
         self.rng = rng or random.SystemRandom()
         self.publications = publications or PublicationRepository(jobs.db)
+        self.publisher_router = publisher_router
 
     @staticmethod
     def _idempotency(
         content: dict[str, Any], target_id: str, scheduled_at: str | None, dry_run: bool,
         content_format: str, platform_settings: dict[str, Any],
+        routing_preference: str = "chrome_preferred",
     ) -> str:
         raw = json.dumps(
             [
                 content["id"], content["current_revision"], target_id, scheduled_at or "now",
-                dry_run, content_format, platform_settings,
+                dry_run, content_format, platform_settings, routing_preference,
             ],
             sort_keys=True,
             separators=(",", ":"),
@@ -61,6 +65,7 @@ class SchedulingService:
         missed_policy: str,
         content_format: str = "post",
         platform_settings: dict[str, Any] | None = None,
+        routing_preference: str | None = None,
     ) -> list[dict[str, Any]]:
         content = self.contents.get(content_id)
         account = self.accounts.get(account_id)
@@ -73,6 +78,18 @@ class SchedulingService:
         definition = get_platform(account["platform"])
         if not definition or not definition.operational:
             raise SchedulingError("Nền tảng chưa được bật cho Chrome publishing.")
+        try:
+            requested_routing = RoutingPreference(
+                routing_preference or account.get("routing_preference") or RoutingPreference.CHROME_PREFERRED
+            ).value
+        except ValueError as exc:
+            raise SchedulingError("Routing preference không hợp lệ.") from exc
+        if self.publisher_router:
+            route = self.publisher_router.resolve(
+                account, content_format=content_format, dry_run=dry_run, preference=requested_routing,
+            )
+            if route.reason == "no_eligible_transport":
+                raise SchedulingError("Không có transport phù hợp cho account và định dạng đã chọn.")
         approval = self.contents.current_approval(content_id)
         if not dry_run and not approval:
             raise SchedulingError("Bản revision hiện tại chưa được duyệt.")
@@ -105,8 +122,14 @@ class SchedulingService:
             {"type": media["media_type"], "size_bytes": media["size_bytes"]}
             for media in content["media"]
         ]
+        validation_caption = "\n\n".join(
+            part for part in (caption, " ".join(hashtags or [])) if part
+        ).strip()
         try:
-            validate_publication(account["platform"], content_format, caption, validation_media, platform_settings)
+            validate_publication(
+                account["platform"], content_format, validation_caption,
+                validation_media, platform_settings,
+            )
         except PlatformValidationError as exc:
             raise SchedulingError(str(exc)) from exc
         plan_raw = json.dumps(
@@ -114,7 +137,7 @@ class SchedulingService:
                 content_id, revision_id, account_id, sorted(target["id"] for target in targets),
                 base.isoformat() if base else "now", dry_run, delay_seconds,
                 random_delay_seconds, missed_policy,
-                content_format, platform_settings,
+                content_format, platform_settings, requested_routing,
             ],
             sort_keys=True,
             separators=(",", ":"),
@@ -145,7 +168,9 @@ class SchedulingService:
                 if random_delay_seconds > 0:
                     offset += self.rng.randint(0, random_delay_seconds)
             due = (base + timedelta(seconds=offset)).isoformat() if base else None
-            key = self._idempotency(content, target["id"], due, dry_run, content_format, platform_settings)
+            key = self._idempotency(
+                content, target["id"], due, dry_run, content_format, platform_settings, requested_routing,
+            )
             existing = self.jobs.get_by_idempotency(key)
             if existing:
                 created.append(existing)
@@ -168,6 +193,7 @@ class SchedulingService:
                     {"type": media["media_type"], "relative_path": media["relative_path"]}
                     for media in content["media"]
                 ],
+                "routing_preference": requested_routing,
             }
             release_key = hashlib.sha256(f"release:{plan_key}:{target['id']}:{due or 'now'}".encode()).hexdigest()
             release = self.publications.create_release(
@@ -179,6 +205,7 @@ class SchedulingService:
                 payload_snapshot=payload, media_snapshot=media_snapshot,
                 selector_version=getattr(definition, "selector_version", None),
                 idempotency_key=release_key,
+                requested_routing_policy=requested_routing,
             )
             payload["publication_release_id"] = release["id"]
             job = self.jobs.create(

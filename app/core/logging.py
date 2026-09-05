@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 
 from app.core.config import Settings
@@ -29,11 +30,12 @@ def configure_logging(settings: Settings) -> None:
         settings.log_dir / "tinix.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
     )
     file_handler.setFormatter(formatter)
-    stream = logging.StreamHandler()
-    stream.setFormatter(formatter)
     redaction = SecretRedactionFilter([settings.ai_api_key])
     file_handler.addFilter(redaction)
-    stream.addFilter(redaction)
     root.handlers.clear()
     root.addHandler(file_handler)
-    root.addHandler(stream)
+    if sys.stderr is not None:
+        stream = logging.StreamHandler(sys.stderr)
+        stream.setFormatter(formatter)
+        stream.addFilter(redaction)
+        root.addHandler(stream)

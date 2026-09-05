@@ -2,7 +2,7 @@
 
 ## Mục tiêu và quyết định cố định
 
-Tinix là ứng dụng desktop-local, PC-first cho một người dùng: quản lý nội dung, approval, lịch phát hành, Chrome profiles, đối soát và automation nội bộ. Tinix không dùng API của Facebook, Instagram, TikTok hoặc YouTube để đăng; cookie/session ở nguyên trong profile Chrome và người dùng đăng nhập thủ công.
+Tinix là ứng dụng desktop-local, PC-first cho một người dùng: quản lý nội dung, approval, lịch phát hành, Chrome profiles, đối soát và automation nội bộ. Chrome automation là transport mặc định; YouTube video/Short có thể dùng official API qua OAuth. Cookie/session Chrome ở nguyên trong profile, còn token OAuth được bảo vệ bằng DPAPI trên Windows.
 
 ## Luồng dữ liệu
 
@@ -23,7 +23,7 @@ WebUI / CLI / local API v1
 | Content/approval | Revisions, variants, current-revision approval, AI structured drafts |
 | Media Library | Streaming upload, SHA-256 dedupe, dimensions, alt/tags, references, orphan safety |
 | Release control | Plans/releases, attempts/events/artifacts, retry preview, commit safety, manual finalize |
-| Chrome providers | Facebook post; Instagram image/carousel; TikTok short video; YouTube video/Short |
+| Chrome providers | Facebook post; Instagram image/carousel; TikTok short video; YouTube video/Short; X post |
 | Analytics | Manual connect, DOM collection, provenance/timezone, idempotent snapshots, 7/30/90 comparison |
 | Automation | Authenticated `/api/v1`, scoped DPAPI token, CLI, signed durable webhooks |
 | Runtime | SQLite/local storage/DPAPI/managed Chrome behind explicit contracts; standalone worker supported |
@@ -36,7 +36,7 @@ WebUI / CLI / local API v1
 - Crash/timeout after commit becomes `unknown_result`; no automatic retry.
 - Media and settings are frozen into each release snapshot.
 - Unsupported analytics is distinct from a numeric zero.
-- Network publishing remains Chrome-only; the only API surface is Tinix's loopback API.
+- Network publishing uses a per-account dual-transport router. YouTube official API is implemented; Facebook, Instagram, TikTok and X currently remain on Chrome publishing.
 
 ## Operational status
 

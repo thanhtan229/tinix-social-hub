@@ -14,6 +14,27 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+class AppSettingsRepository:
+    def __init__(self, database: Database) -> None:
+        self.db = database
+
+    def get(self, key: str, default: Any = None) -> Any:
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT value_json FROM app_settings WHERE key=?", (key,)
+            ).fetchone()
+        return json.loads(row["value_json"]) if row else default
+
+    def set(self, key: str, value: Any) -> Any:
+        with self.db.connection() as connection:
+            connection.execute(
+                "INSERT INTO app_settings(key,value_json,updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",
+                (key, _json(value), utc_now()),
+            )
+        return value
+
+
 class AccountRepository:
     def __init__(self, database: Database) -> None:
         self.db = database
@@ -94,6 +115,17 @@ class AccountRepository:
                 "UPDATE accounts SET login_status=?,last_login_check_at=?,updated_at=? WHERE id=?",
                 (status, now, now, account_id),
             )
+
+    def set_routing_preference(self, account_id: str, preference: str) -> dict[str, Any] | None:
+        allowed = {"official_api_preferred", "chrome_preferred", "official_api_only", "chrome_only"}
+        if preference not in allowed:
+            raise ValueError("Routing preference không hợp lệ.")
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE accounts SET routing_preference=?,updated_at=? WHERE id=?",
+                (preference, utc_now(), account_id),
+            )
+        return self.get(account_id)
 
     def begin_profile_operation(self, account_id: str) -> dict[str, Any]:
         """Lock an account only when no unfinished job can start using its profile."""
@@ -219,6 +251,15 @@ class ArtifactRepository:
 
 
 class JobRepository:
+    ACTIVE_HISTORY_STATUSES = {
+        "scheduled", "queued", "opening_browser", "checking_login", "uploading",
+        "publishing", "verifying", "running", "retry_wait",
+    }
+    FAILED_HISTORY_STATUSES = {
+        "temporary_failure", "permanent_failure", "login_required", "checkpoint",
+        "unknown_result",
+    }
+
     def __init__(self, database: Database, retry_base_seconds: int = 30, retry_cap_seconds: int = 1800) -> None:
         self.db = database
         self.retry_base_seconds = retry_base_seconds
@@ -331,6 +372,104 @@ class JobRepository:
                 rows = connection.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset))
             return [row_to_dict(row) for row in rows]
 
+    def history_candidates(
+        self,
+        *,
+        before: str | None = None,
+        after: str | None = None,
+        status_filter: str = "all",
+        job_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        active = sorted(self.ACTIVE_HISTORY_STATUSES)
+        clauses.append(f"status NOT IN ({','.join('?' for _ in active)})")
+        parameters.extend(active)
+        if before:
+            clauses.append("created_at < ?")
+            parameters.append(before)
+        if after:
+            clauses.append("created_at >= ?")
+            parameters.append(after)
+        if job_ids is not None:
+            unique_ids = list(dict.fromkeys(job_ids))
+            if not unique_ids:
+                return {"jobs": [], "artifacts": [], "blocked_active": 0}
+            clauses.append(f"id IN ({','.join('?' for _ in unique_ids)})")
+            parameters.extend(unique_ids)
+        if status_filter == "succeeded":
+            clauses.append("status='succeeded'")
+        elif status_filter == "dry_run":
+            clauses.append("dry_run=1")
+        elif status_filter == "failed":
+            failed = sorted(self.FAILED_HISTORY_STATUSES)
+            clauses.append(f"status IN ({','.join('?' for _ in failed)})")
+            parameters.extend(failed)
+        elif status_filter != "all":
+            raise ValueError("Bộ lọc trạng thái lịch sử không hợp lệ.")
+
+        where = " AND ".join(clauses)
+        with self.db.connection() as connection:
+            jobs = [dict(row) for row in connection.execute(
+                f"SELECT id,status,dry_run,created_at FROM jobs WHERE {where} ORDER BY created_at DESC",
+                parameters,
+            )]
+            ids = [job["id"] for job in jobs]
+            artifacts: list[dict[str, Any]] = []
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                artifacts = [dict(row) for row in connection.execute(
+                    f"SELECT id,job_id,relative_path FROM browser_error_artifacts WHERE job_id IN ({placeholders})",
+                    ids,
+                )]
+            blocked_active = 0
+            if job_ids:
+                unique_ids = list(dict.fromkeys(job_ids))
+                placeholders = ",".join("?" for _ in unique_ids)
+                blocked_active = connection.execute(
+                    f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND status IN ({','.join('?' for _ in active)})",
+                    [*unique_ids, *active],
+                ).fetchone()[0]
+        return {"jobs": jobs, "artifacts": artifacts, "blocked_active": blocked_active}
+
+    def delete_history(self, job_ids: list[str]) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(job_ids))
+        if not unique_ids:
+            return {"deleted": 0, "job_ids": [], "artifacts": [], "blocked_active": 0}
+        placeholders = ",".join("?" for _ in unique_ids)
+        active = sorted(self.ACTIVE_HISTORY_STATUSES)
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = [dict(row) for row in connection.execute(
+                    f"SELECT id,status FROM jobs WHERE id IN ({placeholders})", unique_ids
+                )]
+                eligible = [row["id"] for row in rows if row["status"] not in self.ACTIVE_HISTORY_STATUSES]
+                blocked_active = sum(row["status"] in self.ACTIVE_HISTORY_STATUSES for row in rows)
+                artifacts: list[dict[str, Any]] = []
+                if eligible:
+                    eligible_placeholders = ",".join("?" for _ in eligible)
+                    artifacts = [dict(row) for row in connection.execute(
+                        f"SELECT id,job_id,relative_path FROM browser_error_artifacts WHERE job_id IN ({eligible_placeholders})",
+                        eligible,
+                    )]
+                    connection.execute(
+                        f"DELETE FROM notifications WHERE entity_type='job' AND entity_id IN ({eligible_placeholders})",
+                        eligible,
+                    )
+                    connection.execute(
+                        f"DELETE FROM jobs WHERE id IN ({eligible_placeholders}) AND status NOT IN ({','.join('?' for _ in active)})",
+                        [*eligible, *active],
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return {
+            "deleted": len(eligible), "job_ids": eligible, "artifacts": artifacts,
+            "blocked_active": blocked_active,
+        }
+
     def events(self, job_id: str) -> list[dict[str, Any]]:
         with self.db.connection() as connection:
             return [dict(row) for row in connection.execute("SELECT * FROM publish_job_events WHERE job_id=? ORDER BY id", (job_id,))]
@@ -355,6 +494,60 @@ class JobRepository:
         job["events"] = self.events(job_id)
         job["artifacts"] = self.artifacts(job_id)
         return job
+
+    def record_route(
+        self, job_id: str, *, transport: str, reason: str,
+        provider: str | None = None, provider_version: str | None = None,
+        connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Freeze the selected transport before a commit-capable publisher runs."""
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                job = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if not job:
+                    raise KeyError(job_id)
+                release = None
+                if job["publication_release_id"]:
+                    release = connection.execute(
+                        "SELECT publication_transport FROM publication_releases WHERE id=?",
+                        (job["publication_release_id"],),
+                    ).fetchone()
+                    if release and release["publication_transport"] and release["publication_transport"] != transport:
+                        raise ValueError("Transport đã được đóng băng cho release; không được chuyển route khi retry.")
+                    connection.execute(
+                        "UPDATE publication_releases SET publication_transport=COALESCE(publication_transport,?),"
+                        "provider=COALESCE(provider,?),provider_version=COALESCE(provider_version,?),"
+                        "routing_reason=COALESCE(routing_reason,?),connection_id=COALESCE(connection_id,?),updated_at=? WHERE id=?",
+                        (transport, provider, provider_version, reason, connection_id, now, job["publication_release_id"]),
+                    )
+                connection.execute(
+                    "UPDATE publish_attempts SET transport=?,provider=? WHERE id=(SELECT id FROM publish_attempts WHERE job_id=? ORDER BY attempt_number DESC LIMIT 1)",
+                    (transport, provider, job_id),
+                )
+                self._event(
+                    connection, job_id, job["status"], job["status"], "route_selected",
+                    metadata={"transport": transport, "provider": provider, "reason": reason, "connection_id": connection_id},
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.get(job_id)
+
+    def record_provider_request(
+        self, job_id: str, provider_request_id: str, *, commit_possible: bool = False,
+    ) -> None:
+        """Attach the provider correlation id to the active attempt for support and recovery."""
+        with self.db.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE publish_attempts SET provider_request_id=?,commit_possible=MAX(commit_possible,?) "
+                "WHERE id=(SELECT id FROM publish_attempts WHERE job_id=? ORDER BY attempt_number DESC LIMIT 1)",
+                (provider_request_id[:500], int(commit_possible), job_id),
+            )
+            if not cursor.rowcount:
+                raise KeyError(job_id)
 
     def health_counts(self, stuck_minutes: int = 15) -> dict[str, int]:
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=stuck_minutes)).isoformat()
@@ -458,6 +651,11 @@ class JobRepository:
                         int(commit_reached), now, job_id,
                     ),
                 )
+                if commit_reached:
+                    connection.execute(
+                        "UPDATE publish_attempts SET commit_possible=1 WHERE id=(SELECT id FROM publish_attempts WHERE job_id=? ORDER BY attempt_number DESC LIMIT 1)",
+                        (job_id,),
+                    )
                 if row["publication_release_id"]:
                     post_url = result.get("post_url") if result else None
                     connection.execute(
@@ -648,6 +846,13 @@ class JobRepository:
         job = self.get(job_id)
         if not job or JobStatus(job["status"]) in TERMINAL_STATUSES:
             return
+        if job.get("commit_reached_at") or job["status"] == JobStatus.VERIFYING.value:
+            self.transition(
+                job_id, JobStatus.UNKNOWN_RESULT, event_type="failure_after_commit",
+                error=error, failure_code=failure_code,
+                message="Lỗi xảy ra sau commit point; cần xác minh thủ công trước khi tiếp tục.",
+            )
+            return
         attempts = int(job["attempts"])
         if attempts < int(job["max_attempts"]) and job["status"] not in {
             JobStatus.LOGIN_REQUIRED.value, JobStatus.CHECKPOINT.value, JobStatus.UNKNOWN_RESULT.value,
@@ -722,8 +927,48 @@ class TargetRepository:
                 raise
         return self.list(account_id=account_id)
 
+    def remove_invalid_discovery_targets(
+        self, account_id: str, platform: str, external_ids: set[str] | frozenset[str],
+    ) -> dict[str, int]:
+        """Remove false discovery results without breaking publication history."""
+        if not external_ids:
+            return {"removed": 0, "preserved": 0}
+        placeholders = ",".join("?" for _ in external_ids)
+        parameters = [account_id, platform, *sorted(external_ids)]
+        removed = preserved = 0
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    f"SELECT id FROM publishing_targets WHERE account_id=? AND platform=? "
+                    f"AND external_id IN ({placeholders})",
+                    parameters,
+                ).fetchall()
+                for row in rows:
+                    target_id = row["id"]
+                    referenced = connection.execute(
+                        "SELECT EXISTS(SELECT 1 FROM jobs WHERE target_id=?) OR "
+                        "EXISTS(SELECT 1 FROM publication_releases WHERE target_id=?)",
+                        (target_id, target_id),
+                    ).fetchone()[0]
+                    if referenced:
+                        connection.execute(
+                            "UPDATE publishing_targets SET enabled=0,access_status='invalid_discovery',"
+                            "last_error='Liên kết điều hướng Facebook, không phải Page',updated_at=? WHERE id=?",
+                            (utc_now(), target_id),
+                        )
+                        preserved += 1
+                    else:
+                        connection.execute("DELETE FROM publishing_targets WHERE id=?", (target_id,))
+                        removed += 1
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return {"removed": removed, "preserved": preserved}
+
     def list(self, account_id: str | None = None, search: str | None = None, enabled: bool | None = None) -> list[dict[str, Any]]:
-        clauses, parameters = [], []
+        clauses, parameters = ["access_status!='invalid_discovery'"], []
         if account_id:
             clauses.append("account_id=?")
             parameters.append(account_id)

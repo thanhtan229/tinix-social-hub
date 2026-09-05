@@ -13,10 +13,88 @@ const PLATFORM_ICONS = {
   instagram: '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="ig" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#FFD600"/><stop offset=".48" stop-color="#FF0169"/><stop offset="1" stop-color="#7638FA"/></linearGradient></defs><rect width="24" height="24" rx="6" fill="url(#ig)"/><circle cx="12" cy="12" r="4.4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="18.1" cy="5.9" r="1.25" fill="#fff"/></svg>',
   tiktok: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#101010"/><path fill="#25F4EE" d="M10.2 17.1a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V7.7c1 1.2 2.4 2 4 2.1V7.3a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/><path fill="#FE2C55" d="M11.1 17.5a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V8.1c1 1.2 2.4 2 4 2.1V7.7a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/><path fill="#fff" d="M10.65 17.3a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V7.9c1 1.2 2.4 2 4 2.1V7.5a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/></svg>',
   youtube: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect y="3.5" width="24" height="17" rx="5" fill="#FF0000"/><path fill="#fff" d="m9.5 8 7 4-7 4V8Z"/></svg>',
+  x: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#050505"/><path fill="#fff" d="M5.2 4h4.4l3.4 4.7L17.1 4h1.7l-5 5.9L19.5 20h-4.4l-3.8-5.3L6.8 20H5.1l5.4-6.5L5.2 4Zm3.5 1.4H7.9l8 13.2h.8l-8-13.2Z"/></svg>',
 };
 
-const PLATFORM_LABELS = {facebook:"Facebook", instagram:"Instagram", tiktok:"TikTok", youtube:"YouTube"};
-const accountFilters = {search:"", platform:"", status:"", sort:"platform_name"};
+const PLATFORM_LABELS = {facebook:"Facebook", instagram:"Instagram", tiktok:"TikTok", youtube:"YouTube", x:"X"};
+const INVALID_FACEBOOK_TARGETS = new Set(["url:latest", "url:ad_center"]);
+const ACCESS_LABELS = {
+  accessible:"Có thể truy cập",
+  inaccessible:"Không thể truy cập",
+  unknown:"Chưa kiểm tra",
+};
+
+function targetTypeLabel(target) {
+  const labels = {page:"Page", profile:"Hồ sơ", channel:"Kênh"};
+  return labels[target.target_type] || "Kênh";
+}
+
+function isInvalidFacebookTarget(target) {
+  const name = String(target.name || "").trim().toLocaleLowerCase("vi");
+  return INVALID_FACEBOOK_TARGETS.has(target.external_id)
+    || name.startsWith("unread")
+    || name.startsWith("chưa đọc");
+}
+const accountFilters = {search:"", platform:"", status:"", sort:"platform_name", selectedAccountId:""};
+const loginPolls = new Map();
+let providerConnections = [];
+
+const ROUTING_LABELS = {
+  chrome_preferred:"Ưu tiên Chrome",
+  official_api_preferred:"Ưu tiên API",
+  chrome_only:"Chỉ Chrome",
+  official_api_only:"Chỉ API",
+};
+
+function routingControl(account) {
+  const preference = account.routing_preference || "chrome_preferred";
+  const connection = providerConnections.find(item => item.account_id === account.id && item.transport === "official_api");
+  const options = Object.entries(ROUTING_LABELS).map(([value,label]) =>
+    `<option value="${value}"${value === preference ? " selected" : ""}>${label}</option>`
+  ).join("");
+  const apiButton = account.platform === "youtube"
+    ? `<button data-account-action="${connection ? "disconnect-api" : "connect-api"}" data-id="${account.id}" data-connection-id="${connection?.id || ""}">${connection ? "API đã nối" : "Kết nối API"}</button>`
+    : "";
+  return `<div class="account-routing"><select data-routing-account="${account.id}" aria-label="Cách đăng của ${esc(account.name)}">${options}</select>${apiButton}</div>`;
+}
+
+function setAccountLoginStatus(accountId, loginStatus) {
+  const account = store.accounts.find(item => item.id === accountId);
+  if (!account) return;
+  account.login_status = loginStatus;
+  renderAccountList();
+}
+
+function stopLoginPolling(accountId) {
+  const timer = loginPolls.get(accountId);
+  if (timer) clearTimeout(timer);
+  loginPolls.delete(accountId);
+}
+
+function pollLoginAfterOpen(account, attempt = 0) {
+  stopLoginPolling(account.id);
+  if (attempt >= 24) return;
+  const timer = setTimeout(async () => {
+    try {
+      const result = await api(`/accounts/${account.id}/check-login`, {method:"POST"});
+      setAccountLoginStatus(account.id, result.login_status);
+      if (result.login_status === "logged_in") {
+        stopLoginPolling(account.id);
+        toast(`${account.name}: ${STATUS[result.login_status]}`);
+        return;
+      }
+      if (result.login_status === "checkpoint") {
+        stopLoginPolling(account.id);
+        return;
+      }
+    } catch (_) {
+      // Chrome may be navigating while the user signs in; retry within the polling window.
+    }
+    if (!loginPolls.has(account.id)) return;
+    pollLoginAfterOpen(account, attempt + 1);
+  }, 5000);
+  loginPolls.set(account.id, timer);
+}
 
 function platformIcon(platform) {
   const key = String(platform || "").toLowerCase();
@@ -55,7 +133,7 @@ function renderPlatformFilters() {
     return result;
   }, {});
   if (accountFilters.platform && !counts[accountFilters.platform]) accountFilters.platform = "";
-  const platforms = ["facebook", "instagram", "tiktok", "youtube"].filter(platform => counts[platform]);
+  const platforms = ["facebook", "instagram", "tiktok", "youtube", "x"].filter(platform => counts[platform]);
   const button = (platform, label, count, icon = "") => `<button type="button" class="account-platform-filter${accountFilters.platform === platform ? " active" : ""}" data-account-platform="${platform}">${icon}<span>${label}</span><b>${count}</b></button>`;
   document.querySelector("#accountPlatformFilters").innerHTML = button("", "Tất cả", store.accounts.length) + platforms.map(platform => button(platform, PLATFORM_LABELS[platform] || platform, counts[platform], platformIcon(platform))).join("");
   document.querySelectorAll("[data-account-platform]").forEach(filterButton => filterButton.onclick = () => {
@@ -82,29 +160,138 @@ function filteredAccounts() {
   return result;
 }
 
+function renderTargetList() {
+  const selected = store.accounts.find(account => account.id === accountFilters.selectedAccountId);
+  const targets = selected
+    ? store.targets.filter(target => target.account_id === selected.id)
+    : store.targets;
+  const filterLabel = document.querySelector("#targetAccountFilter");
+  filterLabel.innerHTML = selected
+    ? `<span class="target-filter-note"><span>Đang lọc theo</span><strong>Account: ${esc(selected.name)}</strong><small>Chọn lại account để bỏ lọc</small></span>`
+    : `<span class="target-filter-note is-all">Tất cả account</span>`;
+  const targetList = document.querySelector("#targetList");
+  targetList.innerHTML = targets.length ? `<div class="target-grid">${targets.map(target => {
+    const account = store.accounts.find(item => item.id === target.account_id) || {};
+    const platform = String(target.platform || "").toLowerCase();
+    const access = String(target.access_status || "unknown").toLowerCase();
+    const enabled = Boolean(Number(target.enabled));
+    return `<article class="target-row ${enabled ? "is-enabled" : "is-disabled"}">
+      <button class="target-open-surface" data-open-target="${target.id}" aria-label="Mở ${esc(target.name)} bằng account ${esc(account.name || "không xác định")}">
+        <span class="target-platform-mark">${platformIcon(platform)}</span>
+        <span class="target-content">
+          <strong class="target-name">${esc(target.name)}</strong>
+          <span class="target-meta" aria-label="Thông tin kênh">
+            <span class="target-chip target-chip-platform">${esc(targetTypeLabel(target))} · ${esc(PLATFORM_LABELS[platform] || platform)}</span>
+            <span class="target-chip target-chip-access access-${esc(access)}"><i></i>${esc(ACCESS_LABELS[access] || access)}</span>
+            <span class="target-chip target-chip-account" title="Account sở hữu">Account: ${esc(account.name || "Không xác định")}</span>
+          </span>
+        </span>
+      </button>
+      <button class="target-toggle ${enabled ? "is-on" : "is-off"}" data-target-id="${target.id}" data-enabled="${target.enabled}" aria-label="${enabled ? "Tắt" : "Bật"} ${esc(target.name)}" title="Bấm để ${enabled ? "tắt" : "bật"} kênh">
+        <span class="target-toggle-dot"></span>${enabled ? "Đang bật" : "Đang tắt"}
+      </button>
+    </article>`;
+  }).join("")}</div>` : `<div class="target-empty"><span aria-hidden="true">◎</span><strong>Chưa có Page hoặc kênh</strong><p>${selected ? `Account ${esc(selected.name)} chưa có kênh được đồng bộ.` : "Hãy chọn một account và bấm Quét Page/Kênh."}</p></div>`;
+  const openTarget = async trigger => {
+    const row = trigger.closest(".target-row");
+    if (row.classList.contains("is-opening")) return;
+    row.classList.add("is-opening");
+    const name = row.querySelector(".target-name")?.textContent || "Page/Kênh";
+    toast(`Đang mở ${name} bằng đúng Chrome account…`);
+    try {
+      await api(`/targets/${trigger.dataset.openTarget}/chrome/open`, {method:"POST"});
+      toast(`Đã mở ${name} trong Chrome.`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      row.classList.remove("is-opening");
+    }
+  };
+  document.querySelectorAll("[data-open-target]").forEach(button => {
+    button.onclick = () => openTarget(button);
+  });
+  document.querySelectorAll("[data-target-id]").forEach(button => button.onclick = async () => {
+    try {
+      await api(`/targets/${button.dataset.targetId}/enabled`, {method:"PATCH", body:JSON.stringify({enabled:button.dataset.enabled !== "1"})});
+      await refreshAccounts();
+    } catch(error) { toast(error.message); }
+  });
+}
+
 function renderAccountList() {
   renderPlatformFilters();
   const accounts = filteredAccounts();
   document.querySelector("#accountResultCount").textContent = `Hiển thị ${accounts.length}/${store.accounts.length}`;
-  document.querySelector("#accountList").innerHTML = accounts.length ? `<table class="account-table"><thead><tr><th class="account-index">STT</th><th>Account</th><th>Username / Email</th><th>Trạng thái</th><th class="account-action-heading">Thao tác</th></tr></thead><tbody>${accounts.map((account,index) => `<tr><td class="account-index" data-label="STT">${index+1}</td><td data-label="Account"><div class="account-identity"><strong>${esc(account.name)}</strong>${platformIcon(account.platform)}</div></td><td data-label="Username / Email"><span class="account-contact">${esc(account.username || account.email || "Chưa có username/email")}</span>${account.username && account.email ? `<small>${esc(account.email)}</small>` : ""}</td><td data-label="Trạng thái">${badge(account.login_status)}${account.profile_operation_locked ? '<small class="profile-maintenance">Profile đang bảo trì</small>' : ""}</td><td data-label="Thao tác"><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="close" data-id="${account.id}">Đóng</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></td></tr>`).join("")}</tbody></table>` : `<p class="muted account-empty">${store.accounts.length ? "Không có account phù hợp bộ lọc." : "Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công."}</p>`;
+  document.querySelector("#accountList").innerHTML = accounts.length ? `<table class="account-table"><thead><tr><th class="account-index">STT</th><th>Account</th><th>Username / Email</th><th>Trạng thái</th><th>Cách đăng</th><th class="account-action-heading">Thao tác</th></tr></thead><tbody>${accounts.map((account,index) => `<tr data-account-row="${account.id}" class="${account.id === accountFilters.selectedAccountId ? "selected" : ""}" tabindex="0" aria-selected="${account.id === accountFilters.selectedAccountId}"><td class="account-index" data-label="STT">${index+1}</td><td data-label="Account"><div class="account-identity"><strong>${esc(account.name)}</strong>${platformIcon(account.platform)}</div></td><td data-label="Username / Email"><span class="account-contact">${esc(account.username || account.email || "Chưa có username/email")}</span>${account.username && account.email ? `<small>${esc(account.email)}</small>` : ""}</td><td data-label="Trạng thái">${badge(account.login_status)}${account.profile_operation_locked ? '<small class="profile-maintenance">Profile đang bảo trì</small>' : ""}</td><td data-label="Cách đăng">${routingControl(account)}</td><td data-label="Thao tác"><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="sync" data-id="${account.id}"${account.profile_operation_locked ? " disabled" : ""}>Quét Page/Kênh</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></td></tr>`).join("")}</tbody></table>` : `<p class="muted account-empty">${store.accounts.length ? "Không có account phù hợp bộ lọc." : "Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công."}</p>`;
   bindActions();
+  document.querySelectorAll("[data-routing-account]").forEach(select => select.onchange = async event => {
+    event.stopPropagation();
+    try {
+      await api(`/accounts/${select.dataset.routingAccount}/routing-preference`, {
+        method:"PATCH", body:JSON.stringify({routing_preference:select.value}),
+      });
+      const account = store.accounts.find(item => item.id === select.dataset.routingAccount);
+      if (account) account.routing_preference = select.value;
+      toast(`Đã chọn: ${ROUTING_LABELS[select.value]}`);
+    } catch (error) { toast(error.message); await refreshAccounts(); }
+  });
+  bindAccountRows();
+}
+
+function selectAccountRow(accountId) {
+  accountFilters.selectedAccountId = accountFilters.selectedAccountId === accountId ? "" : accountId;
+  renderAccountList();
+  renderTargetList();
+}
+
+function bindAccountRows() {
+  document.querySelectorAll("[data-account-row]").forEach(row => {
+    row.onclick = event => {
+      if (event.target.closest("button, a, input, select, textarea")) return;
+      selectAccountRow(row.dataset.accountRow);
+    };
+    row.onkeydown = event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target.closest("button, a, input, select, textarea")) return;
+      event.preventDefault();
+      selectAccountRow(row.dataset.accountRow);
+    };
+  });
 }
 
 export async function refreshAccounts() {
-  const [accounts, targets] = await Promise.all([api("/accounts"), api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`)]);
-  store.accounts = accounts; store.targets = targets;
-  const profileSelect = document.querySelector("#profileAccount");
-  const selectedProfileAccount = profileSelect.value;
-  profileSelect.innerHTML = accounts.length ? accounts.map(account => `<option value="${account.id}">${esc(account.name)} · ${esc(account.platform)}</option>`).join("") : '<option value="">Chưa có account</option>';
-  if (accounts.some(account => account.id === selectedProfileAccount)) profileSelect.value = selectedProfileAccount;
-  document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
-  document.querySelector("#profileHelp").textContent = accounts.length ? "Export tạo ZIP chứa thông tin account, dữ liệu đăng nhập và phiên Chrome; hãy bảo quản file cẩn thận." : "Import file .tinix-profiles.zip để tạo toàn bộ account, thông tin đăng nhập và phiên Chrome trong một lần.";
-  renderAccountList();
-  document.querySelector("#targetList").innerHTML = targets.length ? targets.map(target => `<div class="list-row"><div><strong>${esc(target.name)}</strong><small class="muted">${esc(target.platform)} · ${esc(target.access_status)} · ${esc((accounts.find(a=>a.id===target.account_id)||{}).name||"")}</small></div><button data-target-id="${target.id}" data-enabled="${target.enabled}">${target.enabled ? "Tắt" : "Bật"}</button></div>`).join("") : '<p class="muted">Chưa có Page hoặc kênh được đồng bộ.</p>';
-  document.querySelectorAll("[data-target-id]").forEach(button => button.onclick = async () => { try { await api(`/targets/${button.dataset.targetId}/enabled`, {method:"PATCH", body:JSON.stringify({enabled:button.dataset.enabled !== "1"})}); await refreshAccounts(); } catch(error) { toast(error.message); } });
+  try {
+    const [accounts, targets, connections] = await Promise.all([
+      api("/accounts"),
+      api(`/targets?search=${encodeURIComponent(document.querySelector("#targetSearch")?.value || "")}`),
+      api("/connections"),
+    ]);
+    store.accounts = accounts || [];
+    providerConnections = connections || [];
+    store.targets = (targets || []).filter(target => !isInvalidFacebookTarget(target));
+    if (accountFilters.selectedAccountId && !store.accounts.some(account => account.id === accountFilters.selectedAccountId)) {
+      accountFilters.selectedAccountId = "";
+    }
+    const profileSelect = document.querySelector("#profileAccount");
+    if (profileSelect) {
+      const selectedProfileAccount = profileSelect.value;
+      profileSelect.innerHTML = accounts.length ? accounts.map(account => `<option value="${account.id}">${esc(account.name)} · ${esc(account.platform)}</option>`).join("") : '<option value="">Chưa có account</option>';
+      if (accounts.some(account => account.id === selectedProfileAccount)) profileSelect.value = selectedProfileAccount;
+    }
+    document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
+    const helpEl = document.querySelector("#profileHelp");
+    if (helpEl) {
+      helpEl.textContent = accounts.length ? "Export tạo ZIP chứa thông tin account, dữ liệu đăng nhập và phiên Chrome; hãy bảo quản file cẩn thận." : "Import file .tinix-profiles.zip để tạo toàn bộ account, thông tin đăng nhập và phiên Chrome trong một lần.";
+    }
+    renderAccountList();
+    renderTargetList();
+  } catch (error) {
+    console.error("Lỗi khi tải danh sách accounts:", error);
+    toast(`Không thể tải accounts: ${error.message}`);
+  }
 }
 
-async function runProfileAction(action, account) {
+async function runProfileAction(action, account = null) {
   if (action === "import") {
     const dialog = document.querySelector("#profileImportDialog");
     const status = document.querySelector("#profileImportStatus");
@@ -141,29 +328,42 @@ async function runProfileAction(action, account) {
     document.querySelector("#profileCleanupDialog").showModal();
     return false;
   }
-  if (!account) { toast("Hãy tạo hoặc chọn account trước."); return false; }
+  let targetAccount = account;
+  if (!targetAccount) {
+    if (!store.accounts.length) { toast("Hãy tạo hoặc import account trước."); return false; }
+    if (store.accounts.length === 1) {
+      targetAccount = store.accounts[0];
+    } else {
+      const listing = store.accounts.map((acc, idx) => `${idx + 1}. ${acc.name} (${acc.platform})`).join("\n");
+      const choice = prompt(`Chọn account để ${action === "backup" ? "Backup" : "Khôi phục"}:\n${listing}`, "1");
+      if (!choice) return false;
+      targetAccount = store.accounts[Number(choice) - 1];
+      if (!targetAccount) { toast("Lựa chọn không hợp lệ."); return false; }
+    }
+  }
   if (action === "backup") {
-    if (!confirm("Đóng Chrome của account trước khi Backup. Tiếp tục?")) return false;
-    const result = await api(`/accounts/${account.id}/profile/backup`, {method:"POST"});
+    if (!confirm(`Đóng Chrome của account ${targetAccount.name} trước khi Backup. Tiếp tục?`)) return false;
+    const result = await api(`/accounts/${targetAccount.id}/profile/backup`, {method:"POST"});
     toast(`Đã tạo backup ${result.backup_name}`);
   }
   if (action === "restore") {
-    const backups = await api(`/accounts/${account.id}/profile/backups`);
-    if (!backups.length) { toast("Account chưa có backup profile."); return false; }
+    const backups = await api(`/accounts/${targetAccount.id}/profile/backups`);
+    if (!backups.length) { toast(`Account ${targetAccount.name} chưa có backup profile.`); return false; }
     const choices = backups.map((item,index)=>`${index+1}. ${item.name}`).join("\n");
-    const selected = prompt(`Chọn số thứ tự backup cần khôi phục:\n${choices}`);
+    const selected = prompt(`Chọn số thứ tự backup cần khôi phục cho ${targetAccount.name}:\n${choices}`);
     if (!selected) return false;
     const backup = backups[Number(selected)-1];
     if (!backup) { toast("Số thứ tự backup không hợp lệ."); return false; }
     if (!confirm(`Khôi phục ${backup.name}? Profile hiện tại sẽ được backup trước khi thay thế.`)) return false;
-    const result = await api(`/accounts/${account.id}/profile/restore`, {method:"POST", body:JSON.stringify({backup_name:backup.name})});
+    const result = await api(`/accounts/${targetAccount.id}/profile/restore`, {method:"POST", body:JSON.stringify({backup_name:backup.name})});
     toast(`Đã khôi phục ${result.restored_from}. Backup trước khôi phục: ${result.backup_name || "không có"}`);
   }
   return true;
 }
 
 function bindActions() {
-  document.querySelectorAll("[data-account-action]").forEach(button => button.onclick = async () => {
+  document.querySelectorAll("[data-account-action]").forEach(button => button.onclick = async event => {
+    event.stopPropagation();
     const account = store.accounts.find(item => item.id === button.dataset.id); const action = button.dataset.accountAction;
     const originalLabel = button.textContent;
     try {
@@ -174,16 +374,55 @@ function bindActions() {
         button.textContent = "Đang kiểm tra…";
         try {
           const result = await api(`/accounts/${account.id}/check-login`, {method:"POST"});
+          setAccountLoginStatus(account.id, result.login_status);
           toast(`${account.name}: ${STATUS[result.login_status] || result.login_status}`);
+          if (!["logged_in", "checkpoint"].includes(result.login_status)) pollLoginAfterOpen(account);
         } catch (error) {
           throw new Error(`Đã mở Chrome nhưng kiểm tra đăng nhập thất bại: ${error.message}`);
         }
       }
-      if (action === "close") { const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
+      if (action === "sync") {
+        const syncStatus = document.querySelector("#targetSyncStatus");
+        button.disabled = true;
+        button.textContent = "Đang quét…";
+        syncStatus.className = "operation-status";
+        syncStatus.textContent = `Đang quét Page/Kênh của ${account.name}…`;
+        const targets = await api(`/accounts/${account.id}/sync-targets`, {method:"POST"});
+        const validTargets = targets.filter(target => !isInvalidFacebookTarget(target));
+        try {
+          await api(`/accounts/${account.id}/chrome/close`, {method:"POST"});
+          syncStatus.className = "operation-status success";
+          syncStatus.textContent = `Đã quét xong ${account.name}: tìm thấy ${validTargets.length} Page/Kênh. Chrome đã đóng.`;
+          toast(`${account.name}: đã quét xong, tìm thấy ${validTargets.length} Page/Kênh.`);
+        } catch (closeError) {
+          syncStatus.className = "operation-status error";
+          syncStatus.textContent = `Đã quét xong ${account.name}: tìm thấy ${validTargets.length} Page/Kênh, nhưng không thể đóng Chrome: ${closeError.message}`;
+          toast(`${account.name}: quét xong nhưng không thể đóng Chrome.`);
+        }
+      }
+      if (action === "close") { stopLoginPolling(account.id); const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
+      if (action === "connect-api") {
+        const result = await api(`/accounts/${account.id}/connections/youtube/authorize`, {method:"POST"});
+        window.open(result.authorization_url, "_blank", "noopener,noreferrer");
+        toast("Hãy cấp quyền YouTube trong tab mới, sau đó quay lại và tải lại danh sách account.");
+        return;
+      }
+      if (action === "disconnect-api") {
+        if (!confirm(`Ngắt kết nối YouTube API của ${account.name}?`)) return;
+        await api(`/accounts/${account.id}/connections/${button.dataset.connectionId}`, {method:"DELETE"});
+        toast("Đã ngắt kết nối YouTube API.");
+      }
       if (action === "edit") { await openAccountDialog(account); return; }
       if (action === "delete") { openDeleteAccountDialog(account); return; }
       await refreshAccounts();
-    } catch (error) { toast(error.message); }
+    } catch (error) {
+      if (action === "sync") {
+        const syncStatus = document.querySelector("#targetSyncStatus");
+        syncStatus.className = "operation-status error";
+        syncStatus.textContent = `Quét ${account.name} thất bại: ${error.message}`;
+      }
+      toast(error.message);
+    }
     finally { button.disabled = false; button.textContent = originalLabel; }
   });
 }
@@ -210,9 +449,9 @@ export function initAccounts() {
     saveButton.textContent = "Đang lưu…";
     try {
       await api(accountId ? `/accounts/${accountId}` : "/accounts", {method:accountId ? "PUT" : "POST", body:payload});
+      await refreshAccounts();
       dialog.close();
       event.target.reset();
-      await refreshAccounts();
       toast(accountId ? "Đã cập nhật account" : "Đã thêm account");
     } catch(error) { toast(error.message); }
     finally { saveButton.disabled = false; saveButton.textContent = originalLabel; }
@@ -286,7 +525,8 @@ export function initAccounts() {
   document.querySelector("#deleteAccountKeepProfile").onclick = () => deleteAccount(false);
   document.querySelector("#deleteAccountWithProfile").onclick = () => deleteAccount(true);
   document.querySelectorAll("[data-profile-action]").forEach(button => button.onclick = async () => {
-    const account = store.accounts.find(item => item.id === document.querySelector("#profileAccount").value);
+    const profileSelect = document.querySelector("#profileAccount");
+    const account = profileSelect ? store.accounts.find(item => item.id === profileSelect.value) : null;
     try { if (await runProfileAction(button.dataset.profileAction, account)) await refreshAccounts(); } catch(error) { toast(error.message); }
   });
   document.querySelector("#targetSearch").oninput = () => { clearTimeout(initAccounts.searchTimer); initAccounts.searchTimer = setTimeout(refreshAccounts, 350); };

@@ -41,7 +41,7 @@ class MigrationTests(unittest.TestCase):
             database = Database(path, root / "backups")
             self.assertTrue(database.initialize())
             with database.connection() as migrated:
-                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 12)
+                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 13)
                 self.assertEqual(migrated.execute("SELECT name FROM accounts WHERE id='a1'").fetchone()[0], "Page")
                 job = migrated.execute("SELECT status,dry_run FROM jobs WHERE id='j1'").fetchone()
                 self.assertEqual((job["status"], job["dry_run"]), ("queued", 1))
@@ -51,6 +51,12 @@ class MigrationTests(unittest.TestCase):
                 self.assertIn("publish_job_events", tables)
                 self.assertIn("publication_plans", tables)
                 self.assertIn("publication_releases", tables)
+                self.assertIn("account_connections", tables)
+                self.assertIn("oauth_states", tables)
+                self.assertEqual(
+                    migrated.execute("SELECT routing_preference FROM accounts WHERE id='a1'").fetchone()[0],
+                    "chrome_preferred",
+                )
             self.assertEqual(len(list((root / "backups").glob("tinix-pre-migration-v2-*.db"))), 1)
             self.assertTrue(database.integrity_check()["ok"])
 
@@ -130,6 +136,17 @@ class StateMachineTests(unittest.TestCase):
         self.jobs.transition(job["id"], "publishing")
         self.assertEqual(self.jobs.recover_interrupted(), 1)
         self.assertEqual(self.jobs.get(job["id"])["status"], "unknown_result")
+
+    def test_failure_after_commit_is_never_retried(self) -> None:
+        job = self.jobs.create("publish", {}, None, None)
+        self.jobs.claim_next()
+        self.jobs.transition(job["id"], "checking_login")
+        self.jobs.transition(job["id"], "publishing")
+        self.jobs.transition(job["id"], "verifying", commit_reached=True)
+        self.jobs.fail(job["id"], "network disconnected")
+        result = self.jobs.get(job["id"])
+        self.assertEqual(result["status"], "unknown_result")
+        self.assertIsNone(result["next_attempt_at"])
 
     def test_missed_job_policies_are_applied_after_grace_period(self) -> None:
         future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()

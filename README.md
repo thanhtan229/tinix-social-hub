@@ -1,31 +1,43 @@
-# Tinix Social Studio
+# Tinix Social Hub
 
 Hướng dẫn thao tác đầy đủ: [docs/HUONG_DAN_SU_DUNG.md](docs/HUONG_DAN_SU_DUNG.md).
 
-Tinix Social Studio là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng bằng Chrome automation. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
+Tinix Social Hub là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng. Mỗi account có thể chọn Chrome automation hoặc official API; Chrome vẫn là mặc định tương thích. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 
-> Bản `1.0.0-rc.5` cho phép Export/Import toàn bộ account và Chrome profile bằng một file ZIP dùng chung giữa các ứng dụng Tinix, với trạng thái xử lý hiển thị ngay trong giao diện. Facebook, Instagram image/carousel, TikTok short video và YouTube video/Short đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
+> App cho phép Export/Import toàn bộ account và Chrome profile bằng một file ZIP dùng chung giữa các ứng dụng Tinix. Facebook, Instagram image/carousel, TikTok short video, YouTube video/Short và X post đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
 
-## Cài đặt và chạy
+Official API hiện đã có vertical slice hoàn chỉnh cho YouTube video/Short: OAuth, làm mới token, resumable upload và xác minh video. Meta, TikTok và X mới có contract/catalog để bổ sung adapter ở các giai đoạn tiếp theo.
+
+## Cài đặt và Khởi động
 
 Yêu cầu:
-
 - Windows 10/11.
 - Python 3.11 trở lên.
-- Google Chrome.
+- Google Chrome hoặc Microsoft Edge.
 
-Nhấp đúp [Run.bat](Run.bat). Script sẽ:
+### 1. Khởi động chế độ App Mode độc lập (Khuyên dùng)
+Nhấp đúp [START.bat](START.bat) hoặc icon **Tinix Social Hub** trên màn hình Desktop:
+- Máy chủ backend chạy ngầm hoàn toàn trong nền (`pythonw.exe`).
+- Tự động mở giao diện trong cửa sổ ứng dụng độc lập (**App Mode** không thanh địa chỉ/tab), cảm giác như native Windows software.
+- Tự động tạo Desktop Shortcut với logo màu vàng sang trọng nếu chưa có.
+- Để dừng máy chủ ngầm, chỉ cần chạy [STOP.bat](STOP.bat).
 
-1. Kiểm tra Python version.
-2. Tạo `.venv` nếu chưa có.
-3. So sánh SHA-256 của `requirements.txt` và chỉ cập nhật dependency khi cần.
-4. Kiểm tra Google Chrome.
-5. Tạo `.env` từ `.env.example` nếu chưa có.
-6. Migrate database kèm pre-migration backup.
-7. Khởi động FastAPI, scheduler, worker và maintenance service.
-8. Mở WebUI tại `http://127.0.0.1:8765`.
+### 2. Khởi động kèm Console (Debug / Development)
+Nhấp đúp [Run.bat](Run.bat):
+- Giữ cửa sổ terminal console để theo dõi log backend trực tiếp.
+- Nhấn `Ctrl+C` tại cửa sổ để dừng an toàn.
 
-Nhấn `Ctrl+C` trong cửa sổ Tinix để dừng an toàn. Worker ngừng nhận job mới, chờ job đang chạy kết thúc trong giới hạn và chỉ đóng Chrome do Tinix quản lý.
+### 3. Tự động cập nhật phiên bản & Rebuild
+Nhấp đúp [BUILD.bat](BUILD.bat) hoặc chạy:
+```powershell
+.\.venv\Scripts\python.exe build.py
+```
+Script sẽ tự động:
+1. Tăng phiên bản mới (`patch` bump, ví dụ `v1.0.1` -> `v1.0.2`).
+2. Biên dịch icon vector SVG sang bộ icon Windows độ phân giải cao (`favicon.ico`).
+3. Tạo/cập nhật Desktop shortcut ngoài màn hình.
+4. Chạy toàn bộ 133+ test tự động để đảm bảo chất lượng.
+5. Tạo Git commit cho bản build mới.
 
 ## Cấu hình AI
 
@@ -41,12 +53,24 @@ TINIX_AI_MAX_RETRIES=2
 
 API key chỉ được đọc ở backend, không gửi xuống frontend. Logging có bộ lọc redaction để loại key nếu một lỗi vô tình chứa key trong message.
 
+## YouTube Official API (tùy chọn)
+
+Tạo OAuth 2.0 Client loại Web application trong Google Cloud, bật YouTube Data API v3 và thêm callback `http://127.0.0.1:8765/api/oauth/youtube/callback`. Sau đó cấu hình:
+
+```env
+TINIX_YOUTUBE_CLIENT_ID=...
+TINIX_YOUTUBE_CLIENT_SECRET=...
+TINIX_YOUTUBE_REDIRECT_URI=http://127.0.0.1:8765/api/oauth/youtube/callback
+```
+
+Khởi động lại app, vào **Tài khoản & Page**, bấm **Kết nối API** trên account YouTube và cấp quyền. Chọn **Ưu tiên API** để dùng API khi kết nối còn hiệu lực và tự dùng Chrome trước commit nếu API không đủ điều kiện; chọn **Chỉ API** để tuyệt đối không chuyển sang Chrome. Token OAuth được lưu bằng DPAPI trên Windows và không được trả về frontend.
+
 ## Quy trình Chrome publishing
 
 ### 1. Account và đăng nhập
 
 1. Mở tab **Tài khoản & Page**.
-2. Thêm account Facebook, Instagram, TikTok hoặc YouTube.
+2. Thêm account Facebook, Instagram, TikTok, YouTube hoặc X.
 3. Chọn **Mở Chrome**.
 4. Đăng nhập nền tảng thủ công trong Chrome đó. Đây là profile riêng của Tinix, không phải profile Chrome cá nhân.
 5. Chọn **Kiểm tra login**.
@@ -57,6 +81,8 @@ Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa accou
 Có thể dùng **Export Account & Sessions ZIP** để tạo một file `.tinix-profiles.zip` chứa toàn bộ tên account, nền tảng, username/UID, email, password, secret 2FA, mật khẩu email, cookie lưu trong database và dữ liệu phiên Chrome cần thiết; cache, model Chromium và file tạm không được đóng gói. **Import Profiles ZIP** tự tạo lại tất cả account trong một lần. Tinix không dùng chung thư mục profile sống. File ZIP không mã hóa và phải được bảo quản như dữ liệu đăng nhập.
 
 Nút **Dọn dẹp profile** quét trước dung lượng có thể giải phóng rồi xóa cache/model có thể tạo lại của mọi profile. Cần đóng Chrome trước khi chạy; cookies, Local State, Preferences, Local Storage, Session Storage và IndexedDB được giữ nguyên.
+
+Trong **Cài đặt → Tự động dọn Chrome profile**, Tinix mặc định kiểm tra mỗi 6 giờ và tự dọn khi tổng cache có thể xóa đạt 5 GB hoặc ổ chứa profile còn dưới 10 GB. Có thể tắt, chọn ngưỡng 2/5/10 GB hoặc nhập từ 0,5 đến 100 GB. Nếu Chrome đang mở, app chỉ thông báo và thử lại ở lần kiểm tra sau.
 
 ### 2. Nội dung và duyệt
 
@@ -153,7 +179,7 @@ Không có automated test nào gọi AI thật hoặc đăng mạng xã hội:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, target parsing, content/revision/approval, media safety/dedupe, MockAI, API, Chrome-only publishers và Playwright frontend smoke.
+Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, target parsing, content/revision/approval, media safety/dedupe, MockAI, dual-transport routing, YouTube API publisher và Playwright frontend smoke.
 
 ## Phạm vi release candidate
 
@@ -161,6 +187,7 @@ Test suite bao phủ migrations, repositories, state machine, retry/backoff, can
 - Instagram Web: image và carousel; Reel/Story vẫn khóa.
 - TikTok Studio Web: một short video; photo post vẫn khóa.
 - YouTube Studio Web: video và Short; community post vẫn khóa.
+- X Web: post chữ, tối đa 4 ảnh hoặc một video.
 - Calendar, posting slots, release control center, Media Library, UI-scraped analytics, local API v1, webhooks và CLI.
 
 Năng lực `review_required` nghĩa là code và safety gate đã có nhưng selector cần được xác nhận bằng dry-run trên UI/account thực. Adapter không được chuyển một format bị khóa thành thành công giả.

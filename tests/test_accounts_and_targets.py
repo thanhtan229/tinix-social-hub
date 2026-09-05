@@ -63,6 +63,31 @@ class AccountAndTargetRepositoryTests(unittest.TestCase):
         self.assertEqual(second[0]["name"], "New name")
         self.assertEqual(first[0]["id"], second[0]["id"])
 
+    def test_invalid_facebook_discovery_targets_are_removed(self) -> None:
+        account = self.accounts.create("Page admin", "facebook")
+        self.targets.sync(account["id"], "facebook", [
+            {"external_id": "url:latest", "name": "Meta Business Suite", "url": "https://facebook.com/latest"},
+            {"external_id": "url:ad_center", "name": "Quảng cáo", "url": "https://facebook.com/ad_center"},
+        ])
+        result = self.targets.remove_invalid_discovery_targets(
+            account["id"], "facebook", frozenset({"url:latest", "url:ad_center"})
+        )
+        self.assertEqual(result, {"removed": 2, "preserved": 0})
+        self.assertEqual(self.targets.list(account_id=account["id"]), [])
+
+    def test_referenced_invalid_target_is_hidden_but_history_is_preserved(self) -> None:
+        account = self.accounts.create("Page admin", "facebook")
+        target = self.targets.sync(account["id"], "facebook", [
+            {"external_id": "url:latest", "name": "Meta Business Suite", "url": "https://facebook.com/latest"},
+        ])[0]
+        self.jobs.create("publish", {}, account["id"], None, target_id=target["id"])
+        result = self.targets.remove_invalid_discovery_targets(
+            account["id"], "facebook", frozenset({"url:latest"})
+        )
+        self.assertEqual(result, {"removed": 0, "preserved": 1})
+        self.assertEqual(self.targets.list(account_id=account["id"]), [])
+        self.assertEqual(self.targets.get(target["id"])["access_status"], "invalid_discovery")
+
     def test_target_groups_have_unique_members(self) -> None:
         account = self.accounts.create("Admin", "facebook")
         target = self.targets.sync(

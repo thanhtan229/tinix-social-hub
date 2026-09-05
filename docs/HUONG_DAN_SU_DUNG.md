@@ -1,31 +1,39 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.0-rc.5`
+Phiên bản áp dụng: `1.0.2`
 
-Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media, lập lịch và điều khiển Chrome đăng bài. Tinix không dùng API đăng bài của Facebook, Instagram, TikTok hoặc YouTube. Mỗi tài khoản sử dụng một Chrome profile riêng và bạn đăng nhập trực tiếp trong Chrome.
+Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media và lập lịch đăng bài. Chrome automation vẫn là cách đăng mặc định; account YouTube có thể tùy chọn kết nối YouTube Data API chính thức. Mỗi tài khoản vẫn có Chrome profile riêng để dùng khi chọn hoặc fallback về Chrome.
 
 ## 1. Khởi động và dừng ứng dụng
+ 
+### Khởi động chế độ App Mode độc lập (Khuyên dùng)
+ 
+Nhấp đúp `START.bat` tại thư mục dự án hoặc shortcut **Tinix Social Hub** ngoài Desktop:
+1. Máy chủ backend chạy ngầm (`pythonw.exe`).
+2. Mở trực tiếp cửa sổ ứng dụng độc lập (**App Mode**, không hiện thanh địa chỉ/tab duyệt web).
+3. Tự động kiểm tra và tạo icon ngoài Desktop nếu chưa có.
+ 
+Để dừng máy chủ ngầm, nhấp đúp `STOP.bat`.
 
-### Khởi động thông thường
-
+### Khởi động kèm Console (xem trực tiếp log)
+ 
 Nhấp đúp `Run.bat` tại thư mục dự án. Tinix sẽ:
-
+ 
 1. Kiểm tra Python và Google Chrome.
 2. Tạo hoặc cập nhật môi trường `.venv` khi cần.
 3. Tạo các thư mục dữ liệu.
 4. Sao lưu rồi migrate database nếu schema thay đổi.
 5. Khởi động WebUI, scheduler và worker.
 6. Mở trình duyệt tại [http://127.0.0.1:8765](http://127.0.0.1:8765).
-
-Có thể chạy thủ công bằng PowerShell:
-
-```powershell
-.\.venv\Scripts\python.exe -m app
-```
-
+ 
+### Cập nhật phiên bản & Rebuild ứng dụng
+ 
+Nhấp đúp `BUILD.bat` hoặc chạy `.\.venv\Scripts\python.exe build.py`. Hệ thống sẽ tự động tăng phiên bản, cập nhật bộ icon, làm mới Desktop shortcut, chạy bộ test tự động và commit git.
+ 
 ### Dừng ứng dụng
-
-Nhấn `Ctrl+C` tại cửa sổ đang chạy Tinix. Ứng dụng sẽ ngừng nhận job mới, dừng các service và chỉ đóng những Chrome do Tinix quản lý.
+ 
+- Với `START.bat`: Chạy `STOP.bat`.
+- Với `Run.bat`: Nhấn `Ctrl+C` tại cửa sổ đang chạy. Ứng dụng sẽ ngừng nhận job mới, dừng các service và chỉ đóng những Chrome do Tinix quản lý.
 
 Không nên tắt máy hoặc kết thúc cưỡng bức tiến trình khi một job đang ở trạng thái `publishing` hoặc `verifying`.
 
@@ -69,6 +77,10 @@ Trong **Tài khoản & Page**, mỗi account có bốn thao tác quản lý prof
 Trước mọi thao tác, hãy đóng Chrome đang dùng cả profile nguồn lẫn profile đích. Account không được có job chưa kết thúc. Tinix chặn Chrome đang giữ `--user-data-dir`, chặn symlink/junction, bỏ cache và lock file, chép vào thư mục tạm rồi kiểm tra cấu trúc trước khi đổi profile.
 
 Import/Export dùng để **di chuyển account cùng tên, nền tảng và bản sao phiên Chrome giữa các dự án Tinix hoặc máy**. Backup/Khôi phục dùng để **quay lại trạng thái cũ của chính account trong Tinix**. Không trỏ hai dự án vào cùng một thư mục profile vì hai Chrome có thể làm hỏng dữ liệu phiên.
+
+### Tự động dọn profile
+
+Trong tab **Cài đặt**, bật hoặc tắt **Tự động dọn Chrome profile** và chọn ngưỡng 2 GB, 5 GB (mặc định), 10 GB hoặc một giá trị tùy chỉnh từ 0,5 đến 100 GB. Tinix kiểm tra lúc khởi động và mỗi 6 giờ; việc dọn chạy khi tổng cache có thể xóa đạt ngưỡng hoặc ổ chứa profile còn dưới 10 GB. Nếu một profile đang được Chrome sử dụng, app không cưỡng chế đóng Chrome mà gửi thông báo và thử lại ở lần kiểm tra sau.
 
 ### Khi gặp CAPTCHA, 2FA hoặc checkpoint
 

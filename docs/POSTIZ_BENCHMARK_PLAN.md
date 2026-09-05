@@ -14,7 +14,7 @@ Tinix nên trở thành một **local social publishing control plane lấy cả
 - Không dùng API của mạng xã hội để đăng bài.
 - Không triển khai OAuth/access token/refresh token cho publishing.
 - Mọi nền tảng dùng Chrome automation, đăng nhập thủ công và profile riêng.
-- API nội bộ local của Tinix vẫn có thể được xây dựng để WebUI, CLI hoặc automation điều khiển Tinix; API này không thay đổi cơ chế Chrome-only ở phía nền tảng.
+- Ghi chú lịch sử: giả định Chrome-only này đã được thay thế bởi kiến trúc dual transport. Local API vẫn điều khiển Tinix; YouTube đã có official API publisher, các nền tảng còn lại tiếp tục dùng Chrome cho tới khi adapter tương ứng hoàn tất.
 
 Giữ nguyên:
 

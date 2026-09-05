@@ -82,6 +82,11 @@ class FacebookPageLinkFixtureTests(unittest.TestCase):
             {"href": "https://www.facebook.com/tinix.studio", "text": "Tinix Studio"},
             {"href": "https://www.facebook.com/tinix.studio/about", "text": "Thông tin liên hệ"},
             {"href": "https://www.facebook.com/pages/", "text": "Pages"},
+            {"href": "https://www.facebook.com/latest/home", "text": "Meta Business Suite"},
+            {"href": "https://www.facebook.com/ad_center/", "text": "Quảng cáo"},
+            {"href": "https://www.facebook.com/profile.php?id=61577971307878", "text": "UnreadJoneo posted an update.1w"},
+            {"href": "https://www.facebook.com/person.name", "text": "UnreadYou have a new friend suggestion: Person.8w"},
+            {"href": "https://www.facebook.com/pre_migration_notice", "text": "Meta Accounts are coming to Facebook"},
             {"href": "https://example.com/not-facebook", "text": "Wrong"},
         ]
         result = FacebookPagesPage.parse_links(links)

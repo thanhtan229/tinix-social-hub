@@ -2,9 +2,11 @@
 
 Tài liệu này mô tả trạng thái release candidate. Các mục `review_required` đã có adapter nhưng cần dry-run trên UI thực; format bị khóa tuyệt đối không được báo đăng thành công.
 
-## Quyết định cố định: Chrome-only publishing
+## Kiến trúc dual transport
 
-Tinix không dùng API của Facebook, Instagram, TikTok hoặc YouTube để đăng bài. Mọi adapter thực hiện đăng nhập thủ công, chuẩn bị composer, upload, commit và xác minh qua Chrome automation với profile riêng. “API” trong tài liệu Tinix chỉ có thể chỉ API nội bộ chạy local, không phải API phát hành của mạng xã hội.
+Tinix hỗ trợ hai transport độc lập: `chrome` và `official_api`. Chrome automation tiếp tục là mặc định và giữ nguyên profile riêng. Official API dùng OAuth connection, adapter riêng theo provider và chỉ được router chọn khi account đã kết nối, format được hỗ trợ và adapter đã đăng ký lúc chạy. Hiện YouTube Data API v3 đã hoạt động cho video/Short; các nền tảng khác vẫn dùng Chrome trong giai đoạn này.
+
+Mỗi account có một `routing_preference`: `chrome_preferred`, `official_api_preferred`, `chrome_only` hoặc `official_api_only`. Khi job bắt đầu, route được ghi vào release và không đổi ở lần retry. Sau commit point, hệ thống không fallback sang transport khác; lỗi không xác định chuyển thành `unknown_result` để người dùng xác minh, tránh đăng trùng.
 
 ## Nguồn sự thật
 
@@ -30,9 +32,10 @@ Queue, retry, cancellation, approval, idempotency, artifact và browser ownershi
 | Facebook | Có | Có | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
 | Instagram | Image/carousel | Chrome profile + profile discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
 | TikTok | Short video | Chrome profile + channel discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
-| YouTube | Video/Short | Chrome profile + channel discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
+| YouTube | Video/Short | Chrome profile hoặc OAuth 2.0 | Chrome: đã code; API: đã triển khai | Chrome UI verifier hoặc API `videos.list` |
+| X | Post chữ/ảnh/video | Chrome profile + profile discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
 
-Instagram, TikTok và YouTube có Chrome adapters versioned, login detector, target discovery, composer, commit point và UI verifier. Các format đã mở lần lượt là Instagram image/carousel, TikTok short video và YouTube video/Short; Reel, Story, photo post và community post vẫn trả `unsupported`. Mọi adapter mặc định dry-run và tuyệt đối không gọi API đăng bài của nền tảng.
+Instagram, TikTok, YouTube và X có Chrome adapters versioned, login detector, target discovery, composer, commit point và UI verifier. Các format đã mở lần lượt là Instagram image/carousel, TikTok short video, YouTube video/Short và X post; Reel, Story, photo post và community post vẫn trả `unsupported`. YouTube còn có official adapter dùng resumable upload. Mọi adapter mặc định dry-run; dry-run API chỉ kiểm tra kết nối, payload và media, không tạo upload session.
 
 ## Gate vận hành còn lại
 

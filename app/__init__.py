@@ -1,3 +1,3 @@
 """Tinix Social Studio."""
 
-__version__ = "1.0.0-rc.20"
+__version__ = "1.0.2"

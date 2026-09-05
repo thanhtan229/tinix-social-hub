@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class FacebookAccountService:
+    INVALID_DISCOVERY_TARGETS = frozenset({"url:latest", "url:ad_center"})
+
     def __init__(self, accounts: AccountRepository, targets: TargetRepository, chrome: ChromeManager) -> None:
         self.accounts = accounts
         self.targets = targets
@@ -54,8 +56,8 @@ class FacebookAccountService:
         account = await asyncio.to_thread(self.accounts.get, account_id)
         if not account:
             raise KeyError(account_id)
-        session = await self._ready_session(account)
         try:
+            session = await self._ready_session(account)
             async with session:
                 page = await session.page()
                 await page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30_000)
@@ -70,7 +72,18 @@ class FacebookAccountService:
                 {"external_id": item.external_id, "name": item.name, "url": item.url, "target_type": "page"}
                 for item in discovered
             ]
+            existing = await asyncio.to_thread(self.targets.list, account_id)
+            false_positive_ids = {
+                item["external_id"] for item in existing
+                if FacebookPagesPage.is_false_positive(item.get("name") or "", item.get("url") or "")
+            }
+            await asyncio.to_thread(
+                self.targets.remove_invalid_discovery_targets,
+                account_id, "facebook", self.INVALID_DISCOVERY_TARGETS | false_positive_ids,
+            )
             return await asyncio.to_thread(self.targets.sync, account_id, "facebook", payload)
         except Exception as exc:
             await asyncio.to_thread(self.targets.set_sync_error, account_id, str(exc))
             raise
+        finally:
+            await asyncio.to_thread(self.chrome.close, account_id)

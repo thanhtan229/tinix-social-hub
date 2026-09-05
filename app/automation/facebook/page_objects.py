@@ -21,14 +21,28 @@ class FacebookPagesPage:
     RESERVED_PATHS = {
         "", "pages", "groups", "events", "friends", "marketplace", "watch", "gaming",
         "settings", "help", "privacy", "login", "checkpoint", "notifications", "messages",
+        "latest", "ad_center", "pre_migration_notice",
     }
     FORBIDDEN_NAMES = {
         "thông tin liên hệ", "chi tiết", "giới thiệu", "contact info", "details", "about",
         "xem thêm", "see more", "trang", "pages",
     }
+    FORBIDDEN_NAME_PREFIXES = ("unread", "chưa đọc")
 
     def __init__(self, page: Page) -> None:
         self.page = page
+
+    @classmethod
+    def is_false_positive(cls, name: str, href: str) -> bool:
+        normalized_name = " ".join((name or "").split()).strip().casefold()
+        parsed = urlparse(href or "")
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        first = segments[0].casefold() if segments else ""
+        return (
+            normalized_name.startswith(cls.FORBIDDEN_NAME_PREFIXES)
+            or normalized_name in cls.FORBIDDEN_NAMES
+            or first in cls.RESERVED_PATHS
+        )
 
     @classmethod
     def parse_links(cls, links: list[dict[str, str]]) -> list[FacebookTarget]:
@@ -36,7 +50,7 @@ class FacebookPagesPage:
         for link in links:
             name = " ".join((link.get("text") or "").split()).strip()
             href = (link.get("href") or "").strip()
-            if not name or name.casefold() in cls.FORBIDDEN_NAMES:
+            if not name or cls.is_false_positive(name, href):
                 continue
             parsed = urlparse(href)
             if not parsed.netloc.lower().endswith("facebook.com"):
@@ -63,8 +77,10 @@ class FacebookPagesPage:
     async def discover(self) -> list[FacebookTarget]:
         await self.page.goto(self.MANAGED_PAGES_URL, wait_until="domcontentloaded", timeout=30_000)
         await self.page.wait_for_timeout(1500)
+        current = urlparse(self.page.url)
+        if not current.netloc.lower().endswith("facebook.com") or current.path.rstrip("/") != "/pages":
+            return []
         links = await self.page.locator(selectors.PAGE_LINKS).evaluate_all(
             "els => els.map(a => ({href: a.href || '', text: (a.innerText || a.textContent || '').trim()}))"
         )
         return self.parse_links(links)
-

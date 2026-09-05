@@ -372,7 +372,7 @@ class ChromeProfileTransferService:
         platform = str(manifest.get("platform") or "").strip().lower()
         if not name or len(name) > 100:
             raise ProfileTransferError("Tên account trong manifest không hợp lệ.")
-        if platform not in {"facebook", "instagram", "tiktok", "youtube"}:
+        if platform not in {"facebook", "instagram", "tiktok", "youtube", "x"}:
             raise ProfileTransferError(f"Nền tảng trong gói chưa được Social Hub hỗ trợ: {platform or 'trống'}.")
         profile = (bundle / "chrome-profile").resolve()
         if profile.parent != bundle:
@@ -461,7 +461,7 @@ class ChromeProfileTransferService:
             name = str(raw.get("account_name") or "").strip()
             platform = str(raw.get("platform") or "").strip().lower()
             profile_key = str(raw.get("profile_path") or "").replace("\\", "/").strip("/")
-            if not name or len(name) > 100 or platform not in {"facebook", "instagram", "tiktok", "youtube"}:
+            if not name or len(name) > 100 or platform not in {"facebook", "instagram", "tiktok", "youtube", "x"}:
                 raise ProfileTransferError("Tên hoặc nền tảng account trong ZIP không hợp lệ.")
             profile = (root / profile_key).resolve()
             if profiles_root not in profile.parents or profile == profiles_root:

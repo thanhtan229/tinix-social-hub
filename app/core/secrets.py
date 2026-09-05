@@ -40,6 +40,16 @@ class SecretProtector:
         finally:ctypes.windll.kernel32.LocalFree(output.pbData)
         return data.decode("utf-8")
 
+    def protect_oauth(self, value: str) -> str:
+        if os.name != "nt":
+            raise RuntimeError("OAuth token storage yêu cầu encrypted host storage; plaintext fallback bị từ chối.")
+        return self.protect(value)
+
+    def unprotect_oauth(self, value: str) -> str:
+        if not value.startswith("dpapi:"):
+            raise ValueError("OAuth secret không được mã hóa bằng host protection.")
+        return self.unprotect(value)
+
     def write_file(self,path:Path,value:str)->None:
         path.parent.mkdir(parents=True,exist_ok=True);path.write_text(self.protect(value),encoding="utf-8")
         if os.name!="nt":path.chmod(0o600)

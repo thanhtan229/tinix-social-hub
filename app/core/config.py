@@ -69,6 +69,10 @@ class Settings:
     ai_api_key: str
     ai_timeout_seconds: int
     ai_max_retries: int
+    youtube_client_id: str
+    youtube_client_secret: str
+    youtube_redirect_uri: str
+    provider_timeout_seconds: int
 
     @property
     def database_path(self) -> Path:
@@ -123,6 +127,13 @@ def get_settings() -> Settings:
         ai_api_key=os.getenv("TINIX_AI_API_KEY", "").strip(),
         ai_timeout_seconds=_int("TINIX_AI_TIMEOUT_SECONDS", 60, 5, 600),
         ai_max_retries=_int("TINIX_AI_MAX_RETRIES", 2, 0, 5),
+        youtube_client_id=os.getenv("TINIX_YOUTUBE_CLIENT_ID", "").strip(),
+        youtube_client_secret=os.getenv("TINIX_YOUTUBE_CLIENT_SECRET", "").strip(),
+        youtube_redirect_uri=os.getenv(
+            "TINIX_YOUTUBE_REDIRECT_URI",
+            f"http://127.0.0.1:{_int('TINIX_PORT', 8765, 1024, 65535)}/api/oauth/youtube/callback",
+        ).strip(),
+        provider_timeout_seconds=_int("TINIX_PROVIDER_TIMEOUT_SECONDS", 120, 10, 900),
     )
     settings.ensure_directories()
     return settings

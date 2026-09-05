@@ -33,6 +33,12 @@ METRIC_SELECTORS: dict[str, dict[str, str]] = {
         "likes": '#segmented-like-button button[aria-label],#like-button button[aria-label]',
         "comments": '#count .count-text,#comments-header #count',
     },
+    "x": {
+        "likes": '[data-testid="like"] span,[data-testid="unlike"] span',
+        "comments": '[data-testid="reply"] span',
+        "shares": '[data-testid="retweet"] span,[data-testid="unretweet"] span',
+        "views": 'a[href$="/analytics"] span',
+    },
 }
 
 
@@ -61,9 +67,13 @@ class UIAnalyticsCollector:
 
     @staticmethod
     def _validate_url(platform: str, url: str) -> None:
-        hosts={"facebook":"facebook.com","instagram":"instagram.com","tiktok":"tiktok.com","youtube":"youtube.com"}
+        hosts={
+            "facebook": ("facebook.com",), "instagram": ("instagram.com",),
+            "tiktok": ("tiktok.com",), "youtube": ("youtube.com",),
+            "x": ("x.com", "twitter.com"),
+        }
         parsed=urlparse(url)
-        if parsed.scheme!="https" or not parsed.netloc.lower().endswith(hosts[platform]):
+        if parsed.scheme!="https" or not any(parsed.netloc.lower().endswith(host) for host in hosts[platform]):
             raise AnalyticsCollectionError("URL bài đăng không thuộc đúng nền tảng.")
 
     async def collect(self, release_id: str) -> dict[str, Any]:

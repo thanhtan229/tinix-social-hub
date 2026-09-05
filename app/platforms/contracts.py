@@ -67,3 +67,19 @@ class ChromePlatformAdapter(Protocol):
         context: Any,
         is_cancelled: Callable[[], Awaitable[bool]],
     ) -> Any: ...
+
+
+class OfficialApiAdapter(Protocol):
+    """Transport-neutral boundary for a provider's official publishing API."""
+
+    platform_id: str
+    publication_transport: str
+    provider_version: str
+    max_concurrent_jobs: int
+    supported_formats: frozenset[str]
+
+    def validate(self, payload: dict[str, Any], settings: dict[str, Any]) -> list[str]: ...
+
+    async def publish(self, context: Any) -> Any: ...
+
+    async def verify(self, external_id: str, context: Any) -> Any: ...

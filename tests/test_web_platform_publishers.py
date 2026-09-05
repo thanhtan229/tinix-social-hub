@@ -8,7 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services.publishers import PublishContext, PublishOutcome
-from app.services.web_platform_publisher import SPECS, InstagramChromePublisher
+from app.services.web_platform_publisher import (
+    SPECS,
+    InstagramChromePublisher,
+    TikTokChromePublisher,
+    XChromePublisher,
+)
 
 
 class FakeButton:
@@ -32,6 +37,24 @@ class Accounts:
     def update_login_status(self, account_id, status): pass
 
 
+class EmptyLocator:
+    async def count(self): return 0
+    def nth(self, _index): return self
+    async def is_visible(self): return False
+
+
+class TikTokContext:
+    def __init__(self, cookies): self._cookies = cookies
+    async def cookies(self, _url): return self._cookies
+
+
+class TikTokPage:
+    def __init__(self, url="https://www.tiktok.com/", cookies=()):
+        self.url = url
+        self.context = TikTokContext(cookies)
+    def locator(self, _selector): return EmptyLocator()
+
+
 class PublisherUnderTest(InstagramChromePublisher):
     def __init__(self, root: Path) -> None:
         settings = SimpleNamespace(screenshot_dir=root, close_chrome_after_job=False)
@@ -47,11 +70,46 @@ class PublisherUnderTest(InstagramChromePublisher):
 
 class WebPlatformPublisherTests(unittest.IsolatedAsyncioTestCase):
     def test_specs_are_versioned_and_never_reference_platform_api(self) -> None:
-        self.assertEqual(set(SPECS), {"instagram", "tiktok", "youtube"})
+        self.assertEqual(set(SPECS), {"instagram", "tiktok", "youtube", "x"})
         for platform, spec in SPECS.items():
             self.assertIn("web", spec.version)
             self.assertNotIn("api.", spec.compose_url)
             self.assertTrue(spec.formats)
+
+    async def test_tiktok_session_cookie_is_detected_before_spa_dom_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            settings = SimpleNamespace(screenshot_dir=Path(root), close_chrome_after_job=False)
+            publisher = TikTokChromePublisher(
+                settings, SimpleNamespace(), Accounts(), SimpleNamespace(), SimpleNamespace()
+            )
+            page = TikTokPage(cookies=[{"name": "sessionid", "value": "active-session"}])
+            self.assertEqual(await publisher.detect_login(page), "logged_in")
+
+    async def test_tiktok_login_url_is_logged_out_not_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            settings = SimpleNamespace(screenshot_dir=Path(root), close_chrome_after_job=False)
+            publisher = TikTokChromePublisher(
+                settings, SimpleNamespace(), Accounts(), SimpleNamespace(), SimpleNamespace()
+            )
+            self.assertEqual(
+                await publisher.detect_login(TikTokPage(url="https://www.tiktok.com/login")),
+                "logged_out",
+            )
+
+    async def test_x_auth_cookie_and_target_url_are_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            settings = SimpleNamespace(screenshot_dir=Path(root), close_chrome_after_job=False)
+            publisher = XChromePublisher(
+                settings, SimpleNamespace(), Accounts(), SimpleNamespace(), SimpleNamespace()
+            )
+            page = TikTokPage(
+                url="https://x.com/home",
+                cookies=[{"name": "auth_token", "value": "active-session"}],
+            )
+            self.assertEqual(await publisher.detect_login(page), "logged_in")
+            self.assertEqual(publisher.validate_target("https://x.com/tinix"), "https://x.com/tinix")
+            with self.assertRaises(ValueError):
+                publisher.validate_target("https://example.com/tinix")
 
     async def test_dry_run_reaches_ready_without_clicking_submit(self) -> None:
         with tempfile.TemporaryDirectory() as root:

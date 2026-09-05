@@ -31,6 +31,7 @@ class PublishContext:
     payload: dict[str, Any]
     is_cancelled: Callable[[], Awaitable[bool]]
     transition: Callable[[str, str, bool], Awaitable[None]]
+    record_provider_request: Callable[[str, bool], Awaitable[None]] | None = None
 
 
 class Publisher(ABC):
@@ -47,6 +48,8 @@ class Publisher(ABC):
 class PreviewPublisher(Publisher):
     """Dry-run-only adapter. It can never report a real publish success."""
 
+    publication_transport = "preview"
+
     async def publish(self, context: PublishContext) -> PublishResult:
         if not context.job.get("dry_run"):
             return PublishResult(PublishOutcome.UNSUPPORTED, "PreviewPublisher chỉ được dùng cho dry-run.")
@@ -61,9 +64,10 @@ class PreviewPublisher(Publisher):
 
 
 class UnsupportedPublisher(Publisher):
-    def __init__(self, platform: str) -> None:
+    def __init__(self, platform: str, transport: str = "chrome") -> None:
         self.platform = platform
         self.platform_id = platform
+        self.publication_transport = transport
         self.selector_version = "scaffold"
 
     async def publish(self, context: PublishContext) -> PublishResult:
@@ -90,15 +94,17 @@ class YouTubePublisherStub(UnsupportedPublisher):
 
 class PublisherRegistry:
     def __init__(self) -> None:
-        self._publishers: dict[str, Publisher] = {}
+        self._publishers: dict[tuple[str, str], Publisher] = {}
         self._preview = PreviewPublisher()
 
-    def register(self, platform: str, publisher: Publisher) -> None:
+    def register(self, platform: str, publisher: Publisher, *, transport: str | None = None) -> None:
         normalized = platform.lower()
-        if getattr(publisher, "publication_transport", None) != "chrome":
-            raise ValueError("Tinix chỉ chấp nhận publisher dùng Chrome automation.")
+        selected_transport = (transport or getattr(publisher, "publication_transport", "chrome")).strip().lower()
+        if selected_transport not in {"chrome", "official_api"}:
+            raise ValueError(f"Publication transport không hợp lệ: {selected_transport}")
         publisher.platform_id = normalized
-        self._publishers[normalized] = publisher
+        publisher.publication_transport = selected_transport
+        self._publishers[(normalized, selected_transport)] = publisher
 
     def describe(self) -> list[dict[str, Any]]:
         return [
@@ -109,11 +115,21 @@ class PublisherRegistry:
                 "max_concurrent_jobs": publisher.max_concurrent_jobs,
                 "implementation": type(publisher).__name__,
             }
-            for platform, publisher in sorted(self._publishers.items())
+            for (platform, _transport), publisher in sorted(self._publishers.items())
         ]
 
-    def get(self, platform: str, *, dry_run: bool) -> Publisher:
-        registered = self._publishers.get(platform.lower())
+    def has(self, platform: str, transport: str = "chrome") -> bool:
+        return (platform.strip().lower(), transport.strip().lower()) in self._publishers
+
+    def transports(self, platform: str) -> tuple[str, ...]:
+        normalized = platform.strip().lower()
+        return tuple(sorted(transport for item_platform, transport in self._publishers if item_platform == normalized))
+
+    def get(self, platform: str, *, dry_run: bool, transport: str = "chrome") -> Publisher:
+        normalized_transport = transport.strip().lower()
+        registered = self._publishers.get((platform.lower(), normalized_transport))
         if registered:
             return registered
-        return self._preview if dry_run else UnsupportedPublisher(platform)
+        if dry_run and normalized_transport == "chrome":
+            return self._preview
+        return UnsupportedPublisher(platform, normalized_transport)

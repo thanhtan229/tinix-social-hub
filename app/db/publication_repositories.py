@@ -68,6 +68,7 @@ class PublicationRepository:
         media_snapshot: list[dict[str, Any]],
         selector_version: str | None,
         idempotency_key: str,
+        requested_routing_policy: str = "chrome_preferred",
     ) -> dict[str, Any]:
         existing = self.get_release_by_idempotency(idempotency_key)
         if existing:
@@ -77,12 +78,12 @@ class PublicationRepository:
         try:
             with self.db.connection() as connection:
                 connection.execute(
-                    "INSERT INTO publication_releases(id,plan_id,content_id,content_revision_id,account_id,target_id,platform,content_format,status,scheduled_at,settings_json,payload_snapshot_json,media_snapshot_json,selector_version,idempotency_key,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO publication_releases(id,plan_id,content_id,content_revision_id,account_id,target_id,platform,content_format,status,scheduled_at,settings_json,payload_snapshot_json,media_snapshot_json,selector_version,requested_routing_policy,idempotency_key,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         release_id, plan_id, content_id, content_revision_id, account_id, target_id,
                         platform, content_format, status, scheduled_at, _json(settings),
-                        _json(payload_snapshot), _json(media_snapshot), selector_version,
+                        _json(payload_snapshot), _json(media_snapshot), selector_version, requested_routing_policy,
                         idempotency_key, now, now,
                     ),
                 )
