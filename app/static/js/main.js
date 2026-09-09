@@ -1,6 +1,6 @@
 import {api,toast} from "./api.js?v=2.3.9";
 import {refreshOverview} from "./overview.js?v=2.3.9";
-import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.8";
+import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.10";
 import {initPosts,refreshPosts} from "./posts.js?v=2.3.9";
 import {initAnalytics,refreshAnalytics} from "./analytics.js?v=2.3.9";
 import {initAI,refreshBrands} from "./ai.js?v=2.3.9";

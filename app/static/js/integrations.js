@@ -8,7 +8,7 @@ let modelDiscoveryTimer = null;
 
 const root = () => document.querySelector("#tab-settings");
 const definition = (group, id) => (catalog[group] || []).find(item => item.id === id);
-const option = (value, label, selected = false) => `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+const option = (value, label, selected = false, disabled = false) => `<option value="${esc(value)}"${selected ? " selected" : ""}${disabled ? " disabled" : ""}>${esc(label)}</option>`;
 const stamp = value => value ? new Date(value).toLocaleString("vi-VN") : "Chưa test";
 
 async function ensureCatalog() {
@@ -56,12 +56,17 @@ export async function refreshIntegrations() {
 function field(label, content) { return `<label>${esc(label)}${content}</label>`; }
 function modelField(label, value, models, provider, capability) {
   const definitionItem = definition("ai_providers", provider) || {};
-  const choices = models.length ? models.filter(model => (model.capabilities || []).includes(capability)) : (definitionItem[`${capability}_models`] || []).map(model_id => ({model_id, display_name: model_id}));
+  const choices = models.length ? models.filter(model => provider === "gemini" && capability === "text" ? true : (model.capabilities || []).includes(capability)) : (definitionItem[`${capability}_models`] || []).map(model_id => ({model_id, display_name: model_id}));
   const known = choices.some(model => model.model_id === value);
   const optional = capability === "image";
   const useCustom = !known && (!!value || !choices.length) && !optional;
   const customVisible = useCustom || (!known && !!value);
-  return field(label, `<select name="${capability}_model">${optional ? option("", "— Không dùng —", !value) : ""}${choices.map(model => option(model.model_id, model.display_name || model.model_id, model.model_id === value)).join("")}${option("__custom__", "Model tùy chỉnh…", customVisible)}</select><input class="model-custom ${customVisible ? "" : "hidden"}" name="${capability}_model_custom" value="${esc(!known ? value || "" : "")}" maxlength="200" ${customVisible ? "" : "disabled"} ${!optional && customVisible ? "required" : ""} placeholder="Nhập ID model tùy chỉnh">`);
+  const modelOption = model => {
+    const supported = model.metadata?.supports_generate_content !== false;
+    const display = provider === "gemini" ? `${supported ? "✓" : "—"} ${model.display_name || model.model_id}${supported ? "" : " · Không hỗ trợ generateContent"}` : model.display_name || model.model_id;
+    return option(model.model_id, display, model.model_id === value, !supported);
+  };
+  return field(label, `<select name="${capability}_model">${optional ? option("", "— Không dùng —", !value) : ""}${choices.map(modelOption).join("")}${option("__custom__", "Model tùy chỉnh…", customVisible)}</select><input class="model-custom ${customVisible ? "" : "hidden"}" name="${capability}_model_custom" value="${esc(!known ? value || "" : "")}" maxlength="200" ${customVisible ? "" : "disabled"} ${!optional && customVisible ? "required" : ""} placeholder="Nhập ID model tùy chỉnh">`);
 }
 
 function aiProviderFields(provider, item, models) {
@@ -95,7 +100,8 @@ async function discoverAiModels(button, quiet = false) {
       base_url: formValue(form, "base_url"),
     };
     document.querySelector("[data-ai-provider-fields]").innerHTML = aiProviderFields(provider, current, models);
-    if (!quiet) toast(`Đã tải ${models.length} model khả dụng.`);
+    const compatible = models.filter(model => model.metadata?.supports_generate_content !== false).length;
+    if (!quiet) toast(`Đã tải ${models.length} model · ${compatible} model dùng được cho Agent.`);
   } finally {
     button.disabled = false;
     button.textContent = originalLabel;

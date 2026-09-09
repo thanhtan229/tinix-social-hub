@@ -157,12 +157,25 @@ class IntegrationService:
 
         models: list[dict[str, Any]] = []
         for raw in raw_items[:500]:
-            if provider == "gemini" and "generateContent" not in (raw.get("supportedGenerationMethods") or []):
-                continue
             model_id = str(raw.get("id") or raw.get("name") or "").removeprefix("models/").strip()
-            capabilities = self._capabilities(model_id)
-            if model_id and capabilities:
-                models.append({"model_id": model_id, "display_name": raw.get("display_name") or raw.get("displayName") or model_id, "capabilities": capabilities, "metadata": {"owned_by": raw.get("owned_by"), "description": raw.get("description", "")[:500]}})
+            if not model_id:
+                continue
+            if provider == "gemini":
+                supports_generate_content = "generateContent" in (raw.get("supportedGenerationMethods") or [])
+                capabilities = ["text"] if supports_generate_content else []
+                if supports_generate_content and "image" in model_id.lower():
+                    capabilities.append("image")
+                metadata = {
+                    "description": raw.get("description", "")[:500],
+                    "supports_generate_content": supports_generate_content,
+                    "supported_generation_methods": raw.get("supportedGenerationMethods") or [],
+                }
+            else:
+                capabilities = self._capabilities(model_id)
+                if not capabilities:
+                    continue
+                metadata = {"owned_by": raw.get("owned_by"), "description": raw.get("description", "")[:500]}
+            models.append({"model_id": model_id, "display_name": raw.get("display_name") or raw.get("displayName") or model_id, "capabilities": capabilities, "metadata": metadata})
         return models
 
     async def discover_models(self, provider: str, api_key: str, base_url: str | None = None) -> list[dict[str, Any]]:

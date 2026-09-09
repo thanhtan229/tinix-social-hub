@@ -108,7 +108,8 @@ class IntegrationRepositoryTests(unittest.TestCase):
         with patch("app.services.integrations.httpx.AsyncClient", Client):
             models = asyncio.run(service.discover_models("gemini", "gemini-key"))
 
-        self.assertEqual([item["model_id"] for item in models], ["gemini-fast", "gemini-image"])
+        self.assertEqual([item["model_id"] for item in models], ["gemini-fast", "embedding-only", "gemini-image"])
+        self.assertFalse(models[1]["metadata"]["supports_generate_content"])
         self.assertEqual(requests, [{"key": "gemini-key", "pageSize": "1000"}, {"key": "gemini-key", "pageSize": "1000", "pageToken": "next"}])
 
 

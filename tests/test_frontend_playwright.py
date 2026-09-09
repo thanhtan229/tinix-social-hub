@@ -332,8 +332,8 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 status=200, content_type="application/json", body='[{"model_id":"gemini-fast","display_name":"Gemini Fast","capabilities":["text"]},{"model_id":"gemini-pro","display_name":"Gemini Pro","capabilities":["text"]},{"model_id":"gemini-image","display_name":"Gemini Image","capabilities":["image"]}]',
             ))
             page.locator('#integrationDialog input[name="api_key"]').fill("gemini-test-key")
-            page.wait_for_function("() => [...document.querySelectorAll('#integrationDialog select[name=text_model] option')].some(option => option.textContent === 'Gemini Fast')")
-            self.assertEqual(page.locator('#integrationDialog select[name="text_model"] option').all_text_contents(), ["Gemini Fast", "Gemini Pro", "Model tùy chỉnh…"])
+            page.wait_for_function("() => [...document.querySelectorAll('#integrationDialog select[name=text_model] option')].some(option => option.textContent === '✓ Gemini Fast')")
+            self.assertEqual(page.locator('#integrationDialog select[name="text_model"] option').all_text_contents(), ["✓ Gemini Fast", "✓ Gemini Pro", "✓ Gemini Image", "Model tùy chỉnh…"])
             page.unroute("**/api/integrations/ai/discover-models")
             page.locator("#integrationDialog [data-close]").click()
             page.locator("#addPlatformApp").click()

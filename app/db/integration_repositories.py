@@ -117,7 +117,7 @@ class AIProviderConfigRepository:
                 connection.execute("DELETE FROM ai_provider_models WHERE config_id=?", (config_id,))
                 connection.executemany(
                     "INSERT INTO ai_provider_models(config_id,model_id,display_name,capabilities_json,raw_metadata_json,fetched_at) VALUES(?,?,?,?,?,?)",
-                    [(config_id, item["model_id"], item.get("display_name") or item["model_id"], _json(item.get("capabilities") or ["text"]), _json(item.get("metadata") or {}), now) for item in models[:500]],
+                    [(config_id, item["model_id"], item.get("display_name") or item["model_id"], _json(item.get("capabilities", ["text"])), _json(item.get("metadata") or {}), now) for item in models[:500]],
                 )
                 connection.execute("COMMIT")
             except Exception:
