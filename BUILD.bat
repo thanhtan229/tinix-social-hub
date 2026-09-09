@@ -3,6 +3,9 @@ setlocal
 cd /d "%~dp0"
 title Build Tinix Social Hub
 
+echo [Tinix] Dang dung ung dung truoc khi rebuild...
+call "%~dp0STOP.bat"
+
 where py >nul 2>nul
 if errorlevel 1 (
   set "PYTHON_CMD=python"
