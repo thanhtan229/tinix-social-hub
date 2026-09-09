@@ -4,6 +4,7 @@ let catalog = {ai_providers: [], platform_apps: []};
 let aiState = {configs: [], defaults: {}};
 let platformApps = [];
 let editing = null;
+let modelDiscoveryTimer = null;
 
 const root = () => document.querySelector("#tab-settings");
 const definition = (group, id) => (catalog[group] || []).find(item => item.id === id);
@@ -71,23 +72,46 @@ function aiProviderFields(provider, item, models) {
   return baseUrl + modelField("Model agent", textModel, models, provider, "text") + modelField("Model tạo ảnh (tùy chọn)", imageModel, models, provider, "image");
 }
 
-async function discoverAiModels(button) {
+async function discoverAiModels(button, quiet = false) {
   const form = document.querySelector("#integrationForm");
   const provider = formValue(form, "provider");
   const apiKey = formValue(form, "api_key");
-  if (!apiKey) throw new Error("Nhập API key trước khi làm mới danh sách model.");
+  const item = editing?.item;
+  if (!apiKey && !item) throw new Error("Nhập API key trước khi làm mới danh sách model.");
   button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = "Đang tải model…";
   try {
-    const payload = {provider, api_key: apiKey};
-    if (form.querySelector("[name=base_url]")) payload.base_url = formValue(form, "base_url");
-    const models = await api("/integrations/ai/discover-models", {method: "POST", body: JSON.stringify(payload)});
+    let models;
+    if (apiKey) {
+      const payload = {provider, api_key: apiKey};
+      if (form.querySelector("[name=base_url]")) payload.base_url = formValue(form, "base_url");
+      models = await api("/integrations/ai/discover-models", {method: "POST", body: JSON.stringify(payload)});
+    } else {
+      models = await api(`/integrations/ai/${item.id}/models/refresh`, {method: "POST"});
+    }
     const current = {
       text_model: selectedModel(form, "text"), image_model: selectedModel(form, "image"),
       base_url: formValue(form, "base_url"),
     };
     document.querySelector("[data-ai-provider-fields]").innerHTML = aiProviderFields(provider, current, models);
-    toast(`Đã tải ${models.length} model khả dụng.`);
-  } finally { button.disabled = false; }
+    if (!quiet) toast(`Đã tải ${models.length} model khả dụng.`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
+function scheduleModelDiscovery() {
+  clearTimeout(modelDiscoveryTimer);
+  const form = document.querySelector("#integrationForm");
+  if (!form || !formValue(form, "api_key")) return;
+  modelDiscoveryTimer = setTimeout(() => {
+    const button = document.querySelector("[data-ai-discover-models]");
+    if (button) discoverAiModels(button, true).catch(error => {
+      document.querySelector("#integrationDialogStatus").textContent = error.message;
+    });
+  }, 600);
 }
 
 async function openAiDialog(item = null) {
@@ -103,6 +127,9 @@ async function openAiDialog(item = null) {
   title.textContent = item ? "Sửa AI Provider" : "Thêm AI Provider";
   holder.innerHTML = field("Provider", `<select name="provider" ${item ? "disabled" : ""}>${providerOptions}</select>`) + field("Tên cấu hình", `<input name="name" required maxlength="100" value="${esc(item?.name || "")}" placeholder="Ví dụ: OpenAI công việc">`) + field(item ? "API key mới (bỏ trống để giữ nguyên)" : "API key", `<input name="api_key" type="password" ${item ? "" : "required"} maxlength="2000" autocomplete="off">`) + `<div class="full"><button type="button" data-ai-discover-models>Làm mới danh sách model</button><p class="muted">Dùng API key vừa nhập để lấy model khả dụng từ provider.</p></div>` + `<div class="provider-fields" data-ai-provider-fields>${aiProviderFields(provider, item, models)}</div>` + `<label class="check full"><input name="enabled" type="checkbox" ${item?.enabled === false ? "" : "checked"}><span>Kích hoạt cấu hình</span></label>`;
   dialog.showModal();
+  if (item) discoverAiModels(holder.querySelector("[data-ai-discover-models]"), true).catch(error => {
+    document.querySelector("#integrationDialogStatus").textContent = error.message;
+  });
 }
 
 async function openAppDialog(item = null) {
@@ -182,6 +209,7 @@ export function initIntegrations() {
     if (event.target.matches("select[name=provider]") && editing?.type === "ai") {
       const provider = event.target.value;
       document.querySelector("[data-ai-provider-fields]").innerHTML = aiProviderFields(provider, null, []);
+      scheduleModelDiscovery();
     }
     if (event.target.matches("select[name$=_model]")) {
       const custom = event.target.parentElement.querySelector(".model-custom");
@@ -196,5 +224,8 @@ export function initIntegrations() {
   document.querySelector("#integrationDialogFields").onclick = event => {
     const button = event.target.closest("[data-ai-discover-models]");
     if (button) discoverAiModels(button).catch(error => toast(error.message));
+  };
+  document.querySelector("#integrationDialogFields").oninput = event => {
+    if (event.target.matches("input[name=api_key]")) scheduleModelDiscovery();
   };
 }

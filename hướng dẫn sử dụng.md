@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Hub
 
-Phiên bản áp dụng: `1.0.7`  
+Phiên bản áp dụng: `1.0.8`  
 Hệ điều hành hỗ trợ: **Windows 10 / 11** (PC-first, Local-first)
 
 ---

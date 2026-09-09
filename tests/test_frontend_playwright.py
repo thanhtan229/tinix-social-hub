@@ -327,6 +327,15 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertTrue(page.locator('#integrationDialog input[name="base_url"]').is_visible())
             self.assertTrue(page.locator('#integrationDialog input[name="text_model_custom"]').is_visible())
             page.locator("#integrationDialog [data-close]").click()
+            page.locator("#addAiProvider").click()
+            page.route("**/api/integrations/ai/discover-models", lambda route: route.fulfill(
+                status=200, content_type="application/json", body='[{"model_id":"gemini-fast","display_name":"Gemini Fast","capabilities":["text"]},{"model_id":"gemini-pro","display_name":"Gemini Pro","capabilities":["text"]},{"model_id":"gemini-image","display_name":"Gemini Image","capabilities":["image"]}]',
+            ))
+            page.locator('#integrationDialog input[name="api_key"]').fill("gemini-test-key")
+            page.wait_for_function("() => [...document.querySelectorAll('#integrationDialog select[name=text_model] option')].some(option => option.textContent === 'Gemini Fast')")
+            self.assertEqual(page.locator('#integrationDialog select[name="text_model"] option').all_text_contents(), ["Gemini Fast", "Gemini Pro", "Model tùy chỉnh…"])
+            page.unroute("**/api/integrations/ai/discover-models")
+            page.locator("#integrationDialog [data-close]").click()
             page.locator("#addPlatformApp").click()
             page.wait_for_timeout(100)
             self.assertTrue(page.locator("#integrationDialog").is_visible(), errors)
