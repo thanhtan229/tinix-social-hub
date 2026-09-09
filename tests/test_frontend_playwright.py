@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from app import __version__
@@ -86,14 +87,14 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             self.assertEqual(response.status, 200)
-            self.assertEqual(page.locator("#nav button").count(), 9)
+            self.assertEqual(page.locator("#nav button").count(), 8)
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 5)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 5)
             self.assertEqual(page.locator("#platformRoadmap .scaffolded").count(), 0)
             self.assertEqual(page.locator("#version").inner_text(), f"v{__version__}")
             for tab, name in (
                 ("overview", "Tổng quan"), ("ai", "AI Content Studio"),
-                ("content", "Kho nội dung"), ("media", "Media Library"),
+                ("posts", "Kho bài viết"),
                 ("compose", "Calendar"), ("jobs", "Hàng đợi & Lịch sử"),
                 ("analytics", "Analytics"), ("accounts", "Tài khoản & Page"),
                 ("settings", "Cài đặt"),
@@ -102,10 +103,68 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 self.assertIn(name, button.inner_text())
                 button.click()
                 page.wait_for_timeout(150)
+            page.locator('#nav button[data-tab="posts"]').click()
+            self.assertTrue(page.locator("#postsStatsBanner").is_visible())
+            self.assertTrue(page.locator("#postsGrid").is_visible())
+            page.locator("#btnViewTable").click()
+            self.assertTrue(page.locator("#postsTableWrap").is_visible())
+            page.locator("#btnViewGrid").click()
+            self.assertTrue(page.locator("#postsGrid").is_visible())
+            # Test '+ Tạo bài viết' button click and dialog opening
+            page.locator("#newPost").click()
+            page.wait_for_timeout(200)
+            self.assertTrue(page.locator("#postDialog").is_visible())
+            test_img = Path(self.temp.name) / "test_pw_upload.png"
+            Image.new("RGB", (120, 120), color="blue").save(test_img, "PNG")
+            page.set_input_files("#postMediaInput", str(test_img))
+            page.wait_for_timeout(300)
+            self.assertEqual(page.locator("#postMediaList .pending-upload img").count(), 1)
+            page.fill("#postTitle", "Playwright Post Title")
+            page.fill("#postCaption", "Playwright Caption Content")
+            page.fill("#postHashtags", "#tinix #playwright")
+            page.fill("#postCta", "Order now")
+            page.locator("#btnSavePostRecord").click()
+            page.wait_for_timeout(800)
+            self.assertFalse(page.locator("#postDialog").is_visible())
+            card = page.locator('.post-card', has_text="Playwright Post Title")
+            self.assertTrue(card.is_visible())
+            self.assertEqual(card.locator(".post-thumb-wrap").count(), 1)
+            # Test Edit post and media persistence
+            card.locator('button', has_text="Sửa").click()
+            page.wait_for_timeout(300)
+            self.assertTrue(page.locator("#postDialog").is_visible())
+            self.assertEqual(page.input_value("#postTitle"), "Playwright Post Title")
+            self.assertEqual(page.locator("#postMediaList .existing-media").count(), 1)
+            page.locator("#postDialog [data-close]").first.click()
+            page.wait_for_timeout(200)
+            self.assertFalse(page.locator("#postDialog").is_visible())
             self.assertEqual(page.locator('#accountPlatform option[value="x"]').count(), 1)
             self.assertEqual(page.locator('#calendarPlatform option[value="x"]').count(), 1)
             self.assertEqual(page.locator('#analyticsPlatform option[value="x"]').count(), 1)
             self.assertEqual(page.locator("#aiX").count(), 1)
+            # Test Tab 2 AI Brand Profile button and modal opening
+            page.locator('#nav button[data-tab="ai"]').click()
+            page.wait_for_timeout(200)
+            self.assertTrue(page.locator("#btnQuickAddBrand").is_visible())
+            page.locator("#btnQuickAddBrand").click()
+            page.wait_for_timeout(300)
+            self.assertTrue(page.locator("#brandProfileDialog").is_visible())
+            self.assertIn("Tinix Social Hub", page.locator("#bpName").get_attribute("placeholder"))
+            page.locator("#bpName").fill("Playwright Brand")
+            page.locator("#bpTone").fill("Hào hứng, chuyên nghiệp")
+            page.locator("#btnSaveBrandProfile").click()
+            page.wait_for_timeout(500)
+            self.assertFalse(page.locator("#brandProfileDialog").is_visible())
+            self.assertIn("Playwright Brand", page.locator("#aiBrand").inner_text())
+            self.assertTrue(page.locator("#btnQuickEditBrand").is_visible())
+            page.locator("#btnQuickEditBrand").click()
+            page.wait_for_timeout(300)
+            self.assertTrue(page.locator("#brandProfileDialog").is_visible())
+            self.assertEqual(page.locator("#bpName").input_value(), "Playwright Brand")
+            page.locator("#brandProfileDialog [data-close]").first.click()
+            page.wait_for_timeout(200)
+            self.assertFalse(page.locator("#brandProfileDialog").is_visible())
+
             page.locator('#nav button[data-tab="accounts"]').click()
             self.assertEqual(page.locator("[data-profile-action]").count(), 2)
             self.assertEqual(page.locator("[data-profile-action]:disabled").count(), 1)
@@ -174,11 +233,9 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(unknown_badge.count(), 1)
             self.assertEqual(unknown_badge.evaluate("element => getComputedStyle(element).color"), "rgb(95, 99, 104)")
             account_actions = page.locator("#accountList [data-account-action]")
-            self.assertEqual(account_actions.count(), 4)
-            self.assertEqual(
-                account_actions.all_inner_texts(),
-                ["Mở", "Quét Page/Kênh", "Sửa", "Xóa"],
-            )
+            self.assertEqual(account_actions.count(), 2)
+            self.assertIn("Xóa", account_actions.first.inner_text())
+            self.assertIn("Mở Chrome", account_actions.last.inner_text())
             sync_flow: list[str] = []
 
             def fake_target_sync(route):
@@ -194,6 +251,8 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
 
             page.route("**/api/accounts/*/sync-targets", fake_target_sync)
             page.route("**/api/accounts/*/chrome/close", fake_account_close)
+            # Click row to select and reveal detail & sync button
+            account_row.locator("td").nth(1).click()
             page.get_by_role("button", name="Quét Page/Kênh", exact=True).click()
             page.locator("#targetSyncStatus").wait_for(state="visible")
             page.get_by_text("Chrome đã đóng.", exact=False).wait_for()
@@ -201,27 +260,28 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertIn("tìm thấy 1 Page/Kênh", page.locator("#targetSyncStatus").inner_text())
             page.unroute("**/api/accounts/*/sync-targets", fake_target_sync)
             page.unroute("**/api/accounts/*/chrome/close", fake_account_close)
-            page.get_by_role("button", name="Sửa", exact=True).first.click()
-            page.locator("#accountDialog").wait_for(state="visible")
-            self.assertTrue(page.locator("#accountDialog").is_visible())
-            self.assertEqual(page.locator("#accountDialogTitle").inner_text(), "Sửa tài khoản")
-            self.assertEqual(page.locator("#accountName").input_value(), "Imported UI Account")
-            self.assertEqual(page.locator("#accountPlatform").input_value(), "facebook")
-            self.assertEqual(page.locator("#accountUsername").input_value(), "ui-user")
-            self.assertEqual(page.locator("#accountEmail").input_value(), "ui@example.com")
-            self.assertEqual(page.locator("#accountPassword").get_attribute("type"), "text")
-            self.assertEqual(page.locator("#accountPassword").input_value(), "visible-password")
-            self.assertEqual(page.locator("#account2fa").get_attribute("type"), "text")
-            self.assertEqual(page.locator("#account2fa").input_value(), "VISIBLE2FA")
-            self.assertEqual(page.locator("#accountEmailPassword").input_value(), "visible-mail-password")
-            self.assertEqual(page.locator("#accountCookie").input_value(), "visible-cookie")
-            page.locator("#accountName").fill("Renamed UI Account")
+
+            # Direct editing on the right panel
+            page.locator("#detailName").wait_for(state="visible")
+            self.assertEqual(page.locator("#detailName").input_value(), "Imported UI Account")
+            self.assertEqual(page.locator("#detailEmail").input_value(), "ui@example.com")
+            self.assertEqual(page.locator("#detailPassword").input_value(), "visible-password")
+            self.assertEqual(page.locator("#detail2fa").input_value(), "VISIBLE2FA")
+
+            # Test Show/Hide button toggle
+            page.locator('[data-toggle-type="detailPassword"]').click()
+            self.assertEqual(page.locator("#detailPassword").get_attribute("type"), "text")
+            page.locator('[data-toggle-type="detailPassword"]').click()
+            self.assertEqual(page.locator("#detailPassword").get_attribute("type"), "password")
+
+            # Inline edit account name
+            page.locator("#detailName").fill("Renamed UI Account")
             with page.expect_response(lambda item: "/api/accounts/" in item.url and item.request.method == "PUT") as edit_response:
-                page.get_by_role("button", name="Lưu thay đổi", exact=True).click()
+                page.locator("#detailName").evaluate("el => el.dispatchEvent(new Event('change'))")
             self.assertEqual(edit_response.value.status, 200)
-            page.locator("#accountDialog").wait_for(state="hidden")
+            page.locator("#detailSaveStatus").get_by_text("Saved").wait_for()
             self.assertIn("Renamed UI Account", page.locator("#accountList").inner_text())
-            page.get_by_role("button", name="Xóa", exact=True).first.click()
+            page.locator('#accountList [data-account-action="delete"]').first.click()
             page.locator("#deleteAccountDialog").wait_for(state="visible")
             self.assertTrue(page.get_by_role("button", name="Chỉ xóa account", exact=True).is_visible())
             self.assertTrue(page.get_by_role("button", name="Xóa account và profile", exact=True).is_visible())
@@ -239,10 +299,38 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
 
             page.route("**/api/accounts/*/chrome/open", fake_open)
             page.route("**/api/accounts/*/check-login", fake_login_check)
-            page.get_by_role("button", name="Mở", exact=True).first.click()
+            page.get_by_role("button", name="Mở Chrome", exact=True).first.click()
             page.wait_for_function("() => document.querySelector('#toast')?.textContent.includes('Đã đăng nhập')")
             self.assertEqual(open_flow, ["open", "check-login"])
             self.assertIn("Đã đăng nhập", page.locator("#toast").inner_text())
+            self.assertEqual(errors, [])
+            browser.close()
+
+    def test_integration_buttons_open_dialog(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            errors: list[str] = []
+            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="settings"]').click()
+            page.locator("#addAiProvider").click()
+            page.wait_for_timeout(100)
+            self.assertTrue(page.locator("#integrationDialog").is_visible(), errors)
+            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option').count(), 4)
+            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option[value="gemini"]').count(), 1)
+            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option[value="deepseek"]').count(), 1)
+            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option[value="openai"]').count(), 1)
+            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option[value="openai-compatible"]').count(), 1)
+            self.assertTrue(page.locator('#integrationDialog select[name="text_model"]').is_visible())
+            page.locator('#integrationDialog select[name="provider"]').select_option("openai-compatible")
+            self.assertTrue(page.locator('#integrationDialog input[name="base_url"]').is_visible())
+            self.assertTrue(page.locator('#integrationDialog input[name="text_model_custom"]').is_visible())
+            page.locator("#integrationDialog [data-close]").click()
+            page.locator("#addPlatformApp").click()
+            page.wait_for_timeout(100)
+            self.assertTrue(page.locator("#integrationDialog").is_visible(), errors)
+            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option').count(), 4)
             self.assertEqual(errors, [])
             browser.close()
 

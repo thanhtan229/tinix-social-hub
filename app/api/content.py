@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from app.services.ai import AIError, PlatformVariant
@@ -50,6 +52,12 @@ class ContentBody(BaseModel):
     platform_variants: dict[str, PlatformVariant] = Field(default_factory=dict)
 
 
+class BulkDeleteBody(BaseModel):
+    content_ids: list[str] = Field(min_length=1, max_length=500)
+    force: bool = True
+    delete_files: bool = False
+
+
 class ApprovalDecision(BaseModel):
     approved: bool
     note: str | None = Field(default=None, max_length=1000)
@@ -61,6 +69,11 @@ class AIGenerateBody(BaseModel):
     brand_profile_id: str | None = None
     platforms: list[str] = Field(default_factory=lambda: ["facebook"], min_length=1, max_length=5)
     save_draft: bool = True
+
+
+class AIGenerateImageBody(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+    content_id: str | None = None
 
 
 class ScheduleBody(BaseModel):
@@ -110,15 +123,82 @@ async def update_brand(profile_id: str, body: BrandProfileBody, request: Request
     return profile
 
 
+@router.delete("/brand-profiles/{profile_id}")
+async def delete_brand(profile_id: str, request: Request) -> dict[str, Any]:
+    deleted = await asyncio.to_thread(services(request).brands.delete, profile_id)
+    if not deleted:
+        raise HTTPException(404, "Không tìm thấy Brand Profile.")
+    return {"deleted": True, "profile_id": profile_id}
+
+
 @router.get("/contents")
 async def list_contents(
     request: Request,
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     search: str | None = Query(None, max_length=100),
     status: str | None = None,
+    platform: str | None = None,
+    post_status: str | None = None,
+    media_type: str | None = None,
+    sort_by: str | None = "newest",
 ) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(services(request).contents.list, limit, offset, search, status)
+    return await asyncio.to_thread(
+        services(request).contents.list,
+        limit, offset, search, status, platform, post_status, media_type, sort_by,
+    )
+
+
+@router.get("/contents/export")
+async def export_contents(
+    request: Request,
+    search: str | None = Query(None, max_length=100),
+    status: str | None = None,
+    platform: str | None = None,
+    post_status: str | None = None,
+    media_type: str | None = None,
+) -> Response:
+    contents = await asyncio.to_thread(
+        services(request).contents.list,
+        limit=5000, offset=0, search=search, status=status, platform=platform,
+        post_status=post_status, media_type=media_type, sort_by="newest",
+    )
+    output = io.StringIO()
+    output.write("\ufeff")  # UTF-8 BOM for Microsoft Excel compatibility
+    writer = csv.writer(output)
+    writer.writerow([
+        "ID", "Tiêu đề", "Nội dung (Caption)", "Hashtags", "CTA",
+        "Nền tảng", "Tình trạng", "Lịch đăng", "Ngày đăng", "Link bài viết", "Số media"
+    ])
+    for item in contents:
+        writer.writerow([
+            item.get("id", ""),
+            item.get("title", ""),
+            item.get("caption", ""),
+            " ".join(item.get("hashtags", [])),
+            item.get("cta", "") or "",
+            ", ".join(item.get("platforms", [])),
+            item.get("publishing_status", "draft"),
+            item.get("scheduled_at", "") or "",
+            item.get("published_at", "") or "",
+            item.get("external_url", "") or "",
+            len(item.get("media", [])),
+        ])
+    content_bytes = output.getvalue().encode("utf-8")
+    return Response(
+        content=content_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=tinix-posts-export.csv"},
+    )
+
+
+@router.post("/contents/bulk-delete")
+async def bulk_delete_contents(body: BulkDeleteBody, request: Request) -> dict[str, Any]:
+    svc = services(request)
+    result = await asyncio.to_thread(svc.contents.bulk_delete, body.content_ids, body.force)
+    if body.delete_files and result.get("retained_paths"):
+        await asyncio.to_thread(svc.media.delete_managed, result["retained_paths"])
+    return result
 
 
 @router.get("/contents/{content_id}")
@@ -151,10 +231,10 @@ async def duplicate_content(content_id: str, request: Request) -> dict[str, Any]
 
 
 @router.delete("/contents/{content_id}")
-async def delete_content(content_id: str, request: Request, delete_files: bool = False) -> dict[str, Any]:
+async def delete_content(content_id: str, request: Request, delete_files: bool = False, force: bool = False) -> dict[str, Any]:
     svc = services(request)
     try:
-        paths = await asyncio.to_thread(svc.contents.delete, content_id)
+        paths = await asyncio.to_thread(svc.contents.delete, content_id, force)
     except ContentInUseError as exc:
         raise HTTPException(409, str(exc)) from exc
     if paths is None:
@@ -306,6 +386,15 @@ async def generate_ai_content(body: AIGenerateBody, request: Request) -> dict[st
         return await services(request).ai_studio.generate(
             body.operation, body.brief, body.brand_profile_id, body.platforms, body.save_draft
         )
+    except AIError as exc:
+        status = 503 if exc.retryable else 422
+        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc
+
+
+@router.post("/ai/generate-image")
+async def generate_ai_image(body: AIGenerateImageBody, request: Request) -> dict[str, Any]:
+    try:
+        return await services(request).ai_studio.generate_image(body.prompt, body.content_id)
     except AIError as exc:
         status = 503 if exc.retryable else 422
         raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc

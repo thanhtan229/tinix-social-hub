@@ -49,13 +49,19 @@ class AccountRepository:
             try:
                 connection.execute(
                     """INSERT INTO accounts(
-                        id,name,platform,profile_key,username,email,password,secret_2fa,email_pass,cookie,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        id,name,platform,profile_key,username,email,password,secret_2fa,email_pass,cookie,
+                        recovery_email,recovery_codes,notes,starred,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         account_id, name.strip(), platform.strip().lower(), account_id,
                         str(metadata.get("username") or ""), str(metadata.get("email") or ""),
                         str(metadata.get("password") or ""), str(metadata.get("secret_2fa") or ""),
-                        str(metadata.get("email_pass") or ""), str(metadata.get("cookie") or ""), now, now,
+                        str(metadata.get("email_pass") or ""), str(metadata.get("cookie") or ""),
+                        str(metadata.get("recovery_email") or "").strip(),
+                        str(metadata.get("recovery_codes") or ""),
+                        str(metadata.get("notes") or ""),
+                        1 if metadata.get("starred") else 0,
+                        now, now,
                     ),
                 )
                 connection.execute(
@@ -87,16 +93,45 @@ class AccountRepository:
             name.strip(), platform.strip().lower(),
             str(metadata.get("username") or "").strip(), str(metadata.get("email") or "").strip(),
         ]
-        for field in ("password", "secret_2fa", "email_pass", "cookie"):
+        for field in ("password", "secret_2fa", "email_pass", "cookie", "recovery_email", "recovery_codes", "notes"):
             value = str(metadata.get(field) or "")
             fields.append(f"{field}=?")
             values.append(value)
+        if "starred" in metadata:
+            fields.append("starred=?")
+            values.append(1 if metadata["starred"] else 0)
         fields.append("updated_at=?")
         values.extend([utc_now(), account_id])
         with self.db.connection() as connection:
             connection.execute(
                 f"UPDATE accounts SET {','.join(fields)} WHERE id=?",
                 values,
+            )
+        return self.get(account_id)
+
+    def set_starred(self, account_id: str, starred: bool) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE accounts SET starred=?,updated_at=? WHERE id=?",
+                (1 if starred else 0, utc_now(), account_id),
+            )
+        return self.get(account_id)
+
+    def toggle_starred(self, account_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE accounts SET starred=(1 - COALESCE(starred, 0)),updated_at=? WHERE id=?",
+                (utc_now(), account_id),
+            )
+        return self.get(account_id)
+
+    def clear_credentials(self, account_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            connection.execute(
+                """UPDATE accounts SET
+                    password='',secret_2fa='',recovery_codes='',email_pass='',cookie='',updated_at=?
+                WHERE id=?""",
+                (utc_now(), account_id),
             )
         return self.get(account_id)
 

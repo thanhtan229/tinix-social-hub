@@ -45,9 +45,19 @@ class SecretProtector:
             raise RuntimeError("OAuth token storage yêu cầu encrypted host storage; plaintext fallback bị từ chối.")
         return self.protect(value)
 
+    def protect_secret(self, value: str) -> str:
+        if os.name != "nt":
+            raise RuntimeError("Credential storage yêu cầu Windows DPAPI; plaintext fallback bị từ chối.")
+        return self.protect(value)
+
     def unprotect_oauth(self, value: str) -> str:
         if not value.startswith("dpapi:"):
             raise ValueError("OAuth secret không được mã hóa bằng host protection.")
+        return self.unprotect(value)
+
+    def unprotect_secret(self, value: str) -> str:
+        if not value.startswith("dpapi:"):
+            raise ValueError("Credential không được mã hóa bằng host protection.")
         return self.unprotect(value)
 
     def write_file(self,path:Path,value:str)->None:

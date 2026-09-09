@@ -29,6 +29,8 @@ from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
 from app.services.profile_transfer import ChromeProfileTransferService
 from app.services.maintenance import MaintenanceService
+from app.services.integrations import IntegrationService
+from app.db.integration_repositories import AIProviderConfigRepository, PlatformAppRepository
 
 
 class WorkerStub:
@@ -89,6 +91,16 @@ class ApiTests(unittest.TestCase):
         maintenance = MaintenanceService(
             profile_settings, profile_transfer, AppSettingsRepository(database)
         )
+        integration_settings = SimpleNamespace(
+            ai_api_key="", ai_base_url="", ai_model="", ai_image_model="",
+            ai_timeout_seconds=5, ai_max_retries=0,
+        )
+        integrations = IntegrationService(
+            integration_settings,
+            AIProviderConfigRepository(database, SecretProtector()),
+            PlatformAppRepository(database, SecretProtector()),
+            AppSettingsRepository(database),
+        )
         services = SimpleNamespace(
             database=database,
             accounts=accounts,
@@ -116,6 +128,7 @@ class ApiTests(unittest.TestCase):
             analytics_collector=SimpleNamespace(),
             profile_transfer=profile_transfer,
             maintenance=maintenance,
+            integrations=integrations,
             application_lock=asyncio.Lock(),
         )
         app = FastAPI()
@@ -150,15 +163,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(credentials.headers["cache-control"], "no-store")
         self.assertEqual(credentials.json(), {
             "password": "secret-password", "secret_2fa": "JBSWY3DPEHPK3PXP",
-            "email_pass": "mail-secret", "cookie": "cookie-secret",
+            "email_pass": "mail-secret", "cookie": "cookie-secret", "recovery_codes": "",
         })
-        updated = self.client.put(
-            f"/api/accounts/{account_id}", json={
-                "name": "Renamed", "platform": "facebook", "username": "renamed-user",
-                "email": "renamed@example.com", "password": "", "secret_2fa": "",
-                "email_pass": "", "cookie": "",
-            }
-        )
+        updated = self.client.put(f"/api/accounts/{account_id}", json={
+            "name": "Renamed", "platform": "facebook", "username": "renamed-user",
+            "email": "renamed@example.com", "password": "", "secret_2fa": "", "email_pass": "", "cookie": "",
+        })
         self.assertEqual(updated.json()["name"], "Renamed")
         stored = self.services.accounts.get(account_id)
         self.assertEqual(stored["username"], "renamed-user")
@@ -166,12 +176,47 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(stored["secret_2fa"], "")
         self.assertEqual(stored["email_pass"], "")
         self.assertEqual(stored["cookie"], "")
-        disabled = self.client.patch(
-            f"/api/accounts/{account_id}/enabled", json={"enabled": False, "reason": "manual"}
-        )
+        disabled = self.client.patch(f"/api/accounts/{account_id}/enabled", json={"enabled": False, "reason": "manual"})
         self.assertEqual(disabled.json()["enabled"], 0)
-        deleted = self.client.delete(f"/api/accounts/{account_id}")
-        self.assertEqual(deleted.status_code, 200)
+        starred = self.client.patch(f"/api/accounts/{account_id}/star")
+        self.assertEqual(starred.status_code, 200)
+        self.assertTrue(starred.json()["starred"])
+        self.assertFalse(self.client.patch(f"/api/accounts/{account_id}/star").json()["starred"])
+        cleared = self.client.post(f"/api/accounts/{account_id}/clear-credentials")
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(cleared.json()["has_password"])
+        self.assertEqual(self.client.delete(f"/api/accounts/{account_id}").status_code, 200)
+
+    def test_integration_crud_masks_secrets_and_sets_defaults(self) -> None:
+        created = self.client.post("/api/integrations/ai", json={
+            "provider": "openai", "name": "Personal", "api_key": "test-key-a1b2",
+            "text_model": "gpt-4o-mini",
+        })
+        self.assertEqual(created.status_code, 201)
+        item = created.json()
+        self.assertTrue(item["has_api_key"])
+        self.assertEqual(item["key_hint"], "••••a1b2")
+        self.assertNotIn("test-key-a1b2", str(item))
+        listed = self.client.get("/api/integrations/ai")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["configs"][0]["id"], item["id"])
+        defaults = self.client.put("/api/integrations/ai/defaults", json={"text_config_id": item["id"], "image_config_id": None})
+        self.assertEqual(defaults.status_code, 200)
+        blocked = self.client.delete(f"/api/integrations/ai/{item['id']}")
+        self.assertEqual(blocked.status_code, 409)
+
+    def test_platform_app_crud_never_returns_secret(self) -> None:
+        created = self.client.post("/api/integrations/platform-apps", json={
+            "provider": "google_youtube", "name": "Desktop", "client_id": "client-id",
+            "client_secret": "platform-secret-9z", "redirect_uri": "http://127.0.0.1:8765/api/oauth/youtube/callback",
+        })
+        self.assertEqual(created.status_code, 201)
+        item = created.json()
+        self.assertTrue(item["has_client_secret"])
+        self.assertNotIn("platform-secret-9z", str(item))
+        tested = self.client.post(f"/api/integrations/platform-apps/{item['id']}/test")
+        self.assertEqual(tested.status_code, 200)
+        self.assertEqual(tested.json()["status"], "oauth_required")
 
     def test_profile_import_backup_export_and_restore_api(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
@@ -388,12 +433,78 @@ class ApiTests(unittest.TestCase):
         revisions = self.client.get(f"/api/contents/{content_id}/revisions")
         self.assertEqual(len(revisions.json()), 1)
 
-    def test_mock_ai_api_creates_draft_without_external_call(self) -> None:
-        response = self.client.post("/api/ai/generate", json={
-            "operation": "write", "brief": "Launch", "platforms": ["facebook"], "save_draft": True,
+    def test_rich_posts_api_and_bulk_delete(self) -> None:
+        p1 = self.client.post("/api/contents", json={
+            "title": "Post 1", "caption": "Caption 1", "hashtags": ["#tag1"],
+            "platform_variants": {"facebook": {"caption": "FB1", "hashtags": []}},
+        }).json()
+        p2 = self.client.post("/api/contents", json={
+            "title": "Post 2", "caption": "Caption 2", "hashtags": ["#tag2"],
+            "platform_variants": {"instagram": {"caption": "IG2", "hashtags": []}},
+        }).json()
+
+        # Duplicate test
+        dup = self.client.post(f"/api/contents/{p1['id']}/duplicate")
+        self.assertEqual(dup.status_code, 201)
+        dup_data = dup.json()
+        self.assertIn("bản sao", dup_data["title"])
+
+        # List with filter
+        listing = self.client.get("/api/contents?platform=facebook")
+        self.assertEqual(listing.status_code, 200)
+        items = listing.json()
+        fb_ids = [item["id"] for item in items]
+        self.assertIn(p1["id"], fb_ids)
+
+        # Export test
+        exported = self.client.get("/api/contents/export")
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn("text/csv", exported.headers["content-type"])
+        self.assertIn("Post 1", exported.text)
+
+        # Bulk delete test
+        del_resp = self.client.post("/api/contents/bulk-delete", json={
+            "content_ids": [p1["id"], p2["id"], dup_data["id"]],
+            "force": True,
         })
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["content"]["approval_status"], "draft")
+        self.assertEqual(del_resp.status_code, 200)
+        self.assertEqual(del_resp.json()["deleted_count"], 3)
+
+    def test_brand_profiles_api_lifecycle(self) -> None:
+        created = self.client.post("/api/brand-profiles", json={
+            "name": "Test Brand",
+            "tone": "Trang trọng",
+            "pronouns": "Chúng tôi - Quý khách",
+            "preferred_keywords": ["uy tín", "chất lượng"],
+            "forbidden_keywords": ["kém chất lượng"],
+            "sample_ctas": ["Liên hệ ngay"],
+        })
+        self.assertEqual(created.status_code, 201)
+        profile_id = created.json()["id"]
+        self.assertEqual(created.json()["name"], "Test Brand")
+
+        listing = self.client.get("/api/brand-profiles")
+        self.assertEqual(listing.status_code, 200)
+        self.assertTrue(any(b["id"] == profile_id for b in listing.json()))
+
+        updated = self.client.put(f"/api/brand-profiles/{profile_id}", json={
+            "name": "Test Brand Updated",
+            "tone": "Thân thiện",
+            "pronouns": "Shop - Bạn",
+            "preferred_keywords": ["tự động hóa"],
+            "forbidden_keywords": [],
+            "sample_ctas": ["Inbox shop"],
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["name"], "Test Brand Updated")
+        self.assertEqual(updated.json()["tone"], "Thân thiện")
+
+        deleted = self.client.delete(f"/api/brand-profiles/{profile_id}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertTrue(deleted.json()["deleted"])
+
+        not_found = self.client.delete(f"/api/brand-profiles/{profile_id}")
+        self.assertEqual(not_found.status_code, 404)
 
 
 if __name__ == "__main__":

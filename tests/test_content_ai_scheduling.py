@@ -115,6 +115,35 @@ class MediaServiceTests(ContentFixture):
         self.assertEqual(self.media.assets.list(orphan_only=True)[0]["alt_text"], "Banner")
 
 
+class BrandProfileRepositoryTests(ContentFixture):
+    def test_brand_profile_crud_and_delete(self) -> None:
+        created = self.brands.create({
+            "name": "Tinix Hub",
+            "tone": "Chuyên nghiệp",
+            "pronouns": "Tinix - Bạn",
+            "preferred_keywords": ["tự động hóa", "uy tín"],
+            "forbidden_keywords": ["lừa đảo"],
+            "sample_ctas": ["Đăng ký ngay!"],
+        })
+        self.assertEqual(created["name"], "Tinix Hub")
+        self.assertEqual(created["preferred_keywords"], ["tự động hóa", "uy tín"])
+
+        updated = self.brands.update(created["id"], {
+            "name": "Tinix Social Hub",
+            "tone": "Năng động",
+            "pronouns": "Tinix - Bạn",
+            "preferred_keywords": ["tiết kiệm thời gian"],
+            "forbidden_keywords": [],
+            "sample_ctas": ["Bắt đầu ngay!"],
+        })
+        self.assertEqual(updated["name"], "Tinix Social Hub")
+        self.assertEqual(updated["tone"], "Năng động")
+
+        self.assertTrue(self.brands.delete(created["id"]))
+        self.assertIsNone(self.brands.get(created["id"]))
+        self.assertFalse(self.brands.delete(created["id"]))
+
+
 class AIStudioTests(ContentFixture):
     def test_mock_generation_saves_draft_and_usage(self) -> None:
         generations = AIGenerationRepository(self.database)
@@ -122,9 +151,22 @@ class AIStudioTests(ContentFixture):
         result = asyncio.run(studio.generate("write", "New product", None, ["facebook"], True))
         self.assertEqual(result["content"]["approval_status"], "draft")
         self.assertEqual(result["structured_content"]["topic"], "Mock topic")
+        self.assertTrue(bool(result["structured_content"]["image_prompt"]))
         with self.database.connection() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM ai_generations").fetchone()[0], 1)
             self.assertEqual(connection.execute("SELECT total_tokens FROM ai_usage").fetchone()[0], 2)
+
+    def test_image_generation_and_attachment(self) -> None:
+        generations = AIGenerationRepository(self.database)
+        media_service = MediaService(SimpleNamespace(media_dir=self.root / "media"), self.contents)
+        studio = AIContentStudioService(MockAIProvider(), generations, self.brands, self.contents, media=media_service)
+        draft = self.create_content()
+        result = asyncio.run(studio.generate_image("A cute dog in the park", content_id=draft["id"]))
+        self.assertIn("url", result)
+        self.assertIn("data_uri", result)
+        self.assertEqual(result["attached_content_id"], draft["id"])
+        updated_draft = self.contents.get(draft["id"])
+        self.assertEqual(len(updated_draft["media"]), 1)
 
 
 class SchedulingTests(ContentFixture):

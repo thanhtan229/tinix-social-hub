@@ -66,6 +66,7 @@ class Settings:
     chrome_path: str
     ai_base_url: str
     ai_model: str
+    ai_image_model: str
     ai_api_key: str
     ai_timeout_seconds: int
     ai_max_retries: int
@@ -124,6 +125,7 @@ def get_settings() -> Settings:
         chrome_path=os.getenv("TINIX_CHROME_PATH", "").strip(),
         ai_base_url=os.getenv("TINIX_AI_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         ai_model=os.getenv("TINIX_AI_MODEL", "deepseek-chat").strip(),
+        ai_image_model=os.getenv("TINIX_AI_IMAGE_MODEL", "").strip(),
         ai_api_key=os.getenv("TINIX_AI_API_KEY", "").strip(),
         ai_timeout_seconds=_int("TINIX_AI_TIMEOUT_SECONDS", 60, 5, 600),
         ai_max_retries=_int("TINIX_AI_MAX_RETRIES", 2, 0, 5),

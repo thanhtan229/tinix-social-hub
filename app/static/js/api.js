@@ -6,6 +6,7 @@ export async function api(path, options = {}) {
     try { const body = await response.json(); message = typeof body.detail === "string" ? body.detail : body.detail?.message || JSON.stringify(body.detail); } catch {}
     throw new Error(message);
   }
+  if (response.status === 204) return null;
   return response.json();
 }
 

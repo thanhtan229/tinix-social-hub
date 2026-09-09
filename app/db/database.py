@@ -631,6 +631,64 @@ MIGRATIONS: list[tuple[int, str]] = [
     ALTER TABLE publish_attempts ADD COLUMN provider_request_id TEXT;
     ALTER TABLE publish_attempts ADD COLUMN commit_possible INTEGER NOT NULL DEFAULT 0;
     """),
+    (14, """
+    ALTER TABLE accounts ADD COLUMN recovery_email TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+    """),
+    (15, """
+    CREATE TABLE ai_provider_configs (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        name TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key_protected TEXT NOT NULL,
+        key_hint TEXT NOT NULL DEFAULT '',
+        text_model TEXT NOT NULL DEFAULT '',
+        image_model TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_test_status TEXT NOT NULL DEFAULT 'untested',
+        last_test_at TEXT,
+        last_error_code TEXT,
+        last_error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(provider,name)
+    );
+    CREATE TABLE ai_provider_models (
+        config_id TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL DEFAULT '[]',
+        raw_metadata_json TEXT NOT NULL DEFAULT '{}',
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY(config_id,model_id),
+        FOREIGN KEY(config_id) REFERENCES ai_provider_configs(id) ON DELETE CASCADE
+    );
+    CREATE TABLE platform_apps (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        name TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        client_secret_protected TEXT NOT NULL,
+        secret_hint TEXT NOT NULL DEFAULT '',
+        redirect_uri TEXT NOT NULL,
+        api_version TEXT NOT NULL DEFAULT '',
+        scopes_json TEXT NOT NULL DEFAULT '[]',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_test_status TEXT NOT NULL DEFAULT 'untested',
+        last_test_at TEXT,
+        last_error_code TEXT,
+        last_error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(provider,name)
+    );
+    ALTER TABLE account_connections ADD COLUMN platform_app_id TEXT REFERENCES platform_apps(id) ON DELETE SET NULL;
+    ALTER TABLE oauth_states ADD COLUMN platform_app_id TEXT REFERENCES platform_apps(id) ON DELETE SET NULL;
+    CREATE INDEX idx_account_connections_platform_app ON account_connections(platform_app_id);
+    """),
 ]
 
 

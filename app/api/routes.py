@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from app import __version__
 from app.platforms import PLATFORM_CATALOG, get_platform
 from app.runtime import runtime_report
+from app.services.ai import AIError
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -24,8 +25,12 @@ class AccountCreate(BaseModel):
     platform: str = Field(min_length=1, max_length=40)
     username: str = Field(default="", max_length=500)
     email: str = Field(default="", max_length=500)
+    recovery_email: str = Field(default="", max_length=500)
     password: str = Field(default="", max_length=2_000)
     secret_2fa: str = Field(default="", max_length=500)
+    recovery_codes: str = Field(default="", max_length=10_000)
+    notes: str = Field(default="", max_length=10_000)
+    starred: bool = False
     email_pass: str = Field(default="", max_length=2_000)
     cookie: str = Field(default="", max_length=200_000)
 
@@ -83,6 +88,61 @@ class ProfileAutoCleanupSettings(BaseModel):
     threshold_gb: float = Field(default=5, ge=0.5, le=100)
 
 
+class AIProviderConfigCreate(BaseModel):
+    provider: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=100)
+    api_key: str = Field(min_length=1, max_length=2000)
+    base_url: str | None = Field(default=None, max_length=2000)
+    text_model: str = Field(default="", max_length=200)
+    image_model: str = Field(default="", max_length=200)
+    enabled: bool = True
+
+
+class AIProviderConfigUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    api_key: str | None = Field(default=None, min_length=1, max_length=2000)
+    base_url: str | None = Field(default=None, max_length=2000)
+    text_model: str | None = Field(default=None, max_length=200)
+    image_model: str | None = Field(default=None, max_length=200)
+    enabled: bool | None = None
+
+
+class AIProviderModelDiscovery(BaseModel):
+    provider: str = Field(min_length=1, max_length=40)
+    api_key: str = Field(min_length=1, max_length=2000)
+    base_url: str | None = Field(default=None, max_length=2000)
+
+
+class AIProviderDefaults(BaseModel):
+    text_config_id: str | None = Field(default=None, max_length=100)
+    image_config_id: str | None = Field(default=None, max_length=100)
+
+
+class PlatformAppCreate(BaseModel):
+    provider: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=100)
+    client_id: str = Field(min_length=1, max_length=1000)
+    client_secret: str = Field(min_length=1, max_length=2000)
+    redirect_uri: str = Field(min_length=8, max_length=2000)
+    api_version: str = Field(default="", max_length=100)
+    scopes: list[str] | None = Field(default=None, max_length=50)
+    enabled: bool = True
+
+
+class PlatformAppUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    client_id: str | None = Field(default=None, min_length=1, max_length=1000)
+    client_secret: str | None = Field(default=None, min_length=1, max_length=2000)
+    redirect_uri: str | None = Field(default=None, min_length=8, max_length=2000)
+    api_version: str | None = Field(default=None, max_length=100)
+    scopes: list[str] | None = Field(default=None, max_length=50)
+    enabled: bool | None = None
+
+
+class ProviderAuthorizeBody(BaseModel):
+    platform_app_id: str | None = Field(default=None, max_length=100)
+
+
 class PostingSlotItem(BaseModel):
     weekday: int = Field(ge=0, le=6)
     minute_of_day: int = Field(ge=0, le=1439)
@@ -131,17 +191,27 @@ def services(request: Request) -> Any:
     return request.app.state.services
 
 
-def public_account(account: dict[str, Any] | None) -> dict[str, Any] | None:
+def public_account(account: dict[str, Any] | None, chrome_status: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if account is None:
         return None
-    hidden = {"password", "secret_2fa", "email_pass", "cookie"}
+    hidden = {"password", "secret_2fa", "email_pass", "cookie", "recovery_codes"}
     public = {key: value for key, value in account.items() if key not in hidden}
     public.update({
         "has_password": bool(account.get("password")),
         "has_2fa": bool(account.get("secret_2fa")),
         "has_email_password": bool(account.get("email_pass")),
         "has_cookie": bool(account.get("cookie")),
+        "has_recovery_codes": bool(account.get("recovery_codes")),
+        "recovery_email": str(account.get("recovery_email") or ""),
+        "notes": str(account.get("notes") or ""),
+        "starred": bool(account.get("starred")),
     })
+    if chrome_status:
+        public["chrome_state"] = chrome_status.get("state") or "stopped"
+        public["chrome_port"] = chrome_status.get("port")
+    else:
+        public["chrome_state"] = "stopped"
+        public["chrome_port"] = None
     return public
 
 
@@ -194,6 +264,140 @@ async def health(request: Request) -> dict[str, Any]:
     }
 
 
+def integrations(request: Request) -> Any:
+    service = getattr(services(request), "integrations", None)
+    if not service:
+        raise HTTPException(503, "Tích hợp API chưa khả dụng.")
+    return service
+
+
+@router.get("/integrations/catalog")
+async def get_integration_catalog(request: Request) -> dict[str, Any]:
+    return await asyncio.to_thread(integrations(request).catalog)
+
+
+@router.get("/integrations/ai")
+async def list_ai_integrations(request: Request) -> dict[str, Any]:
+    return await asyncio.to_thread(integrations(request).ai_list)
+
+
+@router.post("/integrations/ai", status_code=201)
+async def create_ai_integration(body: AIProviderConfigCreate, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(integrations(request).create_ai, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.put("/integrations/ai/defaults")
+async def update_ai_defaults(body: AIProviderDefaults, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(integrations(request).set_defaults, body.text_config_id, body.image_config_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/integrations/ai/discover-models")
+async def discover_ai_models(body: AIProviderModelDiscovery, request: Request) -> list[dict[str, Any]]:
+    try:
+        return await integrations(request).discover_models(**body.model_dump())
+    except (ValueError, AIError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.put("/integrations/ai/{config_id}")
+async def update_ai_integration(config_id: str, body: AIProviderConfigUpdate, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(integrations(request).update_ai, config_id, **body.model_dump(exclude_unset=True))
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy AI Provider.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.delete("/integrations/ai/{config_id}")
+async def delete_ai_integration(config_id: str, request: Request) -> dict[str, bool]:
+    try:
+        deleted = await asyncio.to_thread(integrations(request).delete_ai, config_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "Không tìm thấy AI Provider.")
+    return {"deleted": True}
+
+
+@router.get("/integrations/ai/{config_id}/models")
+async def list_ai_models(config_id: str, request: Request) -> list[dict[str, Any]]:
+    try:
+        return await asyncio.to_thread(integrations(request).ai_configs.models, config_id)
+    except Exception as exc:
+        raise HTTPException(404, "Không tìm thấy AI Provider.") from exc
+
+
+@router.post("/integrations/ai/{config_id}/models/refresh")
+async def refresh_ai_models(config_id: str, request: Request) -> list[dict[str, Any]]:
+    try:
+        return await integrations(request).refresh_models(config_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy AI Provider.") from exc
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/integrations/ai/{config_id}/test")
+async def test_ai_integration(config_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return await integrations(request).test_ai(config_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy AI Provider.") from exc
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/integrations/platform-apps")
+async def list_platform_apps(request: Request) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(integrations(request).platform_apps.list)
+
+
+@router.post("/integrations/platform-apps", status_code=201)
+async def create_platform_app(body: PlatformAppCreate, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(integrations(request).platform_apps.create, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.put("/integrations/platform-apps/{app_id}")
+async def update_platform_app(app_id: str, body: PlatformAppUpdate, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(integrations(request).platform_apps.update, app_id, **body.model_dump(exclude_unset=True))
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy Platform App.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.delete("/integrations/platform-apps/{app_id}")
+async def delete_platform_app(app_id: str, request: Request) -> dict[str, bool]:
+    try:
+        deleted = await asyncio.to_thread(integrations(request).platform_apps.delete, app_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "Không tìm thấy Platform App.")
+    return {"deleted": True}
+
+
+@router.post("/integrations/platform-apps/{app_id}/test")
+async def test_platform_app(app_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(integrations(request).test_platform_app, app_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy Platform App.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.get("/runtime")
 async def runtime_readiness(request: Request) -> dict[str, Any]:
     svc = services(request)
@@ -205,8 +409,21 @@ async def runtime_readiness(request: Request) -> dict[str, Any]:
 
 @router.get("/accounts")
 async def list_accounts(request: Request) -> list[dict[str, Any]]:
-    accounts = await asyncio.to_thread(services(request).accounts.list)
-    return [public_account(account) for account in accounts]
+    svc = services(request)
+    accounts = await asyncio.to_thread(svc.accounts.list)
+    return [
+        public_account(account, chrome_status=svc.chrome.status(account["id"]))
+        for account in accounts
+    ]
+
+
+@router.get("/accounts/{account_id}")
+async def get_account(account_id: str, request: Request) -> dict[str, Any]:
+    svc = services(request)
+    account = await asyncio.to_thread(svc.accounts.get, account_id)
+    if not account:
+        raise HTTPException(404, "Không tìm thấy account.")
+    return public_account(account, chrome_status=svc.chrome.status(account_id))
 
 
 @router.get("/accounts/{account_id}/credentials")
@@ -220,7 +437,26 @@ async def account_credentials(account_id: str, request: Request, response: Respo
         "secret_2fa": str(account.get("secret_2fa") or ""),
         "email_pass": str(account.get("email_pass") or ""),
         "cookie": str(account.get("cookie") or ""),
+        "recovery_codes": str(account.get("recovery_codes") or ""),
     }
+
+
+@router.post("/accounts/{account_id}/clear-credentials")
+async def clear_account_credentials(account_id: str, request: Request) -> dict[str, Any]:
+    svc = services(request)
+    account = await asyncio.to_thread(svc.accounts.clear_credentials, account_id)
+    if not account:
+        raise HTTPException(404, "Không tìm thấy account.")
+    return public_account(account, chrome_status=svc.chrome.status(account_id))
+
+
+@router.patch("/accounts/{account_id}/star")
+async def toggle_star_account(account_id: str, request: Request) -> dict[str, Any]:
+    svc = services(request)
+    account = await asyncio.to_thread(svc.accounts.toggle_starred, account_id)
+    if not account:
+        raise HTTPException(404, "Không tìm thấy account.")
+    return public_account(account, chrome_status=svc.chrome.status(account_id))
 
 
 @router.post("/accounts", status_code=201)
@@ -286,9 +522,12 @@ async def list_provider_connections(request: Request) -> list[dict[str, Any]]:
 
 
 @router.post("/accounts/{account_id}/connections/{provider}/authorize")
-async def authorize_provider_connection(account_id: str, provider: str, request: Request) -> dict[str, Any]:
+async def authorize_provider_connection(account_id: str, provider: str, request: Request, body: ProviderAuthorizeBody | None = None) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(services(request).provider_accounts.authorize_url, account_id, provider)
+        return await asyncio.to_thread(
+            services(request).provider_accounts.authorize_url, account_id, provider,
+            body.platform_app_id if body else None,
+        )
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy account.") from exc
     except ValueError as exc:

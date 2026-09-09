@@ -42,8 +42,8 @@ if not exist "app\static\favicon.ico" (
   "%VENV_PY%" build.py --no-bump --no-tests --no-commit
 )
 
-REM Kiem tra server ngam da chay chua
-"%VENV_PY%" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:%TINIX_PORT%/api/health', timeout=1)" >nul 2>nul
+REM Kiem tra server ngam da chay chua va dung phien ban khong
+"%VENV_PY%" -c "import urllib.request, json, sys; from app import __version__; exec('try:\n r = urllib.request.urlopen(\"http://127.0.0.1:%TINIX_PORT%/api/health\", timeout=1)\n d = json.loads(r.read().decode())\n sys.exit(0 if d.get(\"version\") == __version__ else 1)\nexcept Exception:\n sys.exit(1)')" >nul 2>nul
 if errorlevel 1 (
   call :start_background_server
   if errorlevel 1 exit /b 1

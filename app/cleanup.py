@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -87,6 +88,27 @@ def cleanup_previous_sessions() -> tuple[int, int]:
     except Exception:
         pass
 
+    # Windows fallback for port lookup if psutil net_connections was restricted
+    if not backend_procs and os.name == "nt":
+        try:
+            cmd = f"(Get-NetTCPConnection -LocalPort {target_port} -State Listen -ErrorAction SilentlyContinue).OwningProcess"
+            output = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command", cmd],
+                text=True,
+                timeout=3,
+            )
+            for line in output.strip().splitlines():
+                pid_str = line.strip()
+                if pid_str.isdigit():
+                    pid = int(pid_str)
+                    if pid != current_pid:
+                        try:
+                            backend_procs.append(psutil.Process(pid))
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+        except Exception:
+            pass
+
     # 2. Check recorded chrome sessions in data/chrome_sessions.json
     sessions_file = settings.data_dir / "chrome_sessions.json"
     if sessions_file.exists():
@@ -124,7 +146,17 @@ def cleanup_previous_sessions() -> tuple[int, int]:
             # Identify old Python backend instances belonging to this project
             elif "python" in name:
                 proj_str = str(project_dir).lower()
-                if ("app.main:app" in cmd_str or "-m app" in cmd_str or "app/__main__.py" in cmd_str) and proj_str in cmd_str:
+                is_tinix = False
+                if ("app.main:app" in cmd_str or "-m app" in cmd_str or "app/__main__.py" in cmd_str):
+                    if proj_str in cmd_str:
+                        is_tinix = True
+                    else:
+                        try:
+                            if proj_str in str(proc.cwd()).lower():
+                                is_tinix = True
+                        except Exception:
+                            pass
+                if is_tinix:
                     backend_procs.append(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue

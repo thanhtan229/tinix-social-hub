@@ -75,6 +75,12 @@ class BrandProfileRepository:
             )
         return self.get(profile_id)
 
+    def delete(self, profile_id: str) -> bool:
+        with self.db.connection() as connection:
+            cursor = connection.execute("DELETE FROM brand_profiles WHERE id=?", (profile_id,))
+            return cursor.rowcount > 0
+
+
 
 class ContentRepository:
     def __init__(self, database: Database) -> None:
@@ -86,30 +92,130 @@ class ContentRepository:
         result["hashtags"] = _loads(result.pop("hashtags_json"), [])
         return result
 
+    def _enrich_content_items(self, connection: Any, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not items:
+            return items
+        cids = [item["id"] for item in items]
+        placeholders = ",".join("?" * len(cids))
+
+        media_rows = connection.execute(
+            f"SELECT * FROM content_media WHERE content_id IN ({placeholders}) ORDER BY sort_order, created_at",
+            cids,
+        ).fetchall()
+        media_by_cid: dict[str, list[dict[str, Any]]] = {cid: [] for cid in cids}
+        for m in media_rows:
+            media_by_cid[m["content_id"]].append(dict(m))
+
+        variant_rows = connection.execute(
+            f"SELECT * FROM platform_content_variants WHERE content_id IN ({placeholders}) ORDER BY platform",
+            cids,
+        ).fetchall()
+        variants_by_cid: dict[str, dict[str, Any]] = {cid: {} for cid in cids}
+        for v in variant_rows:
+            v_dict = dict(v)
+            v_dict["hashtags"] = _loads(v_dict.pop("hashtags_json"), [])
+            variants_by_cid[v["content_id"]][v_dict["platform"]] = v_dict
+
+        release_rows = connection.execute(
+            f"""
+            SELECT r.id, r.content_id, r.platform, r.status, r.scheduled_at, r.published_at,
+                   r.external_url, r.target_id, t.name as target_name, j.error, j.failure_code
+            FROM publication_releases r
+            LEFT JOIN publishing_targets t ON t.id = r.target_id
+            LEFT JOIN jobs j ON j.id = r.job_id
+            WHERE r.content_id IN ({placeholders})
+            ORDER BY COALESCE(r.scheduled_at, r.created_at) DESC
+            """,
+            cids,
+        ).fetchall()
+        releases_by_cid: dict[str, list[dict[str, Any]]] = {cid: [] for cid in cids}
+        for r in release_rows:
+            releases_by_cid[r["content_id"]].append(dict(r))
+
+        for item in items:
+            cid = item["id"]
+            item["media"] = media_by_cid.get(cid, [])
+            item["platform_variants"] = variants_by_cid.get(cid, {})
+            releases = releases_by_cid.get(cid, [])
+            item["releases"] = releases
+
+            platforms = set(item["platform_variants"].keys())
+            for r in releases:
+                if r.get("platform"):
+                    platforms.add(r["platform"])
+            item["platforms"] = sorted(list(platforms))
+
+            # Determine publishing status
+            succeeded_rels = [r for r in releases if r["status"] == "succeeded"]
+            scheduled_rels = [r for r in releases if r["status"] in ("scheduled", "queued")]
+            running_rels = [r for r in releases if r["status"] in ("running", "opening_browser", "uploading", "publishing", "verifying")]
+            failed_rels = [r for r in releases if r["status"] in ("permanent_failure", "failed")]
+
+            if succeeded_rels:
+                item["publishing_status"] = "published"
+            elif running_rels:
+                item["publishing_status"] = "publishing"
+            elif scheduled_rels:
+                item["publishing_status"] = "scheduled"
+            elif failed_rels:
+                item["publishing_status"] = "failed"
+            else:
+                item["publishing_status"] = "draft"
+
+            item["external_url"] = None
+            item["external_urls"] = []
+            for r in succeeded_rels:
+                if r.get("external_url"):
+                    if not item["external_url"]:
+                        item["external_url"] = r["external_url"]
+                    item["external_urls"].append({
+                        "platform": r["platform"],
+                        "url": r["external_url"],
+                        "target_name": r.get("target_name"),
+                        "published_at": r.get("published_at"),
+                    })
+
+            if scheduled_rels:
+                dates = [r["scheduled_at"] for r in scheduled_rels if r.get("scheduled_at")]
+                item["scheduled_at"] = min(dates) if dates else None
+            else:
+                item["scheduled_at"] = None
+
+            if succeeded_rels:
+                dates = [r["published_at"] for r in succeeded_rels if r.get("published_at")]
+                item["published_at"] = max(dates) if dates else None
+            else:
+                item["published_at"] = None
+
+            item["last_error"] = failed_rels[0].get("error") if failed_rels else None
+
+        return items
+
     def get(self, content_id: str) -> dict[str, Any] | None:
         with self.db.connection() as connection:
             row = connection.execute("SELECT * FROM content_items WHERE id=?", (content_id,)).fetchone()
             if not row:
                 return None
             result = self._content_from_row(row)
-            variants = connection.execute(
-                "SELECT * FROM platform_content_variants WHERE content_id=? ORDER BY platform", (content_id,)
-            ).fetchall()
-            result["platform_variants"] = {}
-            for variant in variants:
-                item = dict(variant)
-                item["hashtags"] = _loads(item.pop("hashtags_json"), [])
-                result["platform_variants"][item["platform"]] = item
-            result["media"] = [dict(item) for item in connection.execute(
-                "SELECT * FROM content_media WHERE content_id=? ORDER BY sort_order,created_at", (content_id,)
-            )]
+            enriched = self._enrich_content_items(connection, [result])
+            item = enriched[0]
             approval = connection.execute(
                 "SELECT * FROM content_approvals WHERE content_id=? ORDER BY requested_at DESC LIMIT 1", (content_id,)
             ).fetchone()
-            result["latest_approval"] = dict(approval) if approval else None
-            return result
+            item["latest_approval"] = dict(approval) if approval else None
+            return item
 
-    def list(self, limit: int = 50, offset: int = 0, search: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+    def list(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: str | None = None,
+        status: str | None = None,
+        platform: str | None = None,
+        post_status: str | None = None,
+        media_type: str | None = None,
+        sort_by: str | None = "newest",
+    ) -> list[dict[str, Any]]:
         clauses, params = [], []
         if search:
             clauses.append("(title LIKE ? OR caption LIKE ?)")
@@ -117,13 +223,53 @@ class ContentRepository:
         if status:
             clauses.append("approval_status=?")
             params.append(status)
+        if platform:
+            clauses.append(
+                "(id IN (SELECT content_id FROM platform_content_variants WHERE platform = ?) "
+                "OR id IN (SELECT content_id FROM publication_releases WHERE platform = ?))"
+            )
+            params.extend([platform.lower(), platform.lower()])
+        if media_type:
+            if media_type == "image":
+                clauses.append("id IN (SELECT content_id FROM content_media WHERE media_type = 'image')")
+            elif media_type == "video":
+                clauses.append("id IN (SELECT content_id FROM content_media WHERE media_type = 'video')")
+            elif media_type in ("text", "none"):
+                clauses.append("id NOT IN (SELECT content_id FROM content_media)")
+        if post_status:
+            if post_status == "published":
+                clauses.append("id IN (SELECT content_id FROM publication_releases WHERE status = 'succeeded')")
+            elif post_status == "scheduled":
+                clauses.append(
+                    "id IN (SELECT content_id FROM publication_releases WHERE status IN ('scheduled', 'queued')) "
+                    "AND id NOT IN (SELECT content_id FROM publication_releases WHERE status = 'succeeded')"
+                )
+            elif post_status == "failed":
+                clauses.append(
+                    "id IN (SELECT content_id FROM publication_releases WHERE status IN ('permanent_failure', 'failed')) "
+                    "AND id NOT IN (SELECT content_id FROM publication_releases WHERE status = 'succeeded')"
+                )
+            elif post_status == "draft":
+                clauses.append(
+                    "id NOT IN (SELECT content_id FROM publication_releases WHERE status IN ('succeeded', 'scheduled', 'queued', 'running', 'publishing'))"
+                )
+
+        order_clause = "ORDER BY updated_at DESC"
+        if sort_by == "oldest":
+            order_clause = "ORDER BY created_at ASC"
+        elif sort_by == "title":
+            order_clause = "ORDER BY title ASC"
+        elif sort_by == "scheduled":
+            order_clause = "ORDER BY (SELECT MIN(scheduled_at) FROM publication_releases WHERE publication_releases.content_id = content_items.id) DESC"
+
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         params.extend([limit, offset])
         with self.db.connection() as connection:
             rows = connection.execute(
-                f"SELECT * FROM content_items{where} ORDER BY updated_at DESC LIMIT ? OFFSET ?", params
-            )
-            return [self._content_from_row(row) for row in rows]
+                f"SELECT * FROM content_items{where} {order_clause} LIMIT ? OFFSET ?", params
+            ).fetchall()
+            items = [self._content_from_row(row) for row in rows]
+            return self._enrich_content_items(connection, items)
 
     @staticmethod
     def _snapshot(connection: Any, content_id: str) -> dict[str, Any]:
@@ -218,11 +364,28 @@ class ContentRepository:
         content = self.get(content_id)
         if not content:
             return None
-        content["title"] = f"{content['title']} (bản sao)"
-        content["platform_variants"] = {
-            platform: variant for platform, variant in content["platform_variants"].items()
+        content_copy = dict(content)
+        content_copy["title"] = f"{content['title']} (bản sao)"
+        content_copy["platform_variants"] = {
+            platform: variant for platform, variant in content.get("platform_variants", {}).items()
         }
-        duplicate = self.create(content, source="duplicate")
+        duplicate = self.create(content_copy, source="duplicate")
+        if duplicate and content.get("media"):
+            with self.db.connection() as connection:
+                for item in content["media"]:
+                    media_id = str(uuid.uuid4())
+                    connection.execute(
+                        "INSERT INTO content_media(id,content_id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,asset_id,alt_text,thumbnail_timestamp,created_at) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            media_id, duplicate["id"], item["media_type"], item["relative_path"],
+                            item.get("thumbnail_relative_path"), item["original_name"], item["mime_type"],
+                            item["size_bytes"], item["sha256"], item.get("sort_order", 0),
+                            item.get("asset_id"), item.get("alt_text"), item.get("thumbnail_timestamp"),
+                            utc_now(),
+                        ),
+                    )
+            return self.get(duplicate["id"])
         return duplicate
 
     def revisions(self, content_id: str) -> list[dict[str, Any]]:
@@ -314,7 +477,7 @@ class ContentRepository:
             )
         return self.get(content_id)
 
-    def delete(self, content_id: str) -> list[str] | None:
+    def delete(self, content_id: str, force: bool = False) -> list[str] | None:
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -324,7 +487,11 @@ class ContentRepository:
                     return None
                 jobs = connection.execute("SELECT COUNT(*) FROM jobs WHERE content_id=?", (content_id,)).fetchone()[0]
                 if jobs:
-                    raise ContentInUseError("Content đang có lịch sử hoặc lịch đăng; không thể xóa record.")
+                    if not force:
+                        raise ContentInUseError("Content đang có lịch sử hoặc lịch đăng; không thể xóa record.")
+                    connection.execute("UPDATE jobs SET content_id=NULL WHERE content_id=?", (content_id,))
+                    connection.execute("UPDATE publication_plans SET content_id=NULL WHERE content_id=?", (content_id,))
+                    connection.execute("UPDATE publication_releases SET content_id=NULL WHERE content_id=?", (content_id,))
                 paths = []
                 for row in connection.execute(
                     "SELECT relative_path,thumbnail_relative_path FROM content_media WHERE content_id=? AND asset_id IS NULL", (content_id,)
@@ -336,6 +503,29 @@ class ContentRepository:
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
+
+    def bulk_delete(self, content_ids: list[str], force: bool = True) -> dict[str, Any]:
+        deleted_count = 0
+        failed_count = 0
+        deleted_ids = []
+        all_paths = []
+        for cid in content_ids:
+            try:
+                paths = self.delete(cid, force=force)
+                if paths is not None:
+                    deleted_count += 1
+                    deleted_ids.append(cid)
+                    all_paths.extend(paths)
+                else:
+                    failed_count += 1
+            except Exception:
+                failed_count += 1
+        return {
+            "deleted_count": deleted_count,
+            "failed_count": failed_count,
+            "deleted_ids": deleted_ids,
+            "retained_paths": all_paths,
+        }
 
 
 class AIGenerationRepository:

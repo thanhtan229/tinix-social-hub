@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import os
 import uuid
 from pathlib import Path
@@ -19,7 +20,7 @@ class MediaValidationError(ValueError):
 
 
 class MediaService:
-    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".jfif"}
     VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v"}
     MAX_IMAGE_BYTES = 20 * 1024 * 1024
     MAX_VIDEO_BYTES = 1024 * 1024 * 1024
@@ -43,9 +44,14 @@ class MediaService:
 
     def _kind(self, original_name: str, content_type: str | None) -> tuple[str, int, str]:
         extension = Path(original_name).suffix.lower()
-        if extension in self.IMAGE_EXTENSIONS and (content_type or "").startswith("image/"):
+        effective_type = (content_type or "").strip().lower()
+        if not effective_type or effective_type in {"application/octet-stream", "binary/octet-stream"}:
+            guessed, _ = mimetypes.guess_type(original_name)
+            effective_type = (guessed or "").lower()
+
+        if extension in self.IMAGE_EXTENSIONS:
             return "image", self.MAX_IMAGE_BYTES, extension
-        if extension in self.VIDEO_EXTENSIONS and (content_type or "").startswith("video/"):
+        if extension in self.VIDEO_EXTENSIONS:
             return "video", self.MAX_VIDEO_BYTES, extension
         raise MediaValidationError("Chỉ hỗ trợ ảnh JPG/PNG/WebP/GIF hoặc video MP4/MOV/WebM/M4V.")
 
@@ -97,12 +103,15 @@ class MediaService:
                     signature = video.read(16)
                 if not (b"ftyp" in signature or signature.startswith(b"\x1aE\xdf\xa3")):
                     raise MediaValidationError("File video không có định dạng MP4/MOV/WebM hợp lệ.")
+            mime = content_type
+            if not mime or mime in {"application/octet-stream", "binary/octet-stream"}:
+                mime = mimetypes.guess_type(original_name)[0] or ("video/mp4" if media_type == "video" else "image/jpeg")
             return self.assets.create({
                 "media_type": media_type,
                 "relative_path": destination.relative_to(self.root).as_posix(),
                 "thumbnail_relative_path": thumbnail,
                 "original_name": Path(original_name).name[:255],
-                "mime_type": content_type or "application/octet-stream",
+                "mime_type": mime or "application/octet-stream",
                 "size_bytes": size, "sha256": sha256, "width": width, "height": height,
                 "alt_text": alt_text, "source": source,
             })

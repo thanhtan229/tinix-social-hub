@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.4`
+Phiên bản áp dụng: `1.0.6`
 
 Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media và lập lịch đăng bài. Chrome automation vẫn là cách đăng mặc định; account YouTube có thể tùy chọn kết nối YouTube Data API chính thức. Mỗi tài khoản vẫn có Chrome profile riêng để dùng khi chọn hoặc fallback về Chrome.
 
@@ -140,7 +140,7 @@ Quy tắc media:
 - Không trộn video với ảnh trong cùng content.
 - Một content video chỉ dùng một video theo các format đang hỗ trợ.
 - Asset đang được content hoặc release snapshot sử dụng sẽ bị khóa xóa.
-- Bộ lọc **Chỉ orphan** hiển thị asset chưa gắn với content nào.
+- Bộ lọc **Orphan** hiển thị asset chưa gắn với bài viết/content nào.
 
 ## 6. Lập lịch bằng Calendar
 

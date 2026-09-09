@@ -51,11 +51,30 @@ def update_version(new_version: str) -> None:
     init_py.write_text(updated, encoding="utf-8")
 
     # Update docs if applicable
-    doc_path = PROJECT_ROOT / "docs" / "HUONG_DAN_SU_DUNG.md"
-    if doc_path.exists():
-        doc_text = doc_path.read_text(encoding="utf-8")
-        doc_updated = re.sub(r"Phiên bản áp dụng:\s*`[^`]+`", f"Phiên bản áp dụng: `{new_version}`", doc_text)
-        doc_path.write_text(doc_updated, encoding="utf-8")
+    doc_candidates = [
+        PROJECT_ROOT / "docs" / "HUONG_DAN_SU_DUNG.md",
+        PROJECT_ROOT / "HUONG_DAN_SU_DUNG.md",
+        PROJECT_ROOT / "hướng dẫn sử dụng.md",
+    ]
+    for doc_path in doc_candidates:
+        if doc_path.exists():
+            doc_text = doc_path.read_text(encoding="utf-8")
+            doc_updated = re.sub(r"Phiên bản áp dụng:\s*`[^`]+`", f"Phiên bản áp dụng: `{new_version}`", doc_text)
+            doc_path.write_text(doc_updated, encoding="utf-8")
+
+    # Update cache-busting version in static assets
+    index_html = PROJECT_ROOT / "app" / "static" / "index.html"
+    if index_html.exists():
+        html_text = index_html.read_text(encoding="utf-8")
+        html_text = re.sub(r'/static/style\.css\?v=[^"]+', f'/static/style.css?v={new_version}', html_text)
+        html_text = re.sub(r'/static/js/main\.js\?v=[^"]+', f'/static/js/main.js?v={new_version}', html_text)
+        index_html.write_text(html_text, encoding="utf-8")
+
+    main_js = PROJECT_ROOT / "app" / "static" / "js" / "main.js"
+    if main_js.exists():
+        js_text = main_js.read_text(encoding="utf-8")
+        js_text = re.sub(r'accounts\.js\?v=[^"]+', f'accounts.js?v={new_version}', js_text)
+        main_js.write_text(js_text, encoding="utf-8")
 
     print(f"[Build] Da cap nhat version: v{new_version}")
 
@@ -98,12 +117,14 @@ def create_desktop_shortcut() -> None:
 $desktop = [Environment]::GetFolderPath('Desktop')
 $ws = New-Object -ComObject WScript.Shell
 $shortcutPath = Join-Path $desktop 'Tinix Social Hub.lnk'
-$targetPath = '{target}'
+$targetExe = '{target_exe}'
+$arguments = '{arguments}'
 $workDir = '{workdir}'
 $iconLocation = '{icon}'
 
 $s = $ws.CreateShortcut($shortcutPath)
-$s.TargetPath = $targetPath
+$s.TargetPath = $targetExe
+$s.Arguments = $arguments
 $s.WorkingDirectory = $workDir
 $s.IconLocation = $iconLocation
 $s.Description = 'Tinix Social Hub - Studio Quan ly Mang Xa Hoi'
@@ -111,11 +132,19 @@ $s.Save()
 """
     vbs_path = PROJECT_ROOT / "START.vbs"
     bat_path = PROJECT_ROOT / "START.bat"
-    target = str(vbs_path if vbs_path.exists() else bat_path)
+
+    if vbs_path.exists():
+        target_exe = "wscript.exe"
+        arguments = f'//nologo "{vbs_path}"'
+    else:
+        target_exe = "cmd.exe"
+        arguments = f'/c "{bat_path}"'
+
     ico_path = str(PROJECT_ROOT / "app" / "static" / "favicon.ico")
 
     ps_code = desktop_script.format(
-        target=target.replace("'", "''"),
+        target_exe=target_exe.replace("'", "''"),
+        arguments=arguments.replace("'", "''"),
         workdir=str(PROJECT_ROOT).replace("'", "''"),
         icon=f"{ico_path},0".replace("'", "''"),
     )

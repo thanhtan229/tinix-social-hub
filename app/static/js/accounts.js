@@ -167,7 +167,7 @@ function renderTargetList() {
     : store.targets;
   const filterLabel = document.querySelector("#targetAccountFilter");
   filterLabel.innerHTML = selected
-    ? `<span class="target-filter-note"><span>Đang lọc theo</span><strong>Account: ${esc(selected.name)}</strong><small>Chọn lại account để bỏ lọc</small></span>`
+    ? `<span class="target-filter-note"><span>Đang lọc theo</span><strong>Account: ${esc(selected.name)}</strong><button type="button" class="btn-sync-chip" data-account-action="sync" data-id="${selected.id}" ${selected.profile_operation_locked ? "disabled" : ""}>Quét Page/Kênh</button><small>Chọn lại account để bỏ lọc</small></span>`
     : `<span class="target-filter-note is-all">Tất cả account</span>`;
   const targetList = document.querySelector("#targetList");
   targetList.innerHTML = targets.length ? `<div class="target-grid">${targets.map(target => {
@@ -216,31 +216,377 @@ function renderTargetList() {
       await refreshAccounts();
     } catch(error) { toast(error.message); }
   });
+  bindActions();
+}
+
+let detailAutoSaveTimer = null;
+
+function initSplitter() {
+  const container = document.querySelector("#accountsSplitContainer");
+  const divider = document.querySelector("#accountsSplitDivider");
+  if (!container || !divider) return;
+
+  const savedRatio = localStorage.getItem("tinix_accounts_split_ratio");
+  if (savedRatio) {
+    container.style.setProperty("--accounts-split-left", savedRatio);
+  }
+
+  let isDragging = false;
+
+  divider.onmousedown = event => {
+    event.preventDefault();
+    isDragging = true;
+    divider.classList.add("is-dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  window.addEventListener("mousemove", event => {
+    if (!isDragging) return;
+    const rect = container.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const percentage = Math.min(Math.max((offsetX / rect.width) * 100, 25), 75);
+    const val = `${percentage.toFixed(1)}%`;
+    container.style.setProperty("--accounts-split-left", val);
+    localStorage.setItem("tinix_accounts_split_ratio", val);
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (isDragging) {
+      isDragging = false;
+      divider.classList.remove("is-dragging");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+  });
+}
+
+async function saveAccountChanges(accountId) {
+  const statusEl = document.querySelector("#detailSaveStatus");
+  if (statusEl) {
+    statusEl.className = "detail-save-indicator saving";
+    statusEl.textContent = "Đang lưu…";
+  }
+
+  const account = store.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  const nameVal = document.querySelector("#detailName")?.value.trim() || account.name;
+  const emailVal = document.querySelector("#detailEmail")?.value.trim() || "";
+  const recoveryEmailVal = document.querySelector("#detailRecoveryEmail")?.value.trim() || "";
+  const passwordVal = document.querySelector("#detailPassword")?.value || "";
+  const secret2faVal = document.querySelector("#detail2fa")?.value.trim() || "";
+  const recoveryCodesVal = document.querySelector("#detailRecoveryCodes")?.value || "";
+  const notesVal = document.querySelector("#detailNotes")?.value || "";
+
+  const payload = {
+    name: nameVal,
+    platform: account.platform,
+    username: account.username || "",
+    email: emailVal,
+    recovery_email: recoveryEmailVal,
+    password: passwordVal,
+    secret_2fa: secret2faVal,
+    recovery_codes: recoveryCodesVal,
+    notes: notesVal,
+    starred: Boolean(account.starred),
+    email_pass: account.email_pass || "",
+    cookie: account.cookie || "",
+  };
+
+  try {
+    const updated = await api(`/accounts/${accountId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    Object.assign(account, updated);
+
+    const headerTitle = document.querySelector("#detailHeaderTitle");
+    if (headerTitle) headerTitle.textContent = updated.name;
+
+    const listRow = document.querySelector(`[data-account-row="${accountId}"]`);
+    if (listRow) {
+      const titleEl = listRow.querySelector(".account-identity-title");
+      if (titleEl) titleEl.textContent = updated.name;
+      const emailEl = listRow.querySelector(".account-email-text");
+      if (emailEl) {
+        emailEl.textContent = updated.email || updated.username || "Chưa có email";
+        emailEl.title = updated.email || updated.username || "";
+      }
+    }
+
+    if (statusEl) {
+      statusEl.className = "detail-save-indicator saved";
+      statusEl.textContent = "Saved";
+    }
+  } catch (error) {
+    if (statusEl) {
+      statusEl.className = "detail-save-indicator error";
+      statusEl.textContent = "Lỗi: " + error.message;
+    }
+    toast(error.message);
+  }
+}
+
+function bindDetailEvents(account) {
+  const accountId = account.id;
+
+  document.querySelectorAll("[data-toggle-type]").forEach(btn => {
+    btn.onclick = () => {
+      const input = document.getElementById(btn.dataset.toggleType);
+      if (!input) return;
+      const isPass = input.type === "password";
+      input.type = isPass ? "text" : "password";
+      btn.textContent = isPass ? "Hide" : "Show";
+    };
+  });
+
+  const enabledToggle = document.querySelector("#detailEnabled");
+  if (enabledToggle) {
+    enabledToggle.onchange = async () => {
+      const isChecked = enabledToggle.checked;
+      try {
+        await api(`/accounts/${accountId}/enabled`, {
+          method: "PATCH",
+          body: JSON.stringify({enabled: isChecked}),
+        });
+        account.enabled = isChecked ? 1 : 0;
+        toast(isChecked ? `Đã bật account ${account.name}` : `Đã tắt account ${account.name}`);
+      } catch (error) {
+        enabledToggle.checked = !isChecked;
+        toast(error.message);
+      }
+    };
+  }
+
+  const clearBtn = document.querySelector("#detailClearCredentialsBtn");
+  if (clearBtn) {
+    clearBtn.onclick = async () => {
+      if (!confirm(`Xóa sạch thông tin mật khẩu, 2FA, mã khôi phục của account ${account.name}?`)) return;
+      try {
+        await api(`/accounts/${accountId}/clear-credentials`, {method: "POST"});
+        const pwInput = document.querySelector("#detailPassword");
+        if (pwInput) { pwInput.value = ""; pwInput.placeholder = "Chưa lưu"; }
+        const tfaInput = document.querySelector("#detail2fa");
+        if (tfaInput) { tfaInput.value = ""; tfaInput.placeholder = "Chưa lưu"; }
+        const rcInput = document.querySelector("#detailRecoveryCodes");
+        if (rcInput) rcInput.value = "";
+        const statusEl = document.querySelector("#detailSaveStatus");
+        if (statusEl) {
+          statusEl.className = "detail-save-indicator saved";
+          statusEl.textContent = "Saved";
+        }
+        toast(`Đã xóa credentials của ${account.name}`);
+      } catch (error) {
+        toast(error.message);
+      }
+    };
+  }
+
+  const form = document.querySelector("#detailAccountForm");
+  if (form) {
+    form.oninput = () => {
+      clearTimeout(detailAutoSaveTimer);
+      const statusEl = document.querySelector("#detailSaveStatus");
+      if (statusEl) {
+        statusEl.className = "detail-save-indicator saving";
+        statusEl.textContent = "Đang lưu…";
+      }
+      detailAutoSaveTimer = setTimeout(() => saveAccountChanges(accountId), 400);
+    };
+
+    form.onchange = () => {
+      clearTimeout(detailAutoSaveTimer);
+      saveAccountChanges(accountId);
+    };
+  }
+}
+
+async function renderAccountDetail(account) {
+  const detailContainer = document.querySelector("#accountDetailContent");
+  if (!detailContainer) return;
+  if (!account) {
+    detailContainer.innerHTML = `<div class="detail-empty-state"><span aria-hidden="true">👤</span><p>Chọn một account bên trái để xem và sửa thông tin chi tiết.</p></div>`;
+    return;
+  }
+
+  const currentAccountId = account.id;
+  let credentials = {password: "", secret_2fa: "", recovery_codes: "", email_pass: "", cookie: ""};
+  try {
+    credentials = await api(`/accounts/${account.id}/credentials`);
+  } catch (_) {}
+
+  if (accountFilters.selectedAccountId !== currentAccountId) return;
+
+  const workerSubtitle = `tinix-03 · http://127.0.0.1:${account.chrome_port || 9324}`;
+  const lastCheck = account.last_login_check_at ? "đã kiểm tra" : "chưa có maintenance activity";
+  const statusBanner = `${account.chrome_state || "stopped"} · health:${account.login_status || "unknown"} · ${lastCheck}`;
+
+  detailContainer.innerHTML = `
+    <div class="detail-header">
+      <div class="detail-title-row">
+        <span class="accent-bar" aria-hidden="true"></span>
+        <h2 class="detail-account-name" id="detailHeaderTitle">${esc(account.name)}</h2>
+        <span class="badge-details">DETAILS</span>
+        <span class="detail-worker-subtitle">${esc(workerSubtitle)}</span>
+      </div>
+      <label class="detail-enabled-toggle">
+        <input type="checkbox" id="detailEnabled" ${account.enabled ? "checked" : ""}>
+        <span>Enabled</span>
+      </label>
+    </div>
+
+    <div class="detail-status-banner">
+      ${esc(statusBanner)}
+    </div>
+
+    <form id="detailAccountForm" onsubmit="return false;">
+      <div class="detail-form-grid">
+        <div class="detail-field">
+          <label class="detail-field-label" for="detailName">Tên account</label>
+          <input id="detailName" name="name" value="${esc(account.name)}" required autocomplete="off">
+        </div>
+        <div class="detail-field">
+          <label class="detail-field-label" for="detailEmail">Email</label>
+          <input id="detailEmail" name="email" type="email" value="${esc(account.email || "")}" autocomplete="off">
+        </div>
+        <div class="detail-field">
+          <label class="detail-field-label" for="detailRecoveryEmail">Recovery email</label>
+          <input id="detailRecoveryEmail" name="recovery_email" type="email" value="${esc(account.recovery_email || "")}" autocomplete="off">
+        </div>
+
+        <div class="detail-field">
+          <label class="detail-field-label" for="detailPassword">Password</label>
+          <div class="input-with-button">
+            <input id="detailPassword" name="password" type="password" value="${esc(credentials.password || "")}" placeholder="${credentials.password ? "Đã lưu - nhập để thay thế" : "Chưa lưu"}" autocomplete="new-password">
+            <button type="button" class="btn-inline-toggle" data-toggle-type="detailPassword">Show</button>
+          </div>
+        </div>
+        <div class="detail-field">
+          <label class="detail-field-label" for="detail2fa">2FA / TOTP secret (Base32)</label>
+          <div class="input-with-button">
+            <input id="detail2fa" name="secret_2fa" type="password" value="${esc(credentials.secret_2fa || "")}" placeholder="${credentials.secret_2fa ? "Đã lưu - nhập để thay thế" : "Chưa lưu"}" autocomplete="off">
+            <button type="button" class="btn-inline-toggle" data-toggle-type="detail2fa">Show</button>
+          </div>
+        </div>
+        <div class="detail-field">
+          <label class="detail-field-label" for="detailWorker">Chrome worker</label>
+          <input id="detailWorker" readonly value="tinix-03 · CDP ${account.chrome_port || 9324}">
+        </div>
+
+        <div class="detail-field span-3">
+          <label class="detail-field-label" for="detailRecoveryCodes">Recovery codes (mỗi mã một dòng)</label>
+          <textarea id="detailRecoveryCodes" name="recovery_codes" rows="3" placeholder="Mỗi mã một dòng">${esc(credentials.recovery_codes || "")}</textarea>
+        </div>
+
+        <div class="detail-field span-3">
+          <label class="detail-field-label" for="detailNotes">Notes</label>
+          <textarea id="detailNotes" name="notes" rows="2" placeholder="Ghi chú về account...">${esc(account.notes || "")}</textarea>
+        </div>
+      </div>
+
+      <div class="detail-footer">
+        <button type="button" id="detailClearCredentialsBtn" class="btn-clear-credentials">Clear Credentials</button>
+        <span id="detailSaveStatus" class="detail-save-indicator saved">Saved</span>
+      </div>
+    </form>
+  `;
+
+  bindDetailEvents(account);
+  bindActions();
 }
 
 function renderAccountList() {
   renderPlatformFilters();
   const accounts = filteredAccounts();
   document.querySelector("#accountResultCount").textContent = `Hiển thị ${accounts.length}/${store.accounts.length}`;
-  document.querySelector("#accountList").innerHTML = accounts.length ? `<table class="account-table"><thead><tr><th class="account-index">STT</th><th>Account</th><th>Username / Email</th><th>Trạng thái</th><th>Cách đăng</th><th class="account-action-heading">Thao tác</th></tr></thead><tbody>${accounts.map((account,index) => `<tr data-account-row="${account.id}" class="${account.id === accountFilters.selectedAccountId ? "selected" : ""}" tabindex="0" aria-selected="${account.id === accountFilters.selectedAccountId}"><td class="account-index" data-label="STT">${index+1}</td><td data-label="Account"><div class="account-identity"><strong>${esc(account.name)}</strong>${platformIcon(account.platform)}</div></td><td data-label="Username / Email"><span class="account-contact">${esc(account.username || account.email || "Chưa có username/email")}</span>${account.username && account.email ? `<small>${esc(account.email)}</small>` : ""}</td><td data-label="Trạng thái">${badge(account.login_status)}${account.profile_operation_locked ? '<small class="profile-maintenance">Profile đang bảo trì</small>' : ""}</td><td data-label="Cách đăng">${routingControl(account)}</td><td data-label="Thao tác"><div class="account-actions"><button data-account-action="chrome" data-id="${account.id}">Mở</button><button data-account-action="sync" data-id="${account.id}"${account.profile_operation_locked ? " disabled" : ""}>Quét Page/Kênh</button><button data-account-action="edit" data-id="${account.id}">Sửa</button><button class="danger" data-account-action="delete" data-id="${account.id}">Xóa</button></div></td></tr>`).join("")}</tbody></table>` : `<p class="muted account-empty">${store.accounts.length ? "Không có account phù hợp bộ lọc." : "Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công."}</p>`;
+
+  const selectedAccount = store.accounts.find(acc => acc.id === accountFilters.selectedAccountId) || null;
+
+  document.querySelector("#accountList").innerHTML = accounts.length ? `
+    <table class="account-table">
+      <thead>
+        <tr>
+          <th class="account-index">STT</th>
+          <th>Account</th>
+          <th>Trạng thái</th>
+          <th class="account-action-heading">Thao tác</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${accounts.map((account, index) => `
+          <tr data-account-row="${account.id}" class="${account.id === accountFilters.selectedAccountId ? "selected" : ""}" tabindex="0" aria-selected="${account.id === accountFilters.selectedAccountId}">
+            <td class="account-index-cell" data-label="STT">
+              <div class="account-meta-col">
+                <span class="account-index account-index-num">${index + 1}</span>
+                <input type="checkbox" class="account-checkbox" aria-label="Chọn account ${esc(account.name)}">
+                <button type="button" class="account-star-btn ${account.starred ? "is-starred" : ""}" data-star-account="${account.id}" title="${account.starred ? "Bỏ đánh dấu sao" : "Đánh dấu sao"}">
+                  ${account.starred ? "★" : "☆"}
+                </button>
+              </div>
+            </td>
+            <td data-label="Account">
+              <div class="account-cell-identity">
+                <div class="account-identity-title">${esc(account.name)}</div>
+                <div class="account-identity-sub">
+                  <span class="account-platform-badge">${platformIcon(account.platform)} ${esc(PLATFORM_LABELS[account.platform] || account.platform)}</span>
+                  <span class="account-email-text" title="${esc(account.email || account.username || "")}">${esc(account.email || account.username || "Chưa có email")}</span>
+                </div>
+              </div>
+            </td>
+            <td data-label="Trạng thái" class="account-cell-status">
+              ${badge(account.login_status)}
+              ${account.profile_operation_locked ? '<small class="profile-maintenance">Đang bảo trì</small>' : ""}
+            </td>
+            <td data-label="Thao tác" class="account-cell-actions">
+              <button data-account-action="delete" class="btn-card-delete danger" data-id="${account.id}" title="Xóa account">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/></svg>
+                Xóa
+              </button>
+              <button data-account-action="chrome" class="btn-card-chrome" data-id="${account.id}" title="Mở Chrome">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                Mở Chrome
+              </button>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  ` : `<p class="muted account-empty">${store.accounts.length ? "Không có account phù hợp bộ lọc." : "Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công."}</p>`;
+
   bindActions();
-  document.querySelectorAll("[data-routing-account]").forEach(select => select.onchange = async event => {
-    event.stopPropagation();
-    try {
-      await api(`/accounts/${select.dataset.routingAccount}/routing-preference`, {
-        method:"PATCH", body:JSON.stringify({routing_preference:select.value}),
-      });
-      const account = store.accounts.find(item => item.id === select.dataset.routingAccount);
-      if (account) account.routing_preference = select.value;
-      toast(`Đã chọn: ${ROUTING_LABELS[select.value]}`);
-    } catch (error) { toast(error.message); await refreshAccounts(); }
-  });
+  bindStarButtons();
   bindAccountRows();
+  renderAccountDetail(selectedAccount);
+}
+
+function bindStarButtons() {
+  document.querySelectorAll("[data-star-account]").forEach(button => {
+    button.onclick = async event => {
+      event.stopPropagation();
+      const accountId = button.dataset.starAccount;
+      try {
+        const res = await api(`/accounts/${accountId}/star`, {method: "PATCH"});
+        const account = store.accounts.find(item => item.id === accountId);
+        if (account) account.starred = res.starred;
+        button.classList.toggle("is-starred", Boolean(res.starred));
+        button.textContent = res.starred ? "★" : "☆";
+      } catch (error) {
+        toast(error.message);
+      }
+    };
+  });
 }
 
 function selectAccountRow(accountId) {
   accountFilters.selectedAccountId = accountFilters.selectedAccountId === accountId ? "" : accountId;
-  renderAccountList();
+  const selectedAccount = store.accounts.find(a => a.id === accountFilters.selectedAccountId) || null;
+  document.querySelectorAll("[data-account-row]").forEach(row => {
+    const isSelected = row.dataset.accountRow === accountFilters.selectedAccountId;
+    row.classList.toggle("selected", isSelected);
+    row.setAttribute("aria-selected", isSelected ? "true" : "false");
+  });
+  renderAccountDetail(selectedAccount);
   renderTargetList();
 }
 
@@ -402,7 +748,15 @@ function bindActions() {
       }
       if (action === "close") { stopLoginPolling(account.id); const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
       if (action === "connect-api") {
-        const result = await api(`/accounts/${account.id}/connections/youtube/authorize`, {method:"POST"});
+        const apps = (await api("/integrations/platform-apps")).filter(item => item.provider === "google_youtube" && item.enabled);
+        let platformAppId = null;
+        if (apps.length > 1) {
+          const answer = prompt(`Chọn Platform App YouTube:\n${apps.map((item, index) => `${index + 1}. ${item.name}`).join("\n")}`, "1");
+          const selected = apps[Number(answer) - 1];
+          if (!selected) return toast("Chưa chọn Platform App hợp lệ.");
+          platformAppId = selected.id;
+        } else if (apps.length === 1) platformAppId = apps[0].id;
+        const result = await api(`/accounts/${account.id}/connections/youtube/authorize`, {method:"POST",body:JSON.stringify({platform_app_id:platformAppId})});
         window.open(result.authorization_url, "_blank", "noopener,noreferrer");
         toast("Hãy cấp quyền YouTube trong tab mới, sau đó quay lại và tải lại danh sách account.");
         return;
@@ -533,4 +887,5 @@ export function initAccounts() {
   document.querySelector("#accountSearch").oninput = event => { accountFilters.search = event.target.value; renderAccountList(); };
   document.querySelector("#accountStatusFilter").onchange = event => { accountFilters.status = event.target.value; renderAccountList(); };
   document.querySelector("#accountSort").onchange = event => { accountFilters.sort = event.target.value; renderAccountList(); };
+  initSplitter();
 }

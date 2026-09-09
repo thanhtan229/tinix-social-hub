@@ -82,6 +82,57 @@ class AIProviderTests(unittest.TestCase):
             asyncio.run(run())
         self.assertEqual(caught.exception.code, "invalid_output")
 
+    def test_generate_image_primary_b64(self) -> None:
+        import base64
+        fake_png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+        b64_str = base64.b64encode(fake_png).decode("ascii")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/images/generations":
+                return httpx.Response(200, json={
+                    "data": [{"b64_json": b64_str}]
+                })
+            return httpx.Response(404)
+
+        provider = self.provider_with(handler)
+
+        async def run():
+            res = await provider.generate_image("test prompt")
+            await provider.close()
+            return res
+
+        result = asyncio.run(run())
+        self.assertEqual(result.image_bytes, fake_png)
+        self.assertFalse(result.fallback_used)
+
+    def test_generate_image_fallback_when_primary_fails(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            # Simulate 429 Quota Exceeded on primary API
+            return httpx.Response(429, json={"error": "quota exceeded"})
+
+        provider = self.provider_with(handler)
+
+        # Mock _fallback_pollinations
+        from app.services.ai import AIImageResult
+        async def mock_fallback(prompt: str):
+            return AIImageResult(
+                image_bytes=b"mock-fallback-bytes",
+                mime_type="image/jpeg",
+                source_model="FLUX (Pollinations AI)",
+                fallback_used=True,
+            )
+        provider._fallback_pollinations = mock_fallback
+
+        async def run():
+            res = await provider.generate_image("test prompt")
+            await provider.close()
+            return res
+
+        result = asyncio.run(run())
+        self.assertEqual(result.image_bytes, b"mock-fallback-bytes")
+        self.assertTrue(result.fallback_used)
+        self.assertEqual(result.source_model, "FLUX (Pollinations AI)")
+
 
 if __name__ == "__main__":
     unittest.main()

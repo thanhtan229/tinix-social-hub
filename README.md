@@ -1,6 +1,6 @@
 # Tinix Social Hub
 
-Hướng dẫn thao tác đầy đủ: [docs/HUONG_DAN_SU_DUNG.md](docs/HUONG_DAN_SU_DUNG.md).
+Hướng dẫn thao tác đầy đủ: [hướng dẫn sử dụng.md](hướng%20dẫn%20sử%20dụng.md) (hoặc [docs/HUONG_DAN_SU_DUNG.md](docs/HUONG_DAN_SU_DUNG.md)).
 
 Tinix Social Hub là ứng dụng Windows **PC-first** để xây dựng, duyệt, lập lịch, đăng và đối soát nội dung đa nền tảng. Mỗi account có thể chọn Chrome automation hoặc official API; Chrome vẫn là mặc định tương thích. Ứng dụng chạy local, không cần Docker, Redis, Celery, PostgreSQL, HTTPS hoặc reverse proxy.
 

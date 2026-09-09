@@ -49,13 +49,13 @@ class ProviderConnectionRepository:
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self.db.connection() as connection:
             return [self._public(row) for row in connection.execute(
-                f"SELECT * FROM account_connections{where} ORDER BY created_at", parameters
+                f"SELECT account_connections.*,platform_apps.name AS platform_app_name FROM account_connections LEFT JOIN platform_apps ON platform_apps.id=account_connections.platform_app_id{where} ORDER BY account_connections.created_at", parameters
             )]
 
     def get(self, connection_id: str) -> dict[str, Any] | None:
         with self.db.connection() as connection:
             return self._public(connection.execute(
-                "SELECT * FROM account_connections WHERE id=?", (connection_id,)
+                "SELECT account_connections.*,platform_apps.name AS platform_app_name FROM account_connections LEFT JOIN platform_apps ON platform_apps.id=account_connections.platform_app_id WHERE account_connections.id=?", (connection_id,)
             ).fetchone())
 
     def upsert(
@@ -63,7 +63,7 @@ class ProviderConnectionRepository:
         external_account_id: str | None = None, status: str = "connected",
         scopes: list[str] | tuple[str, ...] = (), access_token: str | None = None,
         refresh_token: str | None = None, expires_at: str | None = None,
-        refresh_metadata: dict[str, Any] | None = None,
+        refresh_metadata: dict[str, Any] | None = None, platform_app_id: str | None = None,
     ) -> dict[str, Any]:
         if transport not in {"official_api", "chrome"}:
             raise ValueError("Transport kết nối không hợp lệ.")
@@ -85,13 +85,13 @@ class ProviderConnectionRepository:
                 else (existing["refresh_token_protected"] if existing else None)
             )
             connection.execute(
-                "INSERT INTO account_connections(id,account_id,transport,provider,external_account_id,status,scopes_json,access_token_protected,refresh_token_protected,expires_at,refresh_metadata_json,granted_at,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,transport,provider) DO UPDATE SET "
+                "INSERT INTO account_connections(id,account_id,transport,provider,external_account_id,status,scopes_json,access_token_protected,refresh_token_protected,expires_at,refresh_metadata_json,platform_app_id,granted_at,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,transport,provider) DO UPDATE SET "
                 "external_account_id=excluded.external_account_id,status=excluded.status,scopes_json=excluded.scopes_json,"
                 "access_token_protected=excluded.access_token_protected,refresh_token_protected=excluded.refresh_token_protected,"
-                "expires_at=excluded.expires_at,refresh_metadata_json=excluded.refresh_metadata_json,granted_at=COALESCE(account_connections.granted_at,excluded.granted_at),updated_at=excluded.updated_at",
+                "expires_at=excluded.expires_at,refresh_metadata_json=excluded.refresh_metadata_json,platform_app_id=COALESCE(excluded.platform_app_id,account_connections.platform_app_id),granted_at=COALESCE(account_connections.granted_at,excluded.granted_at),updated_at=excluded.updated_at",
                 (connection_id, account_id, transport, provider, external_account_id, status, _json(sorted(set(scopes))),
-                 protected_access, protected_refresh, expires_at, _json(refresh_metadata or {}), now, now, now),
+                 protected_access, protected_refresh, expires_at, _json(refresh_metadata or {}), platform_app_id, now, now, now),
             )
         return self.get(connection_id)
 
@@ -140,15 +140,15 @@ class OAuthStateRepository:
         self.db = database
         self.protector = protector
 
-    def create(self, account_id: str, provider: str, *, pkce_verifier: str | None = None, redirect_uri: str | None = None, ttl_seconds: int = 600) -> str:
+    def create(self, account_id: str, provider: str, *, pkce_verifier: str | None = None, redirect_uri: str | None = None, platform_app_id: str | None = None, ttl_seconds: int = 600) -> str:
         state = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         with self.db.connection() as connection:
             connection.execute(
-                "INSERT INTO oauth_states(id,state_hash,account_id,provider,pkce_verifier_protected,redirect_uri,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO oauth_states(id,state_hash,account_id,provider,pkce_verifier_protected,redirect_uri,platform_app_id,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (str(uuid.uuid4()), hashlib.sha256(state.encode()).hexdigest(), account_id, provider,
                  self.protector.protect_oauth(pkce_verifier) if pkce_verifier else None, redirect_uri,
-                 (now + timedelta(seconds=ttl_seconds)).isoformat(), now.isoformat()),
+                 platform_app_id, (now + timedelta(seconds=ttl_seconds)).isoformat(), now.isoformat()),
             )
         return state
 
@@ -171,6 +171,6 @@ class OAuthStateRepository:
                 raise
         return {
             "account_id": row["account_id"], "provider": row["provider"],
-            "redirect_uri": row["redirect_uri"],
+            "redirect_uri": row["redirect_uri"], "platform_app_id": row["platform_app_id"],
             "pkce_verifier": self.protector.unprotect_oauth(row["pkce_verifier_protected"]) if row["pkce_verifier_protected"] else None,
         }

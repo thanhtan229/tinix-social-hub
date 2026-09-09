@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,300..700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=2.0.6">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.6">
 </head>
 <body>
   <aside class="sidebar">
@@ -16,13 +16,12 @@
     <nav id="nav">
       <button data-tab="overview" class="active"><span class="tab-num">1</span><span>Tổng quan</span></button>
       <button data-tab="ai"><span class="tab-num">2</span><span>AI Content Studio</span></button>
-      <button data-tab="content"><span class="tab-num">3</span><span>Kho nội dung</span></button>
-      <button data-tab="media"><span class="tab-num">4</span><span>Media Library</span></button>
-      <button data-tab="compose"><span class="tab-num">5</span><span>Calendar</span></button>
-      <button data-tab="jobs"><span class="tab-num">6</span><span>Hàng đợi & Lịch sử</span></button>
-      <button data-tab="analytics"><span class="tab-num">7</span><span>Analytics</span></button>
-      <button data-tab="accounts"><span class="tab-num">8</span><span>Tài khoản & Page</span></button>
-      <button data-tab="settings"><span class="tab-num">9</span><span>Cài đặt</span></button>
+      <button data-tab="posts"><span class="tab-num">3</span><span>Kho bài viết</span></button>
+      <button data-tab="compose"><span class="tab-num">4</span><span>Calendar</span></button>
+      <button data-tab="jobs"><span class="tab-num">5</span><span>Hàng đợi & Lịch sử</span></button>
+      <button data-tab="analytics"><span class="tab-num">6</span><span>Analytics</span></button>
+      <button data-tab="accounts"><span class="tab-num">7</span><span>Tài khoản & Page</span></button>
+      <button data-tab="settings"><span class="tab-num">8</span><span>Cài đặt</span></button>
     </nav>
     <div id="connection" class="connection">Đang kết nối…</div>
   </aside>
@@ -38,34 +37,233 @@
       </div>
     </section>
 
-    <section id="tab-media" class="tab">
-      <div class="page-head"><div><p class="eyebrow">REUSABLE ASSETS</p><h1>Media Library</h1><p>Upload một lần, dùng lại theo SHA-256; asset đang có reference sẽ không thể xóa.</p></div><label class="upload-button primary">+ Upload media<input id="assetUpload" type="file" accept="image/*,video/*" multiple hidden></label></div>
-      <div class="toolbar"><input id="assetSearch" placeholder="Tìm tên hoặc alt text"><select id="assetType"><option value="">Ảnh & video</option><option value="image">Ảnh</option><option value="video">Video</option></select><input id="assetTag" placeholder="Lọc tag"><label class="check"><input id="assetOrphan" type="checkbox"> Chỉ orphan</label><button id="refreshAssets">Làm mới</button></div>
-      <div id="assetList" class="asset-grid"></div>
-    </section>
-
     <section id="tab-ai" class="tab">
-      <div class="page-head"><div><p class="eyebrow">STRUCTURED CONTENT</p><h1>AI Content Studio</h1><p>AI luôn tạo bản nháp, không tự lập lịch hay đăng.</p></div></div>
-      <div class="grid two">
-        <form id="aiForm" class="panel form-grid">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">STRUCTURED CONTENT</p>
+          <h1>AI Content Studio</h1>
+          <p>AI luôn tạo bản nháp, không tự lập lịch hay đăng.</p>
+        </div>
+        <div class="actions">
+          <button type="button" id="btnManageBrandProfiles" class="secondary" title="Quản lý hoặc tạo mới hồ sơ thương hiệu">🏢 Quản lý Brand Profile</button>
+        </div>
+      </div>
+      <!-- AI Studio History & Navigation Toolbar -->
+      <div class="ai-history-toolbar panel" id="aiHistoryBar">
+        <div class="ai-history-left">
+          <span class="ai-history-label">📜 <strong>Lịch sử tạo:</strong></span>
+          <select id="aiHistorySelect" class="ai-history-select" title="Chọn bản ghi trong lịch sử">
+            <option value="">(Chưa có nội dung nào được lưu)</option>
+          </select>
+        </div>
+        <div class="ai-history-controls">
+          <button type="button" id="btnAiHistoryPrev" class="btn-nav-history" disabled title="Xem nội dung trước (Alt + ←)">◀ Trước</button>
+          <span id="aiHistoryCounter" class="ai-history-counter" title="Vị trí bản ghi hiện tại / Tổng số">0 / 0</span>
+          <button type="button" id="btnAiHistoryNext" class="btn-nav-history" disabled title="Xem nội dung sau (Alt + →)">Sau ▶</button>
+          <div class="history-divider"></div>
+          <button type="button" id="btnAiNewPrompt" class="btn-nav-action secondary" title="Soạn brief mới">+ Tạo mới</button>
+          <button type="button" id="btnAiClearHistory" class="btn-nav-action danger-subtle" title="Xóa toàn bộ lịch sử">🗑️ Xóa</button>
+        </div>
+      </div>
+
+      <div class="grid two ai-studio-grid">
+        <form id="aiForm" class="panel form-grid ai-form-panel">
           <label>Thao tác<select id="aiOperation"><option value="write">Viết mới</option><option value="rewrite">Viết lại</option><option value="shorten">Rút gọn</option><option value="expand">Mở rộng</option><option value="hook">Tạo hook</option><option value="cta">Tạo CTA</option><option value="hashtags">Tạo hashtag</option><option value="variants">Nhiều phiên bản</option><option value="cross_platform">Chuyển đa nền tảng</option><option value="video_script">Video script</option></select></label>
-          <label>Brand Profile<select id="aiBrand"><option value="">Không chọn</option></select></label>
+          <div class="brand-form-field">
+            <label for="aiBrand">Brand Profile</label>
+            <div class="brand-field-row">
+              <select id="aiBrand">
+                <option value="">Không chọn</option>
+              </select>
+              <button type="button" id="btnQuickAddBrand" class="btn-brand-action secondary" onclick="openBrandModal(null)" title="Tạo mới Brand Profile">＋ Thêm</button>
+              <button type="button" id="btnQuickEditBrand" class="btn-brand-action secondary" title="Chỉnh sửa Brand Profile đang chọn" style="display:none;">✏️ Sửa</button>
+            </div>
+          </div>
           <label class="full">Brief<textarea id="aiBrief" rows="9" required placeholder="Mục tiêu, sản phẩm, khách hàng và thông điệp..."></textarea></label>
-          <label class="check"><input id="aiFacebook" type="checkbox" checked> Facebook</label>
-          <label class="check"><input id="aiInstagram" type="checkbox"> Instagram</label>
-          <label class="check"><input id="aiTiktok" type="checkbox"> TikTok</label>
-          <label class="check"><input id="aiYoutube" type="checkbox"> YouTube</label>
-          <label class="check"><input id="aiX" type="checkbox"> X</label>
-          <button class="primary full" type="submit">Tạo bản nháp</button>
+          <div class="full ai-platforms-group">
+            <span class="field-label-text">Nền tảng xuất bản</span>
+            <div class="platform-checkbox-bar ai-platforms-bar">
+              <label class="check"><input id="aiFacebook" type="checkbox" checked> <span>📘 Facebook</span></label>
+              <label class="check"><input id="aiInstagram" type="checkbox"> <span>📸 Instagram</span></label>
+              <label class="check"><input id="aiTiktok" type="checkbox"> <span>🎵 TikTok</span></label>
+              <label class="check"><input id="aiYoutube" type="checkbox"> <span>▶️ YouTube</span></label>
+              <label class="check"><input id="aiX" type="checkbox"> <span>✖️ X</span></label>
+            </div>
+          </div>
+          <button class="primary full" type="submit" id="btnGenerateDraft">✨ Tạo bản nháp</button>
+          
+          <div class="ai-image-gen-section">
+            <div id="aiImagePromptInputWrap" class="ai-prompt-input-wrap" style="display: none;">
+              <label class="field-label-text" for="aiCustomImagePrompt">🎨 <strong>Prompt tạo ảnh:</strong></label>
+              <textarea id="aiCustomImagePrompt" rows="3" placeholder="AI sẽ tự động điền prompt tạo ảnh tại đây (bạn có thể chỉnh sửa trước khi tạo)..."></textarea>
+            </div>
+            <button type="button" id="btnGenerateImage" class="secondary full btn-generate-image" disabled title="Tạo ảnh dựa trên prompt sau khi AI sinh nội dung">🎨 Tạo Ảnh</button>
+            
+            <div id="aiImageResultBox" class="ai-image-result-box" style="display: none;">
+              <div class="ai-image-result-head">
+                <span class="field-label-text">🖼️ Ảnh AI tạo</span>
+                <span id="aiImageSourceBadge" class="badge badge-teal" style="font-size:10.5px;">AI Image</span>
+              </div>
+              <div class="ai-image-preview-container">
+                <img id="aiGeneratedImg" src="" alt="Ảnh tạo bởi AI" class="ai-generated-img">
+                <div class="ai-image-overlay-actions">
+                  <a id="btnDownloadAiImg" class="btn-img-action" download="ai-generated.png" target="_blank" title="Tải ảnh về máy">⬇️ Tải về</a>
+                  <button type="button" id="btnAttachAiImageToDraft" class="btn-img-action primary" title="Đính kèm ảnh vào bài viết">📎 Gắn vào bài viết</button>
+                </div>
+              </div>
+              <p id="aiImagePromptMeta" class="ai-image-meta muted"></p>
+            </div>
+          </div>
         </form>
-        <article class="panel"><div class="panel-head"><h2>Kết quả structured</h2></div><pre id="aiResult" class="result-box">Chưa có kết quả.</pre></article>
+        <article class="panel ai-result-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Kết Quả</h2>
+              <p class="muted" id="aiResultSubtitle" style="font-size:12px; margin:2px 0 0;">Dữ liệu bài viết chuẩn hóa theo từng nền tảng</p>
+            </div>
+            <div class="ai-result-actions" id="aiResultActions" style="display: none;">
+              <div class="view-mode-toggle">
+                <button type="button" id="btnAiViewVisual" class="btn-toggle active" title="Xem dạng thẻ trực quan">👁️ Trực quan</button>
+                <button type="button" id="btnAiViewJson" class="btn-toggle" title="Xem JSON gốc">{ } JSON</button>
+              </div>
+              <button type="button" id="btnCopyAiJson" class="btn-icon-action secondary" title="Sao chép JSON vào clipboard">📋 Sao chép</button>
+              <button type="button" id="btnGoToPost" class="btn-icon-action primary" title="Mở bản nháp vừa tạo trong Kho bài viết">📂 Xem bài viết</button>
+            </div>
+          </div>
+          <div class="ai-result-container">
+            <div id="aiVisualResult" class="ai-visual-box" style="display: none;"></div>
+            <pre id="aiResult" class="result-box"><div class="empty-state-ai"><span class="empty-icon">💡</span><p>Chưa có kết quả.</p><small>Nhập Brief bên trái và bấm <b>"Tạo bản nháp"</b> để AI sinh nội dung và kịch bản cho từng mạng xã hội.</small></div></pre>
+          </div>
+        </article>
       </div>
     </section>
 
-    <section id="tab-content" class="tab">
-      <div class="page-head"><div><p class="eyebrow">CONTENT LIBRARY</p><h1>Kho nội dung</h1></div><button id="newContent" class="primary">+ Tạo bài</button></div>
-      <div class="toolbar"><input id="contentSearch" placeholder="Tìm tiêu đề hoặc caption"><select id="contentStatus"><option value="">Mọi trạng thái</option><option value="draft">Bản nháp</option><option value="pending_approval">Chờ duyệt</option><option value="approved">Đã duyệt</option></select><button id="refreshContent">Làm mới</button></div>
-      <div id="contentList" class="card-grid"></div>
+    <section id="tab-posts" class="tab">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">CONTENT &amp; ASSET HUB</p>
+          <h1>Kho bài viết</h1>
+          <p>Quản lý toàn bộ bài viết, đa nền tảng, media, lịch đăng và tình trạng phát hành.</p>
+        </div>
+        <div class="actions">
+          <button id="btnMediaManagerModal" class="secondary" title="Quản lý kho tệp media độc lập và tệp orphan">📂 Quản lý Media</button>
+          <button id="btnExportPosts" class="secondary" title="Xuất danh sách bài viết ra Excel / CSV">📊 Xuất Excel / CSV</button>
+          <button id="newPost" type="button" class="primary" data-action="new-post">+ Tạo bài viết</button>
+        </div>
+      </div>
+
+      <!-- Quick Status Filter Metric Chips -->
+      <div class="posts-stats-banner" id="postsStatsBanner">
+        <button type="button" class="post-stat-chip active" data-post-status="">
+          <span class="chip-label">Tất cả bài</span>
+          <span class="chip-val" id="statAllPosts">0</span>
+        </button>
+        <button type="button" class="post-stat-chip chip-published" data-post-status="published">
+          <span class="chip-dot"></span>
+          <span class="chip-label">Đã đăng</span>
+          <span class="chip-val" id="statPublishedPosts">0</span>
+        </button>
+        <button type="button" class="post-stat-chip chip-scheduled" data-post-status="scheduled">
+          <span class="chip-dot"></span>
+          <span class="chip-label">Đã lên lịch</span>
+          <span class="chip-val" id="statScheduledPosts">0</span>
+        </button>
+        <button type="button" class="post-stat-chip chip-draft" data-post-status="draft">
+          <span class="chip-dot"></span>
+          <span class="chip-label">Chưa đăng / Bản nháp</span>
+          <span class="chip-val" id="statDraftPosts">0</span>
+        </button>
+        <button type="button" class="post-stat-chip chip-failed" data-post-status="failed">
+          <span class="chip-dot"></span>
+          <span class="chip-label">Đăng lỗi</span>
+          <span class="chip-val" id="statFailedPosts">0</span>
+        </button>
+      </div>
+
+      <!-- Hunter-style Filter Toolbar -->
+      <div class="toolbar posts-toolbar panel">
+        <label class="posts-filter-group">
+          <span class="filter-label">Nền tảng</span>
+          <select id="postPlatformFilter">
+            <option value="">🌐 Tất cả nền tảng</option>
+            <option value="facebook">📘 Facebook</option>
+            <option value="instagram">📸 Instagram</option>
+            <option value="tiktok">🎵 TikTok</option>
+            <option value="youtube">▶️ YouTube</option>
+            <option value="x">✖️ X</option>
+          </select>
+        </label>
+        <label class="posts-filter-group">
+          <span class="filter-label">Tình trạng</span>
+          <select id="postStatusFilter">
+            <option value="">Tất cả trạng thái</option>
+            <option value="published">Đã đăng</option>
+            <option value="scheduled">Đã lên lịch</option>
+            <option value="draft">Chưa đăng / Bản nháp</option>
+            <option value="failed">Đăng lỗi</option>
+          </select>
+        </label>
+        <label class="posts-filter-group">
+          <span class="filter-label">Loại bài</span>
+          <select id="postMediaTypeFilter">
+            <option value="">Tất cả loại</option>
+            <option value="image">Có ảnh</option>
+            <option value="video">Có video</option>
+            <option value="text">Chỉ văn bản</option>
+          </select>
+        </label>
+        <label class="posts-filter-group">
+          <span class="filter-label">Sắp xếp theo</span>
+          <select id="postSortFilter">
+            <option value="newest" selected>Mới nhất</option>
+            <option value="oldest">Cũ nhất</option>
+            <option value="scheduled">Lịch đăng gần nhất</option>
+            <option value="title">Tiêu đề A–Z</option>
+          </select>
+        </label>
+        <label class="posts-filter-group posts-search-group">
+          <span class="filter-label">Tìm kiếm</span>
+          <input id="postSearch" type="search" placeholder="🔍 Tìm tiêu đề, caption, hashtag...">
+        </label>
+        <div class="view-switch posts-view-switch">
+          <button type="button" id="btnViewGrid" class="active" title="Dạng Thẻ">🔲 Thẻ</button>
+          <button type="button" id="btnViewTable" title="Dạng Bảng">📑 Bảng</button>
+        </div>
+      </div>
+
+      <!-- Bulk Actions Bar -->
+      <div class="posts-bulk-bar" id="postsBulkBar">
+        <label class="check">
+          <input id="selectAllPosts" type="checkbox">
+          <span>Chọn tất cả</span>
+        </label>
+        <button id="btnBulkDeletePosts" class="danger btn-sm" disabled>🗑 Xóa đã chọn</button>
+        <span id="selectedPostsCounter" class="muted">0 bài đã chọn</span>
+        <button id="btnRefreshPosts" class="btn-sm">🔄 Làm mới</button>
+      </div>
+
+      <!-- Post Cards Grid (Default view) -->
+      <div id="postsGrid" class="posts-cards-grid"></div>
+
+      <!-- Posts Table View -->
+      <div id="postsTableWrap" class="posts-table-wrap panel" style="display:none; overflow-x:auto;">
+        <table class="posts-table">
+          <thead>
+            <tr>
+              <th style="width:34px;"><input type="checkbox" id="selectAllPostsTable"></th>
+              <th style="width:40px;">STT</th>
+              <th style="width:80px;">Media</th>
+              <th>Tiêu đề &amp; Caption</th>
+              <th style="width:120px;">Nền tảng</th>
+              <th style="width:140px;">Lịch đăng / Ngày</th>
+              <th style="width:130px;">Tình trạng</th>
+              <th style="width:120px;">URL bài đăng</th>
+              <th style="width:170px; text-align:right;">Hành động</th>
+            </tr>
+          </thead>
+          <tbody id="postsTableBody"></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="tab-compose" class="tab">
@@ -104,8 +302,82 @@
     </section>
 
     <section id="tab-accounts" class="tab">
-      <div class="page-head"><div><p class="eyebrow">ACCOUNTS & TARGETS</p><h1>Tài khoản & Kênh</h1><p>Quản lý account, kênh đã đồng bộ và cách đăng qua Chrome hoặc API chính thức.</p></div><button id="newAccount" class="primary">+ Thêm account</button></div>
-      <div class="grid two"><article class="panel accounts-panel"><div class="panel-head"><div><h2>Accounts</h2><span id="accountResultCount" class="muted"></span></div><div class="account-panel-controls"><button data-profile-action="import">Import Profiles</button><button data-profile-action="export" title="ZIP chứa thông tin đăng nhập và phiên Chrome; hãy bảo quản cẩn thận">Export Profiles</button><button id="closeAllChrome" class="primary">Đóng tất cả Chrome</button></div></div><div class="account-filter-bar"><input id="accountSearch" type="search" placeholder="Tìm tên, username hoặc email" aria-label="Tìm account"><select id="accountStatusFilter" aria-label="Lọc trạng thái account"><option value="">Mọi trạng thái</option><option value="logged_in">Đã đăng nhập</option><option value="unknown">Chưa kiểm tra</option><option value="logged_out">Chưa đăng nhập</option><option value="checkpoint">Checkpoint</option><option value="session_lost">Mất phiên</option></select><select id="accountSort" aria-label="Sắp xếp account"><option value="platform_name">Nền tảng, tên A–Z</option><option value="name_asc">Tên A–Z</option><option value="name_desc">Tên Z–A</option><option value="status">Trạng thái</option></select></div><div id="accountPlatformFilters" class="account-platform-filters" aria-label="Lọc theo nền tảng"></div><div id="accountList" class="account-table-wrap"></div></article><article class="panel accounts-target-panel"><div class="panel-head"><div><h2>Page / Kênh đã đồng bộ</h2><span id="targetAccountFilter" class="muted">Tất cả account</span></div><input id="targetSearch" placeholder="Tìm Page hoặc kênh"></div><p id="targetSyncStatus" class="operation-status hidden" role="status" aria-live="polite"></p><div id="targetList"></div></article></div>
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">ACCOUNTS &amp; TARGETS</p>
+          <h1>Tài khoản &amp; Kênh</h1>
+          <p>Quản lý account, chỉnh sửa trực tiếp, kênh đã đồng bộ và phiên làm việc Chrome.</p>
+        </div>
+        <div class="actions">
+          <button id="newAccount" class="primary">+ Thêm account</button>
+        </div>
+      </div>
+
+      <div class="accounts-split-container" id="accountsSplitContainer">
+        <!-- Cột trái: Master Account List -->
+        <article class="panel accounts-panel accounts-master-panel">
+          <div class="panel-head account-master-head">
+            <div class="account-title-group">
+              <span class="accent-bar" aria-hidden="true"></span>
+              <h2>Danh sách account</h2>
+              <span id="accountResultCount" class="badge-count"></span>
+            </div>
+            <div class="account-panel-controls">
+              <button data-profile-action="import">Import Profiles</button>
+              <button data-profile-action="export" title="ZIP chứa thông tin đăng nhập và phiên Chrome; hãy bảo quản cẩn thận">Export Profiles</button>
+              <button id="closeAllChrome" class="primary">Đóng tất cả Chrome</button>
+            </div>
+          </div>
+          <div id="accountPlatformFilters" class="account-platform-filters" aria-label="Lọc theo nền tảng"></div>
+          <div class="account-filter-controls">
+            <div class="account-search-bar">
+              <input id="accountSearch" type="search" placeholder="Tìm tên, email hoặc ID" aria-label="Tìm account">
+            </div>
+            <div class="account-dropdown-bar">
+              <select id="accountStatusFilter" aria-label="Lọc trạng thái account">
+                <option value="">Mọi trạng thái</option>
+                <option value="logged_in">Đã đăng nhập</option>
+                <option value="unknown">Chưa kiểm tra</option>
+                <option value="logged_out">Chưa đăng nhập</option>
+                <option value="checkpoint">Checkpoint</option>
+                <option value="session_lost">Mất phiên</option>
+              </select>
+              <select id="accountSort" aria-label="Sắp xếp account">
+                <option value="platform_name">Nền tảng, tên A–Z</option>
+                <option value="name_asc">Tên A–Z</option>
+                <option value="name_desc">Tên Z–A</option>
+                <option value="status">Trạng thái</option>
+              </select>
+            </div>
+          </div>
+          <div id="accountList" class="account-table-wrap account-cards-container"></div>
+        </article>
+
+        <!-- Splitter Handle -->
+        <div class="split-divider" id="accountsSplitDivider" role="separator" aria-orientation="vertical" tabindex="0" title="Kéo để điều chỉnh kích thước cột">
+          <span class="split-handle" aria-hidden="true">&#9668; &#9658;</span>
+        </div>
+
+        <!-- Cột phải: Detail & Direct Edit Panel -->
+        <article class="panel accounts-detail-panel" id="accountDetailPanel">
+          <div id="accountDetailContent">
+            <!-- Populated dynamically by renderAccountDetail() in accounts.js -->
+          </div>
+
+          <!-- Section Page / Kênh đã đồng bộ cho account được chọn -->
+          <div class="accounts-target-section" id="accountsTargetSection">
+            <div class="panel-head">
+              <div>
+                <h3>Page / Kênh đã đồng bộ</h3>
+                <span id="targetAccountFilter" class="muted">Tất cả account</span>
+              </div>
+              <input id="targetSearch" placeholder="Tìm Page hoặc kênh">
+            </div>
+            <p id="targetSyncStatus" class="operation-status hidden" role="status" aria-live="polite"></p>
+            <div id="targetList"></div>
+          </div>
+        </article>
+      </div>
     </section>
 
     <section id="tab-analytics" class="tab">
@@ -116,9 +388,10 @@
     </section>
 
     <section id="tab-settings" class="tab">
-      <div class="page-head"><div><p class="eyebrow">LOCAL SETTINGS</p><h1>Cài đặt & Dữ liệu</h1><p>API key chỉ đọc từ file .env và không hiển thị tại đây.</p></div></div>
+      <div class="page-head"><div><p class="eyebrow">LOCAL SETTINGS</p><h1>Cài đặt & Dữ liệu</h1><p>Credential được mã hóa bằng Windows DPAPI và chỉ hiển thị ở dạng che mờ.</p></div></div>
       <div class="grid two"><article class="panel"><h2>Database</h2><p id="databaseText"></p><div class="actions"><button id="integrity">Integrity check</button><button id="backup" class="primary">Tạo backup</button><button id="restore">Khôi phục gần nhất</button></div></article><article class="panel"><h2>Bảo trì</h2><p id="maintenanceText">Dọn screenshot, file tạm và kiểm tra ngưỡng profile.</p><button id="maintenance">Chạy dọn ngay</button></article></div>
       <article class="panel"><h2>Tự động dọn Chrome profile</h2><p id="profileCleanupPolicyText" class="muted">Đang tải thiết lập…</p><form id="profileCleanupSettingsForm" class="form-grid compact"><label class="check full"><input id="profileCleanupEnabled" type="checkbox"><span>Bật tự động dọn<small>Chỉ xóa cache và dữ liệu có thể tạo lại; phiên đăng nhập được giữ nguyên.</small></span></label><label>Ngưỡng cache<select id="profileCleanupThreshold"><option value="2">2 GB</option><option value="5">5 GB (khuyến nghị)</option><option value="10">10 GB</option><option value="custom">Tùy chỉnh</option></select></label><label id="profileCleanupCustomWrap" class="hidden">Dung lượng tùy chỉnh (GB)<input id="profileCleanupCustom" type="number" min="0.5" max="100" step="0.5" value="5"></label><p class="muted full">App cũng dọn khi ổ chứa profile còn dưới 10 GB. Nếu Chrome đang mở, việc dọn sẽ được hoãn đến lần kiểm tra sau.</p><div class="actions full"><button type="submit" class="primary">Lưu thiết lập</button></div></form></article>
+      <article class="panel integrations-panel"><div class="panel-head"><div><h2>Tích hợp & API</h2><p class="muted">AI provider có hiệu lực ngay sau khi lưu. Platform App cần kết nối OAuth riêng cho từng account.</p></div><div class="actions"><button id="addAiProvider" class="primary">+ AI Provider</button><button id="addPlatformApp">+ Platform App</button></div></div><div id="integrationStatus" class="muted" role="status" aria-live="polite">Đang tải tích hợp…</div><div class="integration-defaults"><label>AI mặc định cho nội dung<select id="defaultTextProvider"></select></label><label>AI mặc định cho ảnh<select id="defaultImageProvider"></select></label><button id="saveAiDefaults">Lưu mặc định</button></div><div class="integration-sections"><section><h3>AI Providers</h3><div id="aiProviderCards" class="integration-cards"></div></section><section><h3>Platform Developer Apps</h3><div id="platformAppCards" class="integration-cards"></div></section></div></article>
     </section>
   </main>
 
@@ -126,10 +399,290 @@
   <dialog id="profileImportDialog"><form id="profileImportForm"><h2>Import Profiles ZIP</h2><p class="muted">Nhập đường dẫn tuyệt đối tới file ZIP đã Export từ một ứng dụng Tinix.</p><label>Đường dẫn file ZIP<input id="profileArchivePath" required placeholder="D:\...\Tinix-...-all-profiles.tinix-profiles.zip"></label><p id="profileImportStatus" class="operation-status hidden" role="status" aria-live="polite"></p><div class="dialog-actions"><button id="cancelProfileImport" type="button" data-close>Hủy</button><button id="confirmProfileImport" type="submit" class="primary">Bắt đầu Import</button></div></form></dialog>
   <dialog id="profileCleanupDialog"><form id="profileCleanupForm"><h2>Dọn dẹp Chrome profile</h2><p id="profileCleanupSummary"></p><p class="muted">Chỉ xóa cache, model và dữ liệu tạm có thể tạo lại. Cookies, phiên đăng nhập, Local Storage, IndexedDB và thông tin account được giữ nguyên.</p><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="confirmProfileCleanup" class="danger">Dọn dẹp ngay</button></div></form></dialog>
   <dialog id="deleteAccountDialog"><div><h2>Xóa account</h2><p>Bạn muốn xử lý Chrome profile của <strong id="deleteAccountName"></strong> thế nào?</p><p class="muted">Giữ profile nếu muốn khôi phục phiên sau này. Xóa cả profile sẽ xóa vĩnh viễn cookies, phiên đăng nhập và các bản backup profile của account này.</p><div class="dialog-actions delete-account-actions"><button type="button" data-close>Hủy</button><button id="deleteAccountKeepProfile">Chỉ xóa account</button><button id="deleteAccountWithProfile" class="danger">Xóa account và profile</button></div></div></dialog>
-  <dialog id="contentDialog"><form id="contentForm"><h2 id="contentDialogTitle">Tạo nội dung</h2><input id="contentId" type="hidden"><label>Tiêu đề<input id="contentTitle" required maxlength="200"></label><label>Caption<textarea id="contentCaption" rows="7"></textarea></label><label>Hashtag, cách nhau bằng dấu cách<input id="contentHashtags"></label><label>CTA<input id="contentCta"></label><label>Ảnh/video<input id="contentMedia" type="file" accept="image/*,video/*" multiple></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button class="primary">Lưu bản nháp</button></div></form></dialog>
+  <dialog id="integrationDialog"><form id="integrationForm"><h2 id="integrationDialogTitle">Tích hợp API</h2><div id="integrationDialogFields" class="form-grid"></div><p id="integrationDialogStatus" class="muted" role="status" aria-live="polite"></p><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="saveIntegration" type="submit" class="primary">Lưu</button></div></form></dialog>
+
+  <!-- Post Editor Dialog -->
+  <dialog id="postDialog" class="post-editor-dialog">
+    <form id="postForm" class="post-form-grid">
+      <div class="dialog-head">
+        <h2 id="postDialogTitle">Tạo bài viết</h2>
+        <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
+      </div>
+      <input id="postId" type="hidden">
+      <div class="form-group full">
+        <label>Tiêu đề bài viết
+          <input id="postTitle" required maxlength="200" placeholder="Tiêu đề gợi nhớ để quản lý bài viết...">
+        </label>
+      </div>
+
+      <div class="form-group full">
+        <span class="field-label-text">Nền tảng xuất bản</span>
+        <div class="platform-checkbox-bar platform-icon-checkbox-bar" id="postDialogPlatformsBar">
+          <label class="check platform-icon-check" title="Facebook">
+            <input id="postPlatformFB" type="checkbox" value="facebook" checked>
+            <span class="platform-check-icon platform-icon-fb">
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.03 1.79-4.7 4.53-4.7 1.31 0 2.68.24 2.68.24v2.96h-1.51c-1.49 0-1.96.93-1.96 1.89v2.27h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07Z"/></svg>
+            </span>
+          </label>
+          <label class="check platform-icon-check" title="Instagram">
+            <input id="postPlatformIG" type="checkbox" value="instagram">
+            <span class="platform-check-icon platform-icon-ig">
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><defs><linearGradient id="ig-check-grad" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#FFD600"/><stop offset=".48" stop-color="#FF0169"/><stop offset="1" stop-color="#7638FA"/></linearGradient></defs><rect width="24" height="24" rx="6" fill="url(#ig-check-grad)"/><circle cx="12" cy="12" r="4.4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="18.1" cy="5.9" r="1.25" fill="#fff"/></svg>
+            </span>
+          </label>
+          <label class="check platform-icon-check" title="TikTok">
+            <input id="postPlatformTT" type="checkbox" value="tiktok">
+            <span class="platform-check-icon platform-icon-tt">
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><rect width="24" height="24" rx="6" fill="#101010"/><path fill="#25F4EE" d="M10.2 17.1a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V7.7c1 1.2 2.4 2 4 2.1V7.3a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/><path fill="#FE2C55" d="M11.1 17.5a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V8.1c1 1.2 2.4 2 4 2.1V7.7a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/><path fill="#fff" d="M10.65 17.3a2.3 2.3 0 1 1-1.6-2.2v-2.5a4.8 4.8 0 1 0 4.1 4.7V7.9c1 1.2 2.4 2 4 2.1V7.5a4.2 4.2 0 0 1-3.4-3.1h-3.1v12.9Z"/></svg>
+            </span>
+          </label>
+          <label class="check platform-icon-check" title="YouTube">
+            <input id="postPlatformYT" type="checkbox" value="youtube">
+            <span class="platform-check-icon platform-icon-yt">
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><rect y="3.5" width="24" height="17" rx="5" fill="#FF0000"/><path fill="#fff" d="m9.5 8 7 4-7 4V8Z"/></svg>
+            </span>
+          </label>
+          <label class="check platform-icon-check" title="X">
+            <input id="postPlatformX" type="checkbox" value="x">
+            <span class="platform-check-icon platform-icon-x">
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><rect width="24" height="24" rx="6" fill="#050505"/><path fill="#fff" d="M5.2 4h4.4l3.4 4.7L17.1 4h1.7l-5 5.9L19.5 20h-4.4l-3.8-5.3L6.8 20H5.1l5.4-6.5L5.2 4Zm3.5 1.4H7.9l8 13.2h.8l-8-13.2Z"/></svg>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Platform Variant Editor Section -->
+      <div class="form-group full variant-editor-wrap">
+        <div class="variant-tabs-header">
+          <div class="variant-header-meta">
+            <span class="field-label-text">Biến thể nội dung theo nền tảng:</span>
+            <small class="text-muted" id="postVariantHint">Chọn tab để chỉnh sửa nội dung/kịch bản riêng cho từng mạng</small>
+          </div>
+          <div id="postVariantTabsBar" class="variant-tabs-bar"></div>
+        </div>
+
+        <div id="variantEditorContainer" class="variant-editor-body">
+          <div id="variantTitleWrap" class="form-group full" style="display:none;">
+            <label>Tiêu đề video YouTube (Chuẩn SEO)
+              <input id="postVariantTitle" placeholder="Tiêu đề video chuẩn SEO trên YouTube...">
+            </label>
+          </div>
+
+          <div id="variantHookWrap" class="form-group full" style="display:none;">
+            <label>🎣 Hook mở đầu (3-5 giây đầu)
+              <textarea id="postVariantHook" rows="2" placeholder="Câu mở đầu hoặc hành động gây tò mò, giữ chân người xem..."></textarea>
+            </label>
+          </div>
+
+          <div id="variantScriptWrap" class="form-group full" style="display:none;">
+            <label>🎬 Kịch bản video chi tiết
+              <textarea id="postVariantScript" rows="4" placeholder="Kịch bản phân cảnh, lời thoại (voice-over), hành động (action)..."></textarea>
+            </label>
+          </div>
+
+          <div class="form-group full">
+            <label id="postCaptionLabel" for="postCaption">Nội dung (Caption)</label>
+            <textarea id="postCaption" rows="6" placeholder="Nội dung caption bài viết..."></textarea>
+          </div>
+
+          <div class="grid two full">
+            <label>Hashtag (cách nhau bởi dấu cách)
+              <input id="postHashtags" placeholder="#tinix #marketing #content">
+            </label>
+            <label>Lời kêu gọi hành động (CTA)
+              <input id="postCta" placeholder="Ví dụ: Nhắn tin ngay để nhận ưu đãi!">
+            </label>
+          </div>
+
+          <div id="variantPinnedWrap" class="form-group full" style="display:none;">
+            <label>💬 Gợi ý bình luận ghim (Pinned Comment)
+              <input id="postVariantPinned" placeholder="Bình luận ghim chứa link hoặc thông tin bổ sung...">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group full media-editor-section">
+        <div class="media-section-head">
+          <span class="field-label-text">Media đính kèm (Ảnh / Video)</span>
+          <div class="media-upload-actions">
+            <label class="btn btn-secondary btn-sm upload-label">
+              ➕ Tải tệp từ máy
+              <input id="postMediaInput" type="file" accept="image/*,video/*" multiple hidden>
+            </label>
+            <button type="button" id="btnAttachFromMediaManager" class="btn btn-secondary btn-sm">📁 Chọn từ Thư viện Media</button>
+          </div>
+        </div>
+        <div id="postMediaList" class="post-media-items-grid"></div>
+      </div>
+
+      <div class="dialog-actions full">
+        <button type="button" data-close>Hủy</button>
+        <button type="submit" id="btnSavePostRecord" class="primary">Lưu bài viết</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Media Lightbox Modal -->
+  <dialog id="mediaLightboxDialog" class="media-lightbox-dialog">
+    <div class="lightbox-wrapper">
+      <div class="lightbox-top-bar">
+        <span id="lightboxTitle" class="lightbox-title">Xem trước Media</span>
+        <button type="button" class="lightbox-close-btn" data-close aria-label="Đóng">&#x2715;</button>
+      </div>
+      <div id="lightboxMediaSlot" class="lightbox-media-slot"></div>
+      <div class="lightbox-bottom-bar" id="lightboxBottomBar">
+        <button type="button" id="lightboxPrevBtn" class="lightbox-nav-btn">◀ Ảnh trước</button>
+        <span id="lightboxIndexIndicator" class="lightbox-indicator">1 / 1</span>
+        <button type="button" id="lightboxNextBtn" class="lightbox-nav-btn">Ảnh sau ▶</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Media Manager Modal (Replaces Tab 4 standalone view) -->
+  <dialog id="mediaManagerDialog" class="media-manager-dialog">
+    <div class="media-manager-wrapper">
+      <div class="dialog-head">
+        <div>
+          <h2>📂 Quản lý Kho Tệp Media</h2>
+          <p class="muted">Tải lên, gắn tag và dọn dẹp các tệp media lưu theo SHA-256; asset đang được bài viết sử dụng sẽ không thể xóa.</p>
+        </div>
+        <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
+      </div>
+      <div class="toolbar">
+        <input id="assetSearch" placeholder="Tìm tên hoặc alt text">
+        <select id="assetType">
+          <option value="">Ảnh &amp; video</option>
+          <option value="image">Ảnh</option>
+          <option value="video">Video</option>
+        </select>
+        <input id="assetTag" placeholder="Lọc tag">
+        <label class="check" title="Chỉ hiển thị tệp media chưa gắn vào bài viết nào"><input id="assetOrphan" type="checkbox"> Orphan</label>
+        <label class="upload-button primary">+ Upload media<input id="assetUpload" type="file" accept="image/*,video/*" multiple hidden></label>
+        <button id="refreshAssets">Làm mới</button>
+      </div>
+      <div id="assetList" class="asset-grid"></div>
+    </div>
+  </dialog>
+
+  <!-- Quick Schedule Modal -->
+  <dialog id="quickScheduleDialog" class="quick-schedule-dialog">
+    <form id="quickScheduleForm" class="form-grid compact">
+      <div class="dialog-head full">
+        <div>
+          <h2>📅 Lên lịch xuất bản bài viết</h2>
+          <p id="quickSchedulePostTitle" class="muted"></p>
+        </div>
+        <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
+      </div>
+      <input id="quickSchedulePostId" type="hidden">
+      <label class="full">Tài khoản (Account)
+        <select id="quickScheduleAccount" required></select>
+      </label>
+      <label class="full">Fanpage / Kênh đích
+        <select id="quickScheduleTargets" multiple size="4" required></select>
+      </label>
+      <label class="full">Ngày &amp; Giờ đăng (giờ máy)
+        <input id="quickScheduleTime" type="datetime-local" required>
+      </label>
+      <label class="check full">
+        <input id="quickScheduleDryRun" type="checkbox" checked>
+        <span><strong>Dry-run an toàn</strong><small>Dừng trước nút Đăng. Bỏ chọn khi đã sẵn sàng đăng thật.</small></span>
+      </label>
+      <div class="dialog-actions full">
+        <button type="button" data-close>Hủy</button>
+        <button type="submit" class="primary">Xác nhận lên lịch</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="jobDialog"><div><h2>Release detail</h2><div id="jobSummary"></div><h3>Attempts & events</h3><div id="jobEvents"></div><h3>Artifacts</h3><div id="jobArtifacts" class="status-list"></div><div id="jobFinalize" class="form-grid compact hidden"><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận thất bại</button><button id="finalizeSuccess" class="primary">Xác nhận thành công</button></div></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <dialog id="historyCleanupDialog"><form id="historyCleanupForm"><h2>Dọn lịch sử</h2><p class="muted">Chỉ xóa lịch sử kỹ thuật trong ứng dụng. Bài đã đăng, nội dung, tài khoản và Page/kênh không bị xóa.</p><div class="form-grid compact"><label>Khoảng thời gian<select id="historyRange"><option value="7">Cũ hơn 7 ngày</option><option value="30" selected>Cũ hơn 30 ngày</option><option value="90">Cũ hơn 90 ngày</option><option value="custom">Khoảng ngày tùy chọn</option><option value="selected">Các mục đã chọn</option><option value="all">Toàn bộ lịch sử</option></select></label><label>Loại tác vụ<select id="historyStatus"><option value="all" selected>Tất cả trạng thái</option><option value="succeeded">Chỉ đăng thành công</option><option value="dry_run">Chỉ dry-run</option><option value="failed">Chỉ tác vụ lỗi</option></select></label><label id="historyFromWrap" class="hidden">Từ ngày<input id="historyFrom" type="date"></label><label id="historyToWrap" class="hidden">Đến ngày<input id="historyTo" type="date"></label><label class="check full"><input id="historyDeleteArtifacts" type="checkbox" checked><span>Xóa ảnh chụp lỗi và tệp kỹ thuật liên quan<small>Không xóa media của nội dung hoặc bài trên mạng xã hội.</small></span></label></div><div id="historyCleanupPreview" class="cleanup-preview muted">Chọn phạm vi rồi bấm Xem trước.</div><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="previewHistoryCleanup" type="button">Xem trước</button><button id="executeHistoryCleanup" type="button" class="danger" disabled>Xóa lịch sử</button></div></form></dialog>
+  <!-- Brand Profile Modal -->
+  <dialog id="brandProfileDialog" class="brand-profile-dialog">
+    <form id="brandProfileForm" class="brand-profile-form">
+      <div class="dialog-head full">
+        <div>
+          <h2 id="brandProfileModalTitle">🏢 Thiết lập Hồ sơ Thương hiệu (Brand Profile)</h2>
+          <p class="muted">Định hình phong cách, tông giọng và từ khóa để AI sinh nội dung chuẩn nhận diện thương hiệu.</p>
+        </div>
+        <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
+      </div>
+
+      <div class="brand-modal-select-row full">
+        <label>Chọn hồ sơ để xem/sửa (hoặc chọn tạo mới):
+          <select id="bpSelectActive">
+            <option value="">＋ Tạo hồ sơ thương hiệu mới</option>
+          </select>
+        </label>
+      </div>
+
+      <input type="hidden" id="brandProfileId" value="">
+
+      <div class="form-grid two">
+        <label class="full">Tên thương hiệu / Shop <span class="required-star">*</span>
+          <input id="bpName" required placeholder="VD: Tinix Social Hub, Tiệm Bánh Nhà Mây, GenZ Streetwear...">
+        </label>
+
+        <label>Tông giọng (Tone of voice)
+          <input id="bpTone" placeholder="VD: Năng động, dí dỏm, truyền cảm hứng, chuyên nghiệp và gần gũi...">
+        </label>
+        <label>Đại từ xưng hô
+          <input id="bpPronouns" placeholder="VD: Tinix - Bạn, Shop - Mình, Em - Quý khách, Chúng tôi - Khách hàng...">
+        </label>
+
+        <label>Đối tượng khách hàng mục tiêu
+          <input id="bpTargetAudience" placeholder="VD: Giới trẻ 18-25 tuổi, chủ shop kinh doanh online, nhân viên văn phòng...">
+        </label>
+        <label>Sản phẩm / Dịch vụ cốt lõi
+          <input id="bpProductsServices" placeholder="VD: Phần mềm quản lý mạng xã hội, thời trang unisex, mỹ phẩm thuần chay...">
+        </label>
+
+        <label>Website / Link Bio
+          <input id="bpWebsite" placeholder="VD: https://tinix.vn hoặc https://bio.link/mybrand">
+        </label>
+        <label>Thông tin liên hệ / Hotline
+          <input id="bpContactInfo" placeholder="VD: Hotline: 1900 xxxx, Zalo OA: 0988xxxxxx, Inbox Fanpage...">
+        </label>
+
+        <label class="full">Từ khóa ưu tiên dùng (Cách nhau bởi dấu phẩy)
+          <textarea id="bpPreferredKeywords" rows="2" placeholder="VD: tự động hóa, tiết kiệm thời gian, tối ưu chi phí, chính hãng, giá tốt, bắt trend..."></textarea>
+          <small class="field-hint">AI sẽ ưu tiên nhắc đến các từ khóa này trong bài viết.</small>
+        </label>
+
+        <label class="full">Từ khóa cấm kỵ (Cách nhau bởi dấu phẩy)
+          <textarea id="bpForbiddenKeywords" rows="2" placeholder="VD: cam kết 100%, lừa đảo, hàng nhái, thanh lý lỗ, rẻ rách..."></textarea>
+          <small class="field-hint">AI sẽ cảnh báo hoặc tuyệt đối không sử dụng các từ ngữ này.</small>
+        </label>
+
+        <label class="full">Mẫu câu kêu gọi hành động (CTA) (Mỗi dòng hoặc cách nhau dấu phẩy)
+          <textarea id="bpSampleCtas" rows="2" placeholder="VD: Nhắn tin cho shop ngay để nhận voucher!, Follow kênh để xem thêm mẹo hay!, Ghé bio đặt hàng ngay!..."></textarea>
+        </label>
+
+        <label class="full">Quy tắc Hashtag
+          <input id="bpHashtagRules" placeholder="VD: Luôn kèm 3-5 hashtag: #ThuongHieu #TenSanpham #Giaiphap...">
+        </label>
+
+        <label class="full">Mô tả tổng quan thương hiệu
+          <textarea id="bpDescription" rows="2" placeholder="VD: Nền tảng công nghệ hỗ trợ các nhà sáng tạo nội dung và doanh nghiệp quản lý mạng xã hội tập trung, an toàn và tự động."></textarea>
+        </label>
+
+        <label class="full">Bài viết mẫu chuẩn mực (Để AI học văn phong)
+          <textarea id="bpGoodExamples" rows="3" placeholder="VD: Dán 1-2 bài viết mẫu chuẩn mực bạn thích nhất để AI mô phỏng đúng cấu trúc, nhịp điệu và phong cách..."></textarea>
+        </label>
+      </div>
+
+      <div class="dialog-actions full brand-dialog-actions">
+        <button type="button" id="btnDeleteBrandProfile" class="danger" style="display:none;">🗑️ Xóa hồ sơ này</button>
+        <div class="right-actions">
+          <button type="button" data-close>Đóng</button>
+          <button type="submit" class="primary" id="btnSaveBrandProfile">Lưu Brand Profile</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js?v=2.0.13"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.6"></script>
 </body>
 </html>

@@ -22,12 +22,14 @@ from app.db.calendar_repositories import PostingSlotRepository
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.publication_repositories import PublicationRepository
 from app.db.provider_repositories import OAuthStateRepository, ProviderConnectionRepository
+from app.db.integration_repositories import AIProviderConfigRepository, PlatformAppRepository
 from app.db.notification_repositories import NotificationRepository
 from app.db.media_repositories import MediaAssetRepository
 from app.db.analytics_repositories import AnalyticsRepository
 from app.db.automation_repositories import APITokenRepository, WebhookRepository
 from app.db.repositories import AppSettingsRepository, AccountRepository, ArtifactRepository, ChromeProfileRepository, JobRepository, TargetRepository
-from app.services.ai import OpenAICompatibleProvider
+from app.services.ai import AIProvider
+from app.services.integrations import IntegrationService, ManagedAIProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.chrome import ChromeManager
 from app.services.maintenance import MaintenanceService
@@ -75,7 +77,10 @@ class Services:
     api_tokens: APITokenRepository
     webhooks: WebhookRepository
     chrome: ChromeManager
-    ai: OpenAICompatibleProvider
+    ai: AIProvider
+    integrations: IntegrationService
+    ai_provider_configs: AIProviderConfigRepository
+    platform_apps: PlatformAppRepository
     publishers: PublisherRegistry
     publisher_router: PublisherRouter
     provider_connections: ProviderConnectionRepository
@@ -111,17 +116,21 @@ def build_services(settings: Settings) -> Services:
     media_assets = MediaAssetRepository(database)
     analytics = AnalyticsRepository(database)
     secret_store = SecretProtector()
+    app_settings = AppSettingsRepository(database)
+    ai_provider_configs = AIProviderConfigRepository(database, secret_store)
+    platform_apps = PlatformAppRepository(database, secret_store)
+    integrations = IntegrationService(settings, ai_provider_configs, platform_apps, app_settings)
     storage = LocalPathStorage(settings.media_dir)
     api_tokens = APITokenRepository(database, settings.data_dir, secret_store)
     webhooks = WebhookRepository(database, secret_store)
     chrome_profiles = ChromeProfileRepository(database)
     artifacts = ArtifactRepository(database)
     chrome = ChromeManager(settings, chrome_profiles)
-    ai = OpenAICompatibleProvider(settings)
+    ai = ManagedAIProvider(integrations)
     publishers = PublisherRegistry()
     provider_connections = ProviderConnectionRepository(database, secret_store)
     oauth_states = OAuthStateRepository(database, secret_store)
-    provider_accounts = ProviderAccountService(settings, accounts, provider_connections, oauth_states, targets)
+    provider_accounts = ProviderAccountService(settings, accounts, provider_connections, oauth_states, targets, platform_apps)
     publisher_router = PublisherRouter(publishers, provider_connections)
     worker = LocalWorker(settings, jobs, accounts, ai, publishers, publisher_router)
     scheduler = Scheduler(settings, jobs, worker)
@@ -132,28 +141,26 @@ def build_services(settings: Settings) -> Services:
     publishers.register("tiktok", TikTokChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("youtube", YouTubeChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("x", XChromePublisher(settings, chrome, accounts, artifacts, media))
-    if provider_accounts.youtube_configured:
-        publishers.register(
-            "youtube",
-            YouTubeOfficialPublisher(settings, provider_connections, provider_accounts, media),
-            transport="official_api",
-        )
+    publishers.register(
+        "youtube",
+        YouTubeOfficialPublisher(settings, provider_connections, provider_accounts, media),
+        transport="official_api",
+    )
     platform_accounts = PlatformAccountService(accounts, targets, chrome, publishers)
     analytics_collector = UIAnalyticsCollector(accounts, publications, analytics, publishers)
     webhook_dispatcher = WebhookDispatcher(webhooks)
-    ai_studio = AIContentStudioService(ai, ai_generations, brands, contents)
+    ai_studio = AIContentStudioService(ai, ai_generations, brands, contents, media=media)
     scheduling = SchedulingService(
         jobs, accounts, targets, contents, publications=publications, publisher_router=publisher_router,
     )
     profile_transfer = ChromeProfileTransferService(settings, database, accounts)
-    app_settings = AppSettingsRepository(database)
     maintenance = MaintenanceService(settings, profile_transfer, app_settings, notifications)
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
         contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
         posting_slots=posting_slots, notifications=notifications, media_assets=media_assets, analytics=analytics,
         api_tokens=api_tokens, webhooks=webhooks,
-        chrome=chrome, ai=ai, publishers=publishers, publisher_router=publisher_router,
+        chrome=chrome, ai=ai, integrations=integrations, ai_provider_configs=ai_provider_configs, platform_apps=platform_apps, publishers=publishers, publisher_router=publisher_router,
         provider_connections=provider_connections, oauth_states=oauth_states,
         provider_accounts=provider_accounts,
         worker=worker, scheduler=scheduler,
@@ -217,4 +224,11 @@ async def serialize_mutating_requests(request, call_next):
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
-    return FileResponse(static_dir / "index.html")
+    return FileResponse(
+        static_dir / "index.html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
