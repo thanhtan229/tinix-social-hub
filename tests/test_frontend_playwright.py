@@ -145,6 +145,12 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             # Test Tab 2 AI Brand Profile button and modal opening
             page.locator('#nav button[data-tab="ai"]').click()
             page.wait_for_timeout(200)
+            self.assertEqual(page.locator("#aiImageEngine").count(), 1)
+            self.assertTrue(page.locator("#aiImageControls").is_visible())
+            self.assertTrue(page.locator("#aiImageEngine").is_visible())
+            self.assertTrue(page.locator("#aiImageSource").is_visible())
+            self.assertEqual(page.locator("#aiImageAspectRatio option").count(), 6)
+            self.assertEqual(page.locator("#aiImageCount option").count(), 3)
             self.assertTrue(page.locator("#btnQuickAddBrand").is_visible())
             page.locator("#btnQuickAddBrand").click()
             page.wait_for_timeout(300)
@@ -304,6 +310,23 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(open_flow, ["open", "check-login"])
             self.assertIn("Đã đăng nhập", page.locator("#toast").inner_text())
             self.assertEqual(errors, [])
+            browser.close()
+
+    def test_image_source_options_display_provider_and_model(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            page.route("**/api/ai/image-options", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps({
+                    "direct_api": [{"config_id": "image-config", "provider": "openai", "name": "OpenAI team", "model": "gpt-image-1"}],
+                    "defaults": {"image_config_id": "image-config"},
+                    "media_creator": {"available": True, "providers": []},
+                }),
+            ))
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="ai"]').click()
+            self.assertEqual(page.locator("#aiImageSource option").all_text_contents(), ["OpenAI team · gpt-image-1"])
+            self.assertEqual(page.locator("#aiImageSource").input_value(), "image-config")
             browser.close()
 
     def test_integration_buttons_open_dialog(self) -> None:

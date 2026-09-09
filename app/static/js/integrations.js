@@ -82,7 +82,8 @@ async function discoverAiModels(button, quiet = false) {
   const provider = formValue(form, "provider");
   const apiKey = formValue(form, "api_key");
   const item = editing?.item;
-  if (!apiKey && !item) throw new Error("Nhập API key trước khi làm mới danh sách model.");
+  const useLegacy = !apiKey && !item && aiState.legacy?.provider === provider;
+  if (!apiKey && !item && !useLegacy) throw new Error("Nhập API key trước khi làm mới danh sách model.");
   button.disabled = true;
   const originalLabel = button.textContent;
   button.textContent = "Đang tải model…";
@@ -92,8 +93,10 @@ async function discoverAiModels(button, quiet = false) {
       const payload = {provider, api_key: apiKey};
       if (form.querySelector("[name=base_url]")) payload.base_url = formValue(form, "base_url");
       models = await api("/integrations/ai/discover-models", {method: "POST", body: JSON.stringify(payload)});
-    } else {
+    } else if (item) {
       models = await api(`/integrations/ai/${item.id}/models/refresh`, {method: "POST"});
+    } else {
+      models = await api("/integrations/ai/legacy-models", {method: "POST"});
     }
     const current = {
       text_model: selectedModel(form, "text"), image_model: selectedModel(form, "image"),
@@ -111,7 +114,9 @@ async function discoverAiModels(button, quiet = false) {
 function scheduleModelDiscovery() {
   clearTimeout(modelDiscoveryTimer);
   const form = document.querySelector("#integrationForm");
-  if (!form || !formValue(form, "api_key")) return;
+  if (!form) return;
+  const provider = formValue(form, "provider");
+  if (!formValue(form, "api_key") && aiState.legacy?.provider !== provider) return;
   modelDiscoveryTimer = setTimeout(() => {
     const button = document.querySelector("[data-ai-discover-models]");
     if (button) discoverAiModels(button, true).catch(error => {
@@ -131,9 +136,9 @@ async function openAiDialog(item = null) {
   const provider = item?.provider || "gemini";
   const providerOptions = catalog.ai_providers.map(entry => option(entry.id, entry.name, entry.id === provider)).join("");
   title.textContent = item ? "Sửa AI Provider" : "Thêm AI Provider";
-  holder.innerHTML = field("Provider", `<select name="provider" ${item ? "disabled" : ""}>${providerOptions}</select>`) + field("Tên cấu hình", `<input name="name" required maxlength="100" value="${esc(item?.name || "")}" placeholder="Ví dụ: OpenAI công việc">`) + field(item ? "API key mới (bỏ trống để giữ nguyên)" : "API key", `<input name="api_key" type="password" ${item ? "" : "required"} maxlength="2000" autocomplete="off">`) + `<div class="full"><button type="button" data-ai-discover-models>Làm mới danh sách model</button><p class="muted">Dùng API key vừa nhập để lấy model khả dụng từ provider.</p></div>` + `<div class="provider-fields" data-ai-provider-fields>${aiProviderFields(provider, item, models)}</div>` + `<label class="check full"><input name="enabled" type="checkbox" ${item?.enabled === false ? "" : "checked"}><span>Kích hoạt cấu hình</span></label>`;
+  holder.innerHTML = field("Provider", `<select name="provider" ${item ? "disabled" : ""}>${providerOptions}</select>`) + field("Tên cấu hình", `<input name="name" required maxlength="100" value="${esc(item?.name || "")}" placeholder="Ví dụ: OpenAI công việc">`) + field(item ? "API key mới (bỏ trống để giữ nguyên)" : "API key", `<input name="api_key" type="password" ${item ? "" : "required"} maxlength="2000" autocomplete="off">`) + `<div class="full"><button type="button" data-ai-discover-models>Làm mới danh sách model</button><p class="muted">Dùng API key vừa nhập hoặc cấu hình legacy trong .env để lấy model khả dụng.</p></div>` + `<div class="provider-fields" data-ai-provider-fields>${aiProviderFields(provider, item, models)}</div>` + `<label class="check full"><input name="enabled" type="checkbox" ${item?.enabled === false ? "" : "checked"}><span>Kích hoạt cấu hình</span></label>`;
   dialog.showModal();
-  if (item) discoverAiModels(holder.querySelector("[data-ai-discover-models]"), true).catch(error => {
+  if (item || aiState.legacy?.provider === provider) discoverAiModels(holder.querySelector("[data-ai-discover-models]"), true).catch(error => {
     document.querySelector("#integrationDialogStatus").textContent = error.message;
   });
 }

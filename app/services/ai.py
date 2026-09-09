@@ -244,7 +244,19 @@ class OpenAICompatibleProvider(AIProvider):
             retryable=True,
         )
 
-    async def generate_image(self, prompt: str) -> AIImageResult:
+    @staticmethod
+    def _image_size(aspect_ratio: str) -> str:
+        ratio = (aspect_ratio or "auto").strip()
+        if ratio in {"3:4", "9:16"}:
+            return "1024x1536"
+        if ratio in {"4:3", "16:9"}:
+            return "1536x1024"
+        return "1024x1024"
+
+    async def generate_images(
+        self, prompt: str, *, count: int = 1, aspect_ratio: str = "auto", quality: str = "auto",
+        allow_fallback: bool = False,
+    ) -> list[AIImageResult]:
         model = getattr(self.settings, "ai_image_model", "") or ""
         if not model:
             if "generativelanguage.googleapis.com" in self.settings.ai_base_url:
@@ -254,13 +266,21 @@ class OpenAICompatibleProvider(AIProvider):
             else:
                 model = "gemini-2.5-flash-image"
 
+        requested_count = max(1, min(int(count or 1), 4))
         if self.configured:
             body = {
                 "model": model,
                 "prompt": prompt,
-                "n": 1,
+                "n": requested_count,
                 "response_format": "b64_json",
             }
+            # The documented OpenAI Images API accepts these options. Other
+            # OpenAI-compatible gateways vary, so keep their payload minimal.
+            is_openai_images = "openai.com" in self.settings.ai_base_url
+            if is_openai_images:
+                body["size"] = self._image_size(aspect_ratio)
+                if quality in {"low", "medium", "high", "standard", "hd"}:
+                    body["quality"] = quality
             try:
                 primary_timeout = min(float(self.settings.ai_timeout_seconds), 15.0)
                 client = self._get_client()
@@ -269,25 +289,24 @@ class OpenAICompatibleProvider(AIProvider):
                     data = response.json()
                     items = data.get("data") or []
                     if items:
-                        first = items[0]
-                        if "b64_json" in first:
-                            img_bytes = base64.b64decode(first["b64_json"])
-                            return AIImageResult(
-                                image_bytes=img_bytes,
-                                mime_type="image/png",
-                                source_model=model,
-                                fallback_used=False,
-                            )
-                        if "url" in first:
-                            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as dl_client:
-                                img_resp = await dl_client.get(first["url"])
-                                if img_resp.status_code == 200:
-                                    return AIImageResult(
-                                        image_bytes=img_resp.content,
-                                        mime_type=img_resp.headers.get("content-type", "image/png"),
-                                        source_model=model,
-                                        fallback_used=False,
-                                    )
+                        results: list[AIImageResult] = []
+                        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as dl_client:
+                            for item in items:
+                                if "b64_json" in item:
+                                    results.append(AIImageResult(
+                                        image_bytes=base64.b64decode(item["b64_json"]), mime_type="image/png",
+                                        source_model=model, fallback_used=False,
+                                    ))
+                                elif "url" in item:
+                                    img_resp = await dl_client.get(item["url"])
+                                    if img_resp.status_code == 200:
+                                        results.append(AIImageResult(
+                                            image_bytes=img_resp.content,
+                                            mime_type=img_resp.headers.get("content-type", "image/png"),
+                                            source_model=model, fallback_used=False,
+                                        ))
+                        if results:
+                            return results
                 else:
                     err_snippet = response.text[:200]
                     if response.status_code == 429 and "limit: 0" in err_snippet:
@@ -297,12 +316,17 @@ class OpenAICompatibleProvider(AIProvider):
             except Exception as exc:
                 logger.info("Primary image model (%s) failed: %s. Switching to FLUX.", model, exc)
 
+        if not allow_fallback:
+            raise AIError("image_generation_failed", "Không thể tạo ảnh bằng model đã chọn. Hãy kiểm tra model, quota hoặc bật FLUX dự phòng.")
         try:
-            return await self._fallback_pollinations(prompt)
+            return [await self._fallback_pollinations(prompt) for _ in range(requested_count)]
         except Exception as exc:
             if isinstance(exc, AIError):
                 raise
             raise AIError("image_generation_failed", f"Không thể tạo ảnh từ prompt: {exc}") from exc
+
+    async def generate_image(self, prompt: str) -> AIImageResult:
+        return (await self.generate_images(prompt, allow_fallback=True))[0]
 
     async def close(self) -> None:
         if self._client:
@@ -335,4 +359,3 @@ class MockAIProvider(AIProvider):
         buf = io.BytesIO()
         Image.new("RGB", (200, 200), color=(50, 150, 200)).save(buf, "PNG")
         return AIImageResult(image_bytes=buf.getvalue(), mime_type="image/png", source_model="mock", fallback_used=False)
-

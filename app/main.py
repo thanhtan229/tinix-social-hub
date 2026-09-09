@@ -34,6 +34,8 @@ from app.services.ai_studio import AIContentStudioService
 from app.services.chrome import ChromeManager
 from app.services.maintenance import MaintenanceService
 from app.services.media import MediaService
+from app.services.media_creator import MediaCreatorClient
+from app.services.image_generation import ImageGenerationService
 from app.services.scheduling import SchedulingService
 from app.services.facebook_accounts import FacebookAccountService
 from app.services.facebook_publisher import FacebookPublisher
@@ -97,6 +99,7 @@ class Services:
     secrets: SecretStore
     media: MediaService
     ai_studio: AIContentStudioService
+    image_generation: ImageGenerationService
     scheduling: SchedulingService
     profile_transfer: ChromeProfileTransferService
     application_lock: asyncio.Lock
@@ -136,6 +139,10 @@ def build_services(settings: Settings) -> Services:
     scheduler = Scheduler(settings, jobs, worker)
     facebook_accounts = FacebookAccountService(accounts, targets, chrome)
     media = MediaService(settings, contents, media_assets, storage)
+    media_creator = MediaCreatorClient(settings.media_creator_url, settings.media_creator_timeout_seconds)
+    image_generation = ImageGenerationService(
+        integrations, ai_generations, media, media_creator, settings.media_creator_timeout_seconds,
+    )
     publishers.register("facebook", FacebookPublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("instagram", InstagramChromePublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("tiktok", TikTokChromePublisher(settings, chrome, accounts, artifacts, media))
@@ -167,7 +174,7 @@ def build_services(settings: Settings) -> Services:
         maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
         analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher,
         storage=storage, secrets=secret_store, media=media,
-        ai_studio=ai_studio, scheduling=scheduling, profile_transfer=profile_transfer,
+        ai_studio=ai_studio, image_generation=image_generation, scheduling=scheduling, profile_transfer=profile_transfer,
         application_lock=asyncio.Lock(),
     )
 
@@ -198,6 +205,7 @@ async def lifespan(application: FastAPI):
         logger.info("Graceful shutdown started")
         await services.webhook_dispatcher.stop()
         await services.maintenance.stop()
+        await services.image_generation.close()
         if settings.embedded_worker:
             await services.scheduler.stop()
             await services.worker.stop()

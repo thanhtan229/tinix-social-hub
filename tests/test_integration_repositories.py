@@ -71,8 +71,12 @@ class IntegrationRepositoryTests(unittest.TestCase):
             service.update_ai(config["id"], enabled=False)
 
     def test_gemini_discovery_uses_native_paginated_models_endpoint(self) -> None:
+        settings = SimpleNamespace(
+            ai_api_key="legacy-gemini-key", ai_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            ai_model="gemini-fast", ai_image_model="", ai_timeout_seconds=5, ai_max_retries=0,
+        )
         service = IntegrationService(
-            SimpleNamespace(ai_api_key="", ai_base_url="", ai_model="", ai_image_model="", ai_timeout_seconds=5, ai_max_retries=0),
+            settings,
             self.ai, self.apps, AppSettingsRepository(self.database),
         )
         requests: list[dict[str, str]] = []
@@ -111,6 +115,15 @@ class IntegrationRepositoryTests(unittest.TestCase):
         self.assertEqual([item["model_id"] for item in models], ["gemini-fast", "embedding-only", "gemini-image"])
         self.assertFalse(models[1]["metadata"]["supports_generate_content"])
         self.assertEqual(requests, [{"key": "gemini-key", "pageSize": "1000"}, {"key": "gemini-key", "pageSize": "1000", "pageToken": "next"}])
+
+        requests.clear()
+        with patch("app.services.integrations.httpx.AsyncClient", Client):
+            legacy_models = asyncio.run(service.discover_legacy_models())
+        self.assertEqual(len(legacy_models), 3)
+        self.assertEqual(requests[0]["key"], "legacy-gemini-key")
+        state = service.ai_list()
+        self.assertEqual(state["legacy"]["provider"], "gemini")
+        self.assertNotIn("legacy-gemini-key", str(state))
 
 
 if __name__ == "__main__":

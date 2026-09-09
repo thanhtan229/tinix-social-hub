@@ -76,6 +76,18 @@ class AIGenerateImageBody(BaseModel):
     content_id: str | None = None
 
 
+class ImageJobBody(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+    engine: str = Field(default="direct_api", pattern="^(direct_api|media_creator)$")
+    config_id: str | None = Field(default=None, max_length=100)
+    provider: str | None = Field(default=None, max_length=100)
+    aspect_ratio: str = Field(default="auto", pattern="^(auto|1:1|4:3|3:4|16:9|9:16)$")
+    count: int = Field(default=1, ge=1, le=4)
+    quality: str = Field(default="auto", pattern="^(auto|low|medium|high|standard|hd)$")
+    fallback_policy: str = Field(default="disabled", pattern="^(disabled|pollinations)$")
+    content_id: str | None = None
+
+
 class ScheduleBody(BaseModel):
     content_id: str
     account_id: str
@@ -395,6 +407,39 @@ async def generate_ai_content(body: AIGenerateBody, request: Request) -> dict[st
 async def generate_ai_image(body: AIGenerateImageBody, request: Request) -> dict[str, Any]:
     try:
         return await services(request).ai_studio.generate_image(body.prompt, body.content_id)
+    except AIError as exc:
+        status = 503 if exc.retryable else 422
+        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc
+
+
+@router.get("/ai/image-options")
+async def image_generation_options(request: Request) -> dict[str, Any]:
+    return await services(request).image_generation.options()
+
+
+@router.post("/ai/image-jobs", status_code=202)
+async def create_image_job(body: ImageJobBody, request: Request) -> dict[str, Any]:
+    try:
+        return await services(request).image_generation.create_job(body.model_dump())
+    except AIError as exc:
+        status = 503 if exc.retryable else 422
+        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc
+
+
+@router.get("/ai/image-jobs/{job_id}")
+async def image_job_status(job_id: str, request: Request) -> dict[str, Any]:
+    result = await services(request).image_generation.get_job(job_id)
+    if not result:
+        raise HTTPException(404, "Không tìm thấy tác vụ tạo ảnh.")
+    return result
+
+
+@router.post("/ai/image-jobs/{job_id}/cancel")
+async def cancel_image_job(job_id: str, request: Request) -> dict[str, Any]:
+    try:
+        if not await services(request).image_generation.cancel(job_id):
+            raise HTTPException(404, "Không tìm thấy tác vụ đang chạy.")
+        return {"job_id": job_id, "cancelled": True}
     except AIError as exc:
         status = 503 if exc.retryable else 422
         raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc

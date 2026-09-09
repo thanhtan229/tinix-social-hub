@@ -105,6 +105,31 @@ class AIProviderTests(unittest.TestCase):
         self.assertEqual(result.image_bytes, fake_png)
         self.assertFalse(result.fallback_used)
 
+    def test_generate_multiple_images_uses_openai_size_and_quality(self) -> None:
+        import base64
+        first = base64.b64encode(b"first-image").decode("ascii")
+        second = base64.b64encode(b"second-image").decode("ascii")
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(request.content))
+            return httpx.Response(200, json={"data": [{"b64_json": first}, {"b64_json": second}]})
+
+        provider = self.provider_with(handler)
+        provider.settings.ai_base_url = "https://api.openai.com/v1"
+
+        async def run():
+            try:
+                return await provider.generate_images("test prompt", count=2, aspect_ratio="9:16", quality="high")
+            finally:
+                await provider.close()
+
+        results = asyncio.run(run())
+        self.assertEqual([item.image_bytes for item in results], [b"first-image", b"second-image"])
+        self.assertEqual(captured["n"], 2)
+        self.assertEqual(captured["size"], "1024x1536")
+        self.assertEqual(captured["quality"], "high")
+
     def test_generate_image_fallback_when_primary_fails(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             # Simulate 429 Quota Exceeded on primary API
@@ -136,4 +161,3 @@ class AIProviderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

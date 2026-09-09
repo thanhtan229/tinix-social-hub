@@ -410,6 +410,8 @@ export function initAI() {
     const promptWrap = document.querySelector("#aiImagePromptInputWrap");
     if (promptInput) promptInput.value = currentImagePrompt || "";
     if (promptWrap) promptWrap.style.display = currentImagePrompt ? "flex" : "none";
+    const imageControls = document.querySelector("#aiImageControls");
+    if (imageControls) imageControls.style.display = "grid";
 
     const btnGenImg = document.querySelector("#btnGenerateImage");
     if (btnGenImg) {
@@ -477,6 +479,8 @@ export function initAI() {
     const customPromptWrap = document.querySelector("#aiImagePromptInputWrap");
     if (customPromptEl) customPromptEl.value = "";
     if (customPromptWrap) customPromptWrap.style.display = "none";
+    const imageControls = document.querySelector("#aiImageControls");
+    if (imageControls) imageControls.style.display = "grid";
 
     if (jsonBox) {
       jsonBox.textContent = "";
@@ -665,6 +669,8 @@ export function initAI() {
     const promptWrap = document.querySelector("#aiImagePromptInputWrap");
     if (promptInput) promptInput.value = finalPrompt;
     if (promptWrap) promptWrap.style.display = finalPrompt ? "flex" : "none";
+    const imageControls = document.querySelector("#aiImageControls");
+    if (imageControls) imageControls.style.display = "grid";
 
     // Prominent Image Prompt placed right at the top of the Result Panel
     if (finalPrompt) {
@@ -898,12 +904,175 @@ export function initAI() {
 
   // --- Image Generation Handlers ---
   const btnGenerateImage = document.querySelector("#btnGenerateImage");
+  const btnCancelAiImage = document.querySelector("#btnCancelAiImage");
   const aiImageResultBox = document.querySelector("#aiImageResultBox");
   const aiGeneratedImg = document.querySelector("#aiGeneratedImg");
   const btnDownloadAiImg = document.querySelector("#btnDownloadAiImg");
   const btnAttachAiImageToDraft = document.querySelector("#btnAttachAiImageToDraft");
   const aiImagePromptMeta = document.querySelector("#aiImagePromptMeta");
   const aiImageSourceBadge = document.querySelector("#aiImageSourceBadge");
+  const aiImageGallery = document.querySelector("#aiImageGallery");
+  const aiImageStatus = document.querySelector("#aiImageJobStatus");
+  const aiImageEngine = document.querySelector("#aiImageEngine");
+  const aiImageSource = document.querySelector("#aiImageSource");
+  const aiImageAspectRatio = document.querySelector("#aiImageAspectRatio");
+  const aiImageCount = document.querySelector("#aiImageCount");
+  const aiImageQuality = document.querySelector("#aiImageQuality");
+  const aiImageFallback = document.querySelector("#aiImageFallback");
+  let imageOptions = null;
+  let activeImageJobId = "";
+  let imageJobTimer = null;
+  let activeImages = [];
+
+  function setImageJobStatus(message) {
+    if (aiImageStatus) aiImageStatus.textContent = message || "";
+  }
+
+  function setImageSourcePlaceholder(message) {
+    if (!aiImageSource) return;
+    aiImageSource.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = message;
+    aiImageSource.appendChild(option);
+    aiImageSource.disabled = true;
+    aiImageSource.setAttribute("aria-busy", "false");
+  }
+
+  function imageSourceLabel(item, engine) {
+    if (engine === "media_creator") return item.label || item.name || item.id || "Provider không xác định";
+    const provider = item.name || item.provider || item.config_id || "Provider không xác định";
+    const model = item.model || item.image_model || "Chưa chọn model";
+    return `${provider} · ${model}`;
+  }
+
+  function populateImageSources() {
+    if (!aiImageEngine || !aiImageSource || !imageOptions) return;
+    const engine = aiImageEngine.value;
+    const entries = engine === "media_creator"
+      ? (Array.isArray(imageOptions.media_creator?.providers) ? imageOptions.media_creator.providers : []).map(item => ({ value: item.id, label: imageSourceLabel(item, engine) }))
+      : (Array.isArray(imageOptions.direct_api) ? imageOptions.direct_api : []).map(item => ({ value: item.config_id, label: imageSourceLabel(item, engine) }));
+    aiImageSource.innerHTML = "";
+    if (!entries.length) {
+      setImageSourcePlaceholder(engine === "media_creator" ? "Media Creator chưa sẵn sàng" : "Chưa có model ảnh đã cấu hình");
+    } else {
+      for (const entry of entries) {
+        const option = document.createElement("option");
+        option.value = entry.value;
+        option.textContent = entry.label;
+        aiImageSource.appendChild(option);
+      }
+      aiImageSource.disabled = false;
+      aiImageSource.setAttribute("aria-busy", "false");
+      if (engine === "direct_api") {
+        const preferred = imageOptions.defaults?.image_config_id;
+        if (preferred && entries.some(item => item.value === preferred)) aiImageSource.value = preferred;
+      }
+    }
+    const direct = engine === "direct_api";
+    if (aiImageFallback) aiImageFallback.disabled = !direct;
+    if (aiImageQuality) aiImageQuality.disabled = !direct;
+  }
+
+  async function loadImageOptions() {
+    try {
+      imageOptions = await api("/ai/image-options");
+      populateImageSources();
+      if (!imageOptions.media_creator?.available && aiImageEngine?.value === "media_creator") {
+        setImageJobStatus(imageOptions.media_creator?.message || "Tinix Media Creator chưa sẵn sàng.");
+      }
+    } catch (error) {
+      setImageSourcePlaceholder("Không tải được provider/model");
+      setImageJobStatus(`Không tải được cấu hình tạo ảnh: ${error.message}`);
+    }
+  }
+
+  function showSelectedImage(index) {
+    const image = activeImages[index];
+    if (!image) return;
+    lastCreatedAsset = image.asset || null;
+    if (aiGeneratedImg) aiGeneratedImg.src = image.url;
+    if (btnDownloadAiImg) {
+      btnDownloadAiImg.href = image.url;
+      btnDownloadAiImg.download = `ai-img-${Date.now()}-${index + 1}.png`;
+    }
+    if (aiImageGallery) {
+      aiImageGallery.querySelectorAll("button").forEach((button, itemIndex) => button.classList.toggle("active", itemIndex === index));
+    }
+  }
+
+  function renderImageResults(images, metadata = {}) {
+    activeImages = Array.isArray(images) ? images : [];
+    const first = activeImages[0];
+    if (!first) return;
+    lastCreatedAsset = first.asset || null;
+    if (aiImageResultBox) aiImageResultBox.style.display = "flex";
+    showSelectedImage(0);
+    if (aiImageGallery) {
+      aiImageGallery.innerHTML = "";
+      activeImages.forEach((image, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.title = `Ảnh ${index + 1}`;
+        const thumbnail = document.createElement("img");
+        thumbnail.src = image.url;
+        thumbnail.alt = `Ảnh AI ${index + 1}`;
+        button.appendChild(thumbnail);
+        button.onclick = () => showSelectedImage(index);
+        aiImageGallery.appendChild(button);
+      });
+    }
+    if (aiImagePromptMeta) {
+      aiImagePromptMeta.textContent = `Prompt: ${metadata.prompt || currentImagePrompt || ""}`;
+      aiImagePromptMeta.title = metadata.prompt || currentImagePrompt || "";
+    }
+    if (aiImageSourceBadge) aiImageSourceBadge.textContent = metadata.source_model || first.source_model || "AI Image";
+    const attached = Boolean(metadata.attached_content_id);
+    if (btnAttachAiImageToDraft) {
+      btnAttachAiImageToDraft.textContent = attached ? "✓ Đã gắn vào bài viết" : "📎 Gắn ảnh đang chọn";
+      btnAttachAiImageToDraft.disabled = attached || !lastCreatedContentId;
+    }
+  }
+
+  function finishImageJob() {
+    if (imageJobTimer) clearTimeout(imageJobTimer);
+    imageJobTimer = null;
+    activeImageJobId = "";
+    if (btnGenerateImage) {
+      btnGenerateImage.disabled = false;
+      btnGenerateImage.innerHTML = "🎨 Tạo Ảnh";
+    }
+    if (btnCancelAiImage) btnCancelAiImage.hidden = true;
+  }
+
+  async function pollImageJob() {
+    if (!activeImageJobId) return;
+    try {
+      const job = await api(`/ai/image-jobs/${encodeURIComponent(activeImageJobId)}`);
+      setImageJobStatus(job.message || `Đang xử lý (${job.progress || 0}%)…`);
+      if (["queued", "running"].includes(job.status)) {
+        imageJobTimer = setTimeout(pollImageJob, 1500);
+        return;
+      }
+      finishImageJob();
+      if (job.status === "completed" || job.status === "partial") {
+        renderImageResults(job.images, { prompt: job.prompt, source_model: `${job.provider} · ${job.model}`, attached_content_id: job.attached_content_id });
+        if (currentHistoryIndex >= 0 && currentHistoryIndex < historyItems.length) {
+          historyItems[currentHistoryIndex].image = {
+            url: job.images[0]?.url, asset: job.images[0]?.asset || null, images: job.images,
+            prompt: job.prompt, source_model: `${job.provider} · ${job.model}`, attached: Boolean(job.attached_content_id),
+          };
+          saveHistoryToStorage(historyItems);
+        }
+        toast(job.attached_content_id ? "🎨 Đã tạo ảnh và đính kèm vào bài viết!" : "🎨 Đã tạo ảnh thành công!");
+      } else {
+        toast(`Lỗi tạo ảnh: ${job.message || "Tác vụ thất bại."}`);
+      }
+    } catch (error) {
+      finishImageJob();
+      toast(`Không theo dõi được tác vụ tạo ảnh: ${error.message}`);
+    }
+  }
 
   if (btnGenerateImage) {
     btnGenerateImage.onclick = async () => {
@@ -915,70 +1084,57 @@ export function initAI() {
         else return toast("Chưa có prompt tạo ảnh. Hãy tạo bản nháp trước.");
       }
 
-      const origText = btnGenerateImage.innerHTML;
       btnGenerateImage.disabled = true;
       btnGenerateImage.innerHTML = "⏳ Đang tạo ảnh…";
       toast("🎨 AI đang tạo ảnh, vui lòng đợi giây lát…");
 
       try {
-        const imgRes = await api("/ai/generate-image", {
+        const engine = aiImageEngine?.value || "direct_api";
+        const source = aiImageSource?.value || "";
+        if (!source) throw new Error(engine === "media_creator" ? "Tinix Media Creator chưa có provider ảnh sẵn sàng." : "Hãy chọn model ảnh trong phần Tích hợp & API.");
+        const created = await api("/ai/image-jobs", {
           method: "POST",
           body: JSON.stringify({
             prompt: promptToUse,
+            engine,
+            config_id: engine === "direct_api" && source !== "__default__" ? source : null,
+            provider: engine === "media_creator" ? source : null,
+            aspect_ratio: aiImageAspectRatio?.value || "auto",
+            count: Number(aiImageCount?.value || 1),
+            quality: aiImageQuality?.value || "auto",
+            fallback_policy: aiImageFallback?.checked ? "pollinations" : "disabled",
             content_id: lastCreatedContentId || null,
           }),
         });
-
-        lastCreatedAsset = imgRes.asset || null;
-
-        if (aiImageResultBox) aiImageResultBox.style.display = "flex";
-        const imgSrc = imgRes.url || imgRes.data_uri;
-        if (aiGeneratedImg) aiGeneratedImg.src = imgSrc;
-        if (btnDownloadAiImg) {
-          btnDownloadAiImg.href = imgSrc;
-          btnDownloadAiImg.download = `ai-img-${Date.now()}.png`;
-        }
-        if (aiImagePromptMeta) {
-          aiImagePromptMeta.textContent = `Prompt: ${imgRes.prompt}`;
-          aiImagePromptMeta.title = imgRes.prompt;
-        }
-        if (aiImageSourceBadge) {
-          aiImageSourceBadge.textContent = imgRes.source_model || "AI Image";
-        }
-
-        // Update history item with image
-        if (currentHistoryIndex >= 0 && currentHistoryIndex < historyItems.length) {
-          historyItems[currentHistoryIndex].image = {
-            url: imgSrc,
-            asset: lastCreatedAsset,
-            prompt: imgRes.prompt || promptToUse,
-            source_model: imgRes.source_model || "AI Image",
-            attached: !!imgRes.attached_content_id,
-          };
-          saveHistoryToStorage(historyItems);
-        }
-
-        if (imgRes.attached_content_id) {
-          if (btnAttachAiImageToDraft) {
-            btnAttachAiImageToDraft.textContent = "✓ Đã gắn vào bài viết";
-            btnAttachAiImageToDraft.disabled = true;
-          }
-          toast("🎨 Đã tạo ảnh thành công và đính kèm vào bài viết!");
-        } else {
-          if (btnAttachAiImageToDraft) {
-            btnAttachAiImageToDraft.textContent = "📎 Gắn vào bài viết";
-            btnAttachAiImageToDraft.disabled = !lastCreatedContentId;
-          }
-          toast("🎨 Đã tạo ảnh thành công!");
-        }
+        activeImageJobId = created.job_id;
+        if (btnCancelAiImage) btnCancelAiImage.hidden = false;
+        setImageJobStatus("Đã gửi tác vụ tạo ảnh…");
+        pollImageJob();
       } catch (err) {
         toast("Lỗi tạo ảnh: " + err.message);
-      } finally {
-        btnGenerateImage.disabled = false;
-        btnGenerateImage.innerHTML = origText;
+        finishImageJob();
       }
     };
   }
+
+  if (btnCancelAiImage) btnCancelAiImage.onclick = async () => {
+    if (!activeImageJobId) return;
+    try {
+      await api(`/ai/image-jobs/${encodeURIComponent(activeImageJobId)}/cancel`, { method: "POST", body: "{}" });
+      setImageJobStatus("Đã hủy tác vụ tạo ảnh.");
+    } catch (error) {
+      toast(`Không thể hủy tác vụ: ${error.message}`);
+    } finally {
+      finishImageJob();
+    }
+  };
+
+  if (aiImageEngine) aiImageEngine.onchange = () => {
+    populateImageSources();
+    if (aiImageEngine.value === "media_creator" && !imageOptions?.media_creator?.available) {
+      setImageJobStatus(imageOptions?.media_creator?.message || "Tinix Media Creator chưa chạy.");
+    } else setImageJobStatus("");
+  };
 
   const customPromptEl = document.querySelector("#aiCustomImagePrompt");
   if (customPromptEl) {
@@ -1015,6 +1171,8 @@ export function initAI() {
       }
     };
   }
+
+  loadImageOptions();
 
   // Restore history from storage on initialization
   historyItems = loadHistoryFromStorage();

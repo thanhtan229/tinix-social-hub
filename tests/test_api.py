@@ -58,6 +58,20 @@ class ChromeStub:
         return 0
 
 
+class ImageGenerationStub:
+    async def options(self):
+        return {"direct_api": [{"config_id": "image-config", "model": "image-model"}], "media_creator": {"available": False, "providers": []}}
+
+    async def create_job(self, body):
+        return {"job_id": "image-job", "status": "queued", "engine": body["engine"], "provider": "stub", "model": "image-model"}
+
+    async def get_job(self, job_id):
+        return {"job_id": job_id, "status": "completed", "images": [], "message": "done"} if job_id == "image-job" else None
+
+    async def cancel(self, job_id):
+        return job_id == "image-job"
+
+
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -119,6 +133,7 @@ class ApiTests(unittest.TestCase):
             brands=brands,
             media=MediaService(media_settings, contents, media_assets),
             ai_studio=AIContentStudioService(mock_ai, generations, brands, contents),
+            image_generation=ImageGenerationStub(),
             scheduling=SchedulingService(jobs, accounts, targets, contents, publications=publications),
             chrome=ChromeStub(),
             worker=WorkerStub(),
@@ -187,7 +202,22 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(cleared.json()["has_password"])
         self.assertEqual(self.client.delete(f"/api/accounts/{account_id}").status_code, 200)
 
+    def test_image_job_routes_return_async_contract(self) -> None:
+        options = self.client.get("/api/ai/image-options")
+        self.assertEqual(options.status_code, 200)
+        self.assertEqual(options.json()["direct_api"][0]["config_id"], "image-config")
+        created = self.client.post("/api/ai/image-jobs", json={"prompt": "A product photo", "engine": "direct_api"})
+        self.assertEqual(created.status_code, 202)
+        self.assertEqual(created.json()["job_id"], "image-job")
+        status = self.client.get("/api/ai/image-jobs/image-job")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["status"], "completed")
+        cancelled = self.client.post("/api/ai/image-jobs/image-job/cancel", json={})
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertTrue(cancelled.json()["cancelled"])
+
     def test_integration_crud_masks_secrets_and_sets_defaults(self) -> None:
+        self.assertEqual(self.client.post("/api/integrations/ai/legacy-models").status_code, 422)
         created = self.client.post("/api/integrations/ai", json={
             "provider": "openai", "name": "Personal", "api_key": "test-key-a1b2",
             "text_model": "gpt-4o-mini",

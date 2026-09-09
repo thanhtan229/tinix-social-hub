@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,300..700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=1.0.10">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.11">
 </head>
 <body>
   <aside class="sidebar">
@@ -97,7 +97,16 @@
               <label class="field-label-text" for="aiCustomImagePrompt">🎨 <strong>Prompt tạo ảnh:</strong></label>
               <textarea id="aiCustomImagePrompt" rows="3" placeholder="AI sẽ tự động điền prompt tạo ảnh tại đây (bạn có thể chỉnh sửa trước khi tạo)..."></textarea>
             </div>
-            <button type="button" id="btnGenerateImage" class="secondary full btn-generate-image" disabled title="Tạo ảnh dựa trên prompt sau khi AI sinh nội dung">🎨 Tạo Ảnh</button>
+            <div id="aiImageControls" class="ai-image-controls" style="display:grid;">
+              <label>Engine<select id="aiImageEngine"><option value="direct_api">Direct API</option><option value="media_creator">Tinix Media Creator</option></select></label>
+              <label>Provider / Model<select id="aiImageSource" disabled aria-busy="true"><option value="" selected>Đang tải provider/model…</option></select></label>
+              <label>Tỷ lệ<select id="aiImageAspectRatio"><option value="auto">Tự động</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="16:9">16:9</option><option value="9:16">9:16</option></select></label>
+              <label>Số ảnh<select id="aiImageCount"><option value="1">1 ảnh</option><option value="2">2 ảnh</option><option value="4">4 ảnh</option></select></label>
+              <label>Chất lượng<select id="aiImageQuality"><option value="auto">Tự động</option><option value="low">Thấp</option><option value="medium">Trung bình</option><option value="high">Cao</option></select></label>
+              <label class="check ai-image-fallback"><input id="aiImageFallback" type="checkbox"><span>Cho phép FLUX dự phòng</span></label>
+            </div>
+            <div class="ai-image-actions"><button type="button" id="btnGenerateImage" class="secondary full btn-generate-image" disabled title="Tạo ảnh dựa trên prompt sau khi AI sinh nội dung">🎨 Tạo Ảnh</button><button type="button" id="btnCancelAiImage" class="danger" hidden>Hủy</button></div>
+            <p id="aiImageJobStatus" class="muted" role="status" aria-live="polite"></p>
             
             <div id="aiImageResultBox" class="ai-image-result-box" style="display: none;">
               <div class="ai-image-result-head">
@@ -111,6 +120,7 @@
                   <button type="button" id="btnAttachAiImageToDraft" class="btn-img-action primary" title="Đính kèm ảnh vào bài viết">📎 Gắn vào bài viết</button>
                 </div>
               </div>
+              <div id="aiImageGallery" class="ai-image-gallery" aria-label="Các ảnh đã tạo"></div>
               <p id="aiImagePromptMeta" class="ai-image-meta muted"></p>
             </div>
           </div>
@@ -683,6 +693,6 @@
   </dialog>
 
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js?v=1.0.10"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.11"></script>
 </body>
 </html>

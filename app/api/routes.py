@@ -305,6 +305,14 @@ async def discover_ai_models(body: AIProviderModelDiscovery, request: Request) -
         raise HTTPException(422, str(exc)) from exc
 
 
+@router.post("/integrations/ai/legacy-models")
+async def discover_legacy_ai_models(request: Request) -> list[dict[str, Any]]:
+    try:
+        return await integrations(request).discover_legacy_models()
+    except (ValueError, AIError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.put("/integrations/ai/{config_id}")
 async def update_ai_integration(config_id: str, body: AIProviderConfigUpdate, request: Request) -> dict[str, Any]:
     try:

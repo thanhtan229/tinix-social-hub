@@ -577,3 +577,35 @@ class AIGenerationRepository:
                 "UPDATE ai_generations SET status='failed',error_code=?,error_message=?,latency_ms=?,finished_at=? WHERE id=?",
                 (code, message[:1000], latency_ms, utc_now(), generation_id),
             )
+
+    def get(self, generation_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            row = connection.execute("SELECT * FROM ai_generations WHERE id=?", (generation_id,)).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["request"] = _loads(item.pop("request_json"), {})
+        item["response"] = _loads(item.pop("response_json"), {})
+        return item
+
+    def update_image_job(
+        self, generation_id: str, *, status: str, response: dict[str, Any] | None = None,
+        error_code: str | None = None, error_message: str | None = None, finished: bool = False,
+    ) -> None:
+        fields = ["status=?"]
+        values: list[Any] = [status]
+        if response is not None:
+            fields.append("response_json=?")
+            values.append(_json(response))
+        if error_code is not None:
+            fields.append("error_code=?")
+            values.append(error_code)
+        if error_message is not None:
+            fields.append("error_message=?")
+            values.append(error_message[:1000])
+        if finished:
+            fields.append("finished_at=?")
+            values.append(utc_now())
+        values.append(generation_id)
+        with self.db.connection() as connection:
+            connection.execute(f"UPDATE ai_generations SET {','.join(fields)} WHERE id=?", values)

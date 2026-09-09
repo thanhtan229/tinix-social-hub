@@ -3910,6 +3910,29 @@ dialog h2 {
   margin-top: 8px;
 }
 
+.ai-image-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+}
+
+.ai-image-controls label { display: grid; gap: 4px; font-size: 11.5px; font-weight: 600; }
+.ai-image-controls select { min-width: 0; }
+.ai-image-controls select option { color: var(--color-text-primary); background: var(--color-bg-surface); }
+.ai-image-controls .ai-image-fallback { grid-template-columns: auto 1fr; align-items: center; gap: 7px; }
+.ai-image-actions { display: flex; gap: 8px; }
+.ai-image-actions .btn-generate-image { flex: 1; }
+.ai-image-gallery { display: flex; gap: 6px; overflow-x: auto; }
+.ai-image-gallery button { border: 2px solid transparent; padding: 0; border-radius: 5px; background: transparent; cursor: pointer; }
+.ai-image-gallery button.active { border-color: var(--color-primary); }
+.ai-image-gallery img { display: block; width: 52px; height: 52px; border-radius: 3px; object-fit: cover; }
+
+@media (max-width: 560px) { .ai-image-controls { grid-template-columns: 1fr; } }
+
 .btn-generate-image {
   background: #EFF6FF !important;
   color: #1D4ED8 !important;
@@ -4431,5 +4454,3 @@ dialog h2 {
     width: 100%;
   }
 }
-
-

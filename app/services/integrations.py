@@ -92,8 +92,17 @@ class IntegrationService:
         return {"text_config_id": text_config_id, "image_config_id": image_config_id}
 
     def ai_list(self) -> dict[str, Any]:
+        legacy = self._legacy()
         defaults = {"text_config_id": self.app_settings.get("ai.default_text_config_id"), "image_config_id": self.app_settings.get("ai.default_image_config_id")}
-        return {"configs": self.ai_configs.list(), "defaults": defaults, "legacy_configured": bool(self._legacy())}
+        legacy_descriptor = None
+        if legacy:
+            legacy_descriptor = {
+                "provider": "openai-compatible" if legacy.provider == "legacy" else legacy.provider,
+                "base_url": legacy.settings.ai_base_url,
+                "text_model": legacy.settings.ai_model,
+                "image_model": legacy.settings.ai_image_model,
+            }
+        return {"configs": self.ai_configs.list(), "defaults": defaults, "legacy_configured": bool(legacy), "legacy": legacy_descriptor}
 
     def create_ai(self, **payload: Any) -> dict[str, Any]:
         return self.ai_configs.create(**payload)
@@ -184,6 +193,15 @@ class IntegrationService:
             raise ValueError("API key không được để trống.")
         secret_registry.add(key)
         return await self._fetch_models(provider, self._discovery_base_url(provider, base_url), key)
+
+    async def discover_legacy_models(self) -> list[dict[str, Any]]:
+        legacy = self._legacy()
+        if not legacy:
+            raise AIConfigurationError("Không có cấu hình AI legacy trong .env.")
+        provider = "openai-compatible" if legacy.provider == "legacy" else legacy.provider
+        key = legacy.settings.ai_api_key
+        secret_registry.add(key)
+        return await self._fetch_models(provider, legacy.settings.ai_base_url, key)
 
     async def refresh_models(self, config_id: str) -> list[dict[str, Any]]:
         item = self.ai_configs.get(config_id)
