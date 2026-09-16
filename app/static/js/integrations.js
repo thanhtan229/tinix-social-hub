@@ -20,17 +20,19 @@ async function ensureCatalog() {
 function configOptions(selected, capability) {
   return [option("", "— Chưa chọn —", !selected), ...aiState.configs
     .filter(item => item.enabled && (capability !== "image" || item.image_model))
-    .map(item => option(item.id, `${item.name} · ${item.text_model}`, selected === item.id))].join("");
+    .map(item => {
+      const model = item[`${capability}_model_display_name`] || item[`${capability}_model`] || "Chưa chọn";
+      return option(item.id, `${item.name} · ${model}`, selected === item.id);
+    })].join("");
 }
 
 function aiCard(item) {
   const defaults = aiState.defaults || {};
   const badges = [
     item.id === defaults.text_config_id ? "Mặc định nội dung" : "",
-    item.id === defaults.image_config_id ? "Mặc định ảnh" : "",
     item.enabled ? "Đang bật" : "Đã tắt",
   ].filter(Boolean).map(value => `<span class="badge">${esc(value)}</span>`).join(" ");
-  return `<article class="integration-card"><div class="integration-card-head"><strong>${esc(definition("ai_providers", item.provider)?.name || item.provider)}</strong><span>${badges}</span></div><h4>${esc(item.name)}</h4><p class="muted">Key: ${esc(item.key_hint || "Chưa có")} · Text: ${esc(item.text_model || "Chưa chọn")} · Ảnh: ${esc(item.image_model || "Không dùng")}</p><p class="muted">Test: ${esc(item.last_test_status)} · ${esc(stamp(item.last_test_at))}${item.last_error_message ? ` · ${esc(item.last_error_message)}` : ""}</p><div class="actions"><button data-ai-action="test" data-id="${esc(item.id)}">Test API</button><button data-ai-action="models" data-id="${esc(item.id)}">Làm mới model</button><button data-ai-action="edit" data-id="${esc(item.id)}">Sửa</button><button data-ai-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Tắt" : "Bật"}</button><button data-ai-action="delete" data-id="${esc(item.id)}" class="danger">Xóa</button></div></article>`;
+  return `<article class="integration-card"><div class="integration-card-head"><strong>${esc(definition("ai_providers", item.provider)?.name || item.provider)}</strong><span>${badges}</span></div><h4>${esc(item.name)}</h4><p class="muted">Key: ${esc(item.key_hint || "Chưa có")} · Text: ${esc(item.text_model || "Chưa chọn")}</p><p class="muted">Test: ${esc(item.last_test_status)} · ${esc(stamp(item.last_test_at))}${item.last_error_message ? ` · ${esc(item.last_error_message)}` : ""}</p><div class="actions"><button data-ai-action="test" data-id="${esc(item.id)}">Test API</button><button data-ai-action="models" data-id="${esc(item.id)}">Làm mới model</button><button data-ai-action="edit" data-id="${esc(item.id)}">Sửa</button><button data-ai-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Tắt" : "Bật"}</button><button data-ai-action="delete" data-id="${esc(item.id)}" class="danger">Xóa</button></div></article>`;
 }
 
 function platformCard(item) {
@@ -43,7 +45,6 @@ function render() {
   document.querySelector("#aiProviderCards").innerHTML = aiState.configs.length ? aiState.configs.map(aiCard).join("") : "<p class=\"muted\">Chưa có AI Provider trong kho bảo mật. Cấu hình .env cũ vẫn được dùng nếu có.</p>";
   document.querySelector("#platformAppCards").innerHTML = platformApps.length ? platformApps.map(platformCard).join("") : "<p class=\"muted\">Chưa có Platform Developer App.</p>";
   document.querySelector("#defaultTextProvider").innerHTML = configOptions(aiState.defaults?.text_config_id, "text");
-  document.querySelector("#defaultImageProvider").innerHTML = configOptions(aiState.defaults?.image_config_id, "image");
   document.querySelector("#integrationStatus").textContent = aiState.legacy_configured ? "Có cấu hình .env legacy làm fallback." : "Credential mới được lưu mã hóa bằng Windows DPAPI.";
 }
 
@@ -72,9 +73,8 @@ function modelField(label, value, models, provider, capability) {
 function aiProviderFields(provider, item, models) {
   const definitionItem = definition("ai_providers", provider) || {};
   const textModel = item?.text_model || definitionItem.recommended_text_model || "";
-  const imageModel = item?.image_model || definitionItem.recommended_image_model || "";
   const baseUrl = definitionItem.requires_base_url ? field("Base URL", `<input name="base_url" type="url" required maxlength="2000" value="${esc(item?.base_url || "")}" placeholder="https://api.example.com/v1">`) : "";
-  return baseUrl + modelField("Model agent", textModel, models, provider, "text") + modelField("Model tạo ảnh (tùy chọn)", imageModel, models, provider, "image");
+  return baseUrl + modelField("Model agent", textModel, models, provider, "text");
 }
 
 async function discoverAiModels(button, quiet = false) {
@@ -99,7 +99,7 @@ async function discoverAiModels(button, quiet = false) {
       models = await api("/integrations/ai/legacy-models", {method: "POST"});
     }
     const current = {
-      text_model: selectedModel(form, "text"), image_model: selectedModel(form, "image"),
+      text_model: selectedModel(form, "text"),
       base_url: formValue(form, "base_url"),
     };
     document.querySelector("[data-ai-provider-fields]").innerHTML = aiProviderFields(provider, current, models);
@@ -165,7 +165,7 @@ async function saveDialog(event) {
   const button = form.querySelector("button[type=submit]");
   const isAi = editing?.type === "ai";
   const item = editing?.item;
-  const payload = isAi ? {provider: formValue(form, "provider"), name: formValue(form, "name"), text_model: selectedModel(form, "text"), image_model: selectedModel(form, "image"), enabled: form.querySelector("[name=enabled]").checked} : {provider: formValue(form, "provider"), name: formValue(form, "name"), client_id: formValue(form, "client_id"), redirect_uri: formValue(form, "redirect_uri"), api_version: formValue(form, "api_version"), scopes: formValue(form, "scopes").split(",").map(value => value.trim()).filter(Boolean), enabled: form.querySelector("[name=enabled]").checked};
+  const payload = isAi ? {provider: formValue(form, "provider"), name: formValue(form, "name"), text_model: selectedModel(form, "text"), enabled: form.querySelector("[name=enabled]").checked} : {provider: formValue(form, "provider"), name: formValue(form, "name"), client_id: formValue(form, "client_id"), redirect_uri: formValue(form, "redirect_uri"), api_version: formValue(form, "api_version"), scopes: formValue(form, "scopes").split(",").map(value => value.trim()).filter(Boolean), enabled: form.querySelector("[name=enabled]").checked};
   if (isAi && form.querySelector("[name=base_url]")) payload.base_url = formValue(form, "base_url");
   const secretName = isAi ? "api_key" : "client_secret";
   const secret = formValue(form, secretName);
@@ -175,6 +175,7 @@ async function saveDialog(event) {
     await api(item ? `/integrations/${isAi ? "ai" : "platform-apps"}/${item.id}` : `/integrations/${isAi ? "ai" : "platform-apps"}`, {method: item ? "PUT" : "POST", body: JSON.stringify(payload)});
     form.closest("dialog").close();
     await refreshIntegrations();
+    if (isAi) window.dispatchEvent(new Event("tinix:refresh-image-options"));
     toast("Đã lưu cấu hình tích hợp.");
   } catch (error) { document.querySelector("#integrationDialogStatus").textContent = error.message; toast(error.message); } finally { button.disabled = false; }
 }
@@ -191,6 +192,7 @@ async function aiAction(button) {
     if (action === "toggle") await api(`/integrations/ai/${item.id}`, {method: "PUT", body: JSON.stringify({enabled: !item.enabled})});
     if (action === "delete") { if (!confirm(`Xóa AI Provider “${item.name}”?`)) return; await api(`/integrations/ai/${item.id}`, {method: "DELETE"}); }
     await refreshIntegrations();
+    if (["models", "toggle", "delete"].includes(action)) window.dispatchEvent(new Event("tinix:refresh-image-options"));
   } catch (error) { toast(error.message); } finally { button.disabled = false; }
 }
 
@@ -215,7 +217,7 @@ export function initIntegrations() {
   document.querySelector("#integrationForm").onsubmit = saveDialog;
   document.querySelector("#aiProviderCards").onclick = event => { const button = event.target.closest("[data-ai-action]"); if (button) aiAction(button); };
   document.querySelector("#platformAppCards").onclick = event => { const button = event.target.closest("[data-app-action]"); if (button) appAction(button); };
-  document.querySelector("#saveAiDefaults").onclick = async () => { try { await api("/integrations/ai/defaults", {method: "PUT", body: JSON.stringify({text_config_id: document.querySelector("#defaultTextProvider").value || null, image_config_id: document.querySelector("#defaultImageProvider").value || null})}); await refreshIntegrations(); toast("Đã lưu AI mặc định."); } catch (error) { toast(error.message); } };
+  document.querySelector("#saveAiDefaults").onclick = async () => { try { await api("/integrations/ai/defaults", {method: "PUT", body: JSON.stringify({text_config_id: document.querySelector("#defaultTextProvider").value || null, image_config_id: null})}); await refreshIntegrations(); toast("Đã lưu AI mặc định."); } catch (error) { toast(error.message); } };
   document.querySelector("#integrationDialogFields").onchange = event => {
     if (event.target.matches("select[name=provider]") && editing?.type === "ai") {
       const provider = event.target.value;

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunsplit
 
 from playwright.async_api import Locator, Page
 
@@ -23,6 +24,8 @@ from app.services.publishers import (
 
 
 logger = logging.getLogger(__name__)
+
+YOUTUBE_CHANNEL_ID = re.compile(r"UC[A-Za-z0-9_-]{22}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,14 @@ class WebSelectorSpec:
     post_url_fragments: tuple[str, ...]
     formats: tuple[str, ...]
     authenticated_cookie_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class VerificationBaseline:
+    """Evidence that was already visible before a publish commit point."""
+
+    post_urls: frozenset[str]
+    visible_success_count: int
 
 
 SPECS: dict[str, WebSelectorSpec] = {
@@ -110,6 +121,7 @@ class ChromeWebPublisher(Publisher):
         self.spec = spec
         self.platform_id = spec.platform
         self.selector_version = spec.version
+        self.supported_formats = frozenset(spec.formats)
         self.settings = settings
         self.chrome = chrome
         self.accounts = accounts
@@ -120,9 +132,13 @@ class ChromeWebPublisher(Publisher):
         if not url:
             return self.spec.home_url
         parsed = urlparse(url)
-        if parsed.scheme != "https" or not any(parsed.netloc.lower().endswith(host) for host in self.spec.allowed_hosts):
+        if parsed.scheme != "https" or not self._allowed_host(parsed.hostname):
             raise ValueError(f"URL đích không thuộc {self.spec.platform}.")
         return url
+
+    def _allowed_host(self, hostname: str | None) -> bool:
+        normalized = (hostname or "").lower().rstrip(".")
+        return any(normalized == host or normalized.endswith(f".{host}") for host in self.spec.allowed_hosts)
 
     async def chrome_ready(self, account: dict) -> dict:
         status = await asyncio.to_thread(self.chrome.status, account["id"])
@@ -160,6 +176,29 @@ class ChromeWebPublisher(Publisher):
     async def discover_targets(self, page: Page) -> list[dict[str, str]]:
         anchors = page.locator(self.spec.target_link_selector)
         values = await anchors.evaluate_all("els => els.map(a => ({url:a.href||'',name:(a.textContent||a.getAttribute('aria-label')||'').trim()}))")
+        if self.spec.platform == "youtube":
+            channels: dict[str, tuple[int, dict[str, str]]] = {}
+            for item in values:
+                parsed = urlparse(item.get("url", ""))
+                parts = parsed.path.strip("/").split("/")
+                if not self._allowed_host(parsed.hostname) or len(parts) < 2 or parts[0] != "channel":
+                    continue
+                channel_id = parts[1]
+                if not YOUTUBE_CHANNEL_ID.fullmatch(channel_id):
+                    continue
+                raw_name = str(item.get("name") or "").strip()
+                exact_channel_link = len(parts) == 2
+                useful_name = bool(raw_name and raw_name != channel_id and not raw_name.startswith("channel/"))
+                score = 2 if exact_channel_link and useful_name else 1 if exact_channel_link else 0
+                target = {
+                    "external_id": channel_id,
+                    "name": (raw_name if score == 2 else channel_id)[:255],
+                    "url": f"https://www.youtube.com/channel/{channel_id}",
+                    "target_type": "channel",
+                }
+                if channel_id not in channels or score > channels[channel_id][0]:
+                    channels[channel_id] = (score, target)
+            return [target for _, target in channels.values()][:20]
         result, seen = [], set()
         for item in values:
             url = item.get("url", "")
@@ -226,15 +265,58 @@ class ChromeWebPublisher(Publisher):
             await page.wait_for_timeout(500)
         raise RuntimeError("Upload chưa xử lý xong hoặc nút phát hành chưa sẵn sàng.")
 
-    async def verify(self, page: Page) -> tuple[bool, str | None]:
-        deadline=asyncio.get_running_loop().time()+60
-        while asyncio.get_running_loop().time()<deadline:
-            if await page.locator(self.spec.success_selector).count(): return True, None
-            hrefs=await page.locator("a[href]").evaluate_all("els => els.map(a=>a.href||'')")
-            match=next((url for url in hrefs if any(fragment in url for fragment in self.spec.post_url_fragments)),None)
-            if match:return True,match
-            await page.wait_for_timeout(750)
-        return False,None
+    async def _visible_count(self, locator: Locator, limit: int = 10) -> int:
+        visible = 0
+        for index in range(min(await locator.count(), limit)):
+            if await locator.nth(index).is_visible():
+                visible += 1
+        return visible
+
+    def _normalize_post_url(self, value: str) -> str | None:
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in {"http", "https"} or not self._allowed_host(hostname):
+            return None
+        normalized = urlunsplit(("https", hostname, parsed.path.rstrip("/"), parsed.query, ""))
+        if not any(fragment in normalized.lower() for fragment in self.spec.post_url_fragments):
+            return None
+        return normalized
+
+    async def _post_urls(self, page: Page) -> set[str]:
+        hrefs = await page.locator("a[href]").evaluate_all("els => els.map(a => a.href || '')")
+        return {
+            normalized
+            for href in hrefs
+            if (normalized := self._normalize_post_url(href)) is not None
+        }
+
+    async def capture_verification_baseline(self, page: Page) -> VerificationBaseline:
+        return VerificationBaseline(
+            post_urls=frozenset(await self._post_urls(page)),
+            visible_success_count=await self._visible_count(page.locator(self.spec.success_selector)),
+        )
+
+    async def verify(
+        self,
+        page: Page,
+        baseline: VerificationBaseline,
+        *,
+        timeout_seconds: float = 60,
+        poll_seconds: float = 0.75,
+    ) -> tuple[bool, str | None]:
+        """Accept only evidence that appears after the one-way publish action."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0, timeout_seconds)
+        while True:
+            new_urls = await self._post_urls(page) - baseline.post_urls
+            if new_urls:
+                return True, sorted(new_urls)[0]
+            visible_success_count = await self._visible_count(page.locator(self.spec.success_selector))
+            if visible_success_count > baseline.visible_success_count:
+                return True, None
+            if loop.time() >= deadline:
+                return False, None
+            await asyncio.sleep(min(poll_seconds, max(0, deadline - loop.time())))
 
     async def capture(self, page: Page | None, job_id: str, step: str) -> None:
         if not page:return
@@ -265,9 +347,10 @@ class ChromeWebPublisher(Publisher):
                 if await context.is_cancelled():raise asyncio.CancelledError
                 if context.job.get("dry_run"):
                     keep=True;return PublishResult(PublishOutcome.DRY_RUN_READY,"Dry-run đã tới nút phát hành và chưa click.",metadata={"media_count":len(paths),"selector_version":self.selector_version})
+                baseline = await self.capture_verification_baseline(page)
                 await context.transition("verifying","commit_point_reached",True);submitted=True
                 await submit.click(timeout=15_000)
-                ok,url=await self.verify(page)
+                ok,url=await self.verify(page, baseline)
                 if not ok:
                     await self.capture(page,context.job["id"],"verify")
                     return PublishResult(PublishOutcome.UNKNOWN_RESULT,"Đã click phát hành nhưng chưa xác minh được kết quả.")

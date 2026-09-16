@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import re
 import time
-import urllib.parse
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -84,11 +82,11 @@ class AIResult:
 
 
 @dataclass(slots=True)
-class AIImageResult:
-    image_bytes: bytes
-    mime_type: str
-    source_model: str
-    fallback_used: bool = False
+class AIImageInput:
+    """A privacy-safe, downscaled image data URI for a multimodal text request."""
+
+    data_url: str
+    name: str
 
 
 class AIProvider(ABC):
@@ -100,11 +98,9 @@ class AIProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def generate_structured(self, prompt: str, system: str) -> AIResult:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def generate_image(self, prompt: str) -> AIImageResult:
+    async def generate_structured(
+        self, prompt: str, system: str, images: list[AIImageInput] | None = None,
+    ) -> AIResult:
         raise NotImplementedError
 
     async def close(self) -> None:
@@ -155,13 +151,25 @@ class OpenAICompatibleProvider(AIProvider):
         except (json.JSONDecodeError, ValidationError) as exc:
             raise AIError("invalid_output", "AI trả dữ liệu không đúng structured output.") from exc
 
-    async def generate_structured(self, prompt: str, system: str) -> AIResult:
+    async def generate_structured(
+        self, prompt: str, system: str, images: list[AIImageInput] | None = None,
+    ) -> AIResult:
         if not self.configured:
             raise AIConfigurationError()
         started = time.perf_counter()
+        user_content: str | list[dict[str, Any]] = prompt
+        if images:
+            user_content = [{"type": "text", "text": prompt}]
+            user_content.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image.data_url, "detail": "auto"},
+                }
+                for image in images
+            )
         body = {
             "model": self.settings.ai_model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_content}],
             "response_format": {"type": "json_object"},
         }
         last_error: AIError | None = None
@@ -169,6 +177,11 @@ class OpenAICompatibleProvider(AIProvider):
             try:
                 response = await self._get_client().post("/chat/completions", json=body)
                 if response.status_code >= 400:
+                    if images and response.status_code in {400, 415, 422}:
+                        raise AIError(
+                            "vision_unsupported",
+                            "Model đang chọn không hỗ trợ phân tích ảnh. Hãy chọn model text có vision hoặc bỏ ảnh tham chiếu.",
+                        )
                     raise self._classify_status(response.status_code)
                 data: dict[str, Any] = response.json()
                 structured = self._parse_json(data["choices"][0]["message"]["content"])
@@ -204,130 +217,6 @@ class OpenAICompatibleProvider(AIProvider):
         result = await self.generate_structured(prompt, system)
         return result.content.model_dump_json()
 
-    async def _fallback_pollinations(self, prompt: str) -> AIImageResult:
-        encoded = urllib.parse.quote(prompt.strip()[:400], safe="")
-        headers = {
-            "User-Agent": "TinixSocialHub/1.0 (Desktop Automation Studio)",
-            "Accept": "image/jpeg,image/png,image/*,*/*",
-        }
-        seed = int(time.time() * 1000) % 1_000_000
-
-        models_to_try = [
-            ("flux", "FLUX (Pollinations AI)"),
-            ("turbo", "Turbo (Pollinations AI)"),
-        ]
-
-        last_error: Exception | None = None
-        for model_name, display_name in models_to_try:
-            url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}&model={model_name}"
-            try:
-                async with httpx.AsyncClient(timeout=25.0, headers=headers, follow_redirects=True) as client:
-                    resp = await client.get(url)
-                    if resp.status_code == 200 and len(resp.content) > 500:
-                        content_type = resp.headers.get("content-type", "image/jpeg")
-                        if "image" not in content_type:
-                            content_type = "image/jpeg"
-                        return AIImageResult(
-                            image_bytes=resp.content,
-                            mime_type=content_type,
-                            source_model=display_name,
-                            fallback_used=True,
-                        )
-                    logger.warning("Pollinations model %s returned HTTP %s (len: %d)", model_name, resp.status_code, len(resp.content))
-            except Exception as exc:
-                last_error = exc
-                logger.warning("Pollinations model %s request failed: %s", model_name, exc)
-
-        raise AIError(
-            "image_fallback_failed",
-            f"Dịch vụ tạo ảnh miễn phí FLUX tạm thời không phản hồi ({last_error or 'HTTP error'}). Vui lòng thử lại sau giây lát.",
-            retryable=True,
-        )
-
-    @staticmethod
-    def _image_size(aspect_ratio: str) -> str:
-        ratio = (aspect_ratio or "auto").strip()
-        if ratio in {"3:4", "9:16"}:
-            return "1024x1536"
-        if ratio in {"4:3", "16:9"}:
-            return "1536x1024"
-        return "1024x1024"
-
-    async def generate_images(
-        self, prompt: str, *, count: int = 1, aspect_ratio: str = "auto", quality: str = "auto",
-        allow_fallback: bool = False,
-    ) -> list[AIImageResult]:
-        model = getattr(self.settings, "ai_image_model", "") or ""
-        if not model:
-            if "generativelanguage.googleapis.com" in self.settings.ai_base_url:
-                model = "gemini-2.5-flash-image"
-            elif "openai.com" in self.settings.ai_base_url:
-                model = "dall-e-3"
-            else:
-                model = "gemini-2.5-flash-image"
-
-        requested_count = max(1, min(int(count or 1), 4))
-        if self.configured:
-            body = {
-                "model": model,
-                "prompt": prompt,
-                "n": requested_count,
-                "response_format": "b64_json",
-            }
-            # The documented OpenAI Images API accepts these options. Other
-            # OpenAI-compatible gateways vary, so keep their payload minimal.
-            is_openai_images = "openai.com" in self.settings.ai_base_url
-            if is_openai_images:
-                body["size"] = self._image_size(aspect_ratio)
-                if quality in {"low", "medium", "high", "standard", "hd"}:
-                    body["quality"] = quality
-            try:
-                primary_timeout = min(float(self.settings.ai_timeout_seconds), 15.0)
-                client = self._get_client()
-                response = await client.post("/images/generations", json=body, timeout=primary_timeout)
-                if response.status_code == 200:
-                    data = response.json()
-                    items = data.get("data") or []
-                    if items:
-                        results: list[AIImageResult] = []
-                        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as dl_client:
-                            for item in items:
-                                if "b64_json" in item:
-                                    results.append(AIImageResult(
-                                        image_bytes=base64.b64decode(item["b64_json"]), mime_type="image/png",
-                                        source_model=model, fallback_used=False,
-                                    ))
-                                elif "url" in item:
-                                    img_resp = await dl_client.get(item["url"])
-                                    if img_resp.status_code == 200:
-                                        results.append(AIImageResult(
-                                            image_bytes=img_resp.content,
-                                            mime_type=img_resp.headers.get("content-type", "image/png"),
-                                            source_model=model, fallback_used=False,
-                                        ))
-                        if results:
-                            return results
-                else:
-                    err_snippet = response.text[:200]
-                    if response.status_code == 429 and "limit: 0" in err_snippet:
-                        logger.info("Gemini image free-tier quota is 0 (billing required). Switching to FLUX.")
-                    else:
-                        logger.info("Primary image model (%s) returned HTTP %s: %s. Switching to FLUX.", model, response.status_code, err_snippet)
-            except Exception as exc:
-                logger.info("Primary image model (%s) failed: %s. Switching to FLUX.", model, exc)
-
-        if not allow_fallback:
-            raise AIError("image_generation_failed", "Không thể tạo ảnh bằng model đã chọn. Hãy kiểm tra model, quota hoặc bật FLUX dự phòng.")
-        try:
-            return [await self._fallback_pollinations(prompt) for _ in range(requested_count)]
-        except Exception as exc:
-            if isinstance(exc, AIError):
-                raise
-            raise AIError("image_generation_failed", f"Không thể tạo ảnh từ prompt: {exc}") from exc
-
-    async def generate_image(self, prompt: str) -> AIImageResult:
-        return (await self.generate_images(prompt, allow_fallback=True))[0]
-
     async def close(self) -> None:
         if self._client:
             await self._client.aclose()
@@ -349,13 +238,8 @@ class MockAIProvider(AIProvider):
     def configured(self) -> bool:
         return True
 
-    async def generate_structured(self, prompt: str, system: str) -> AIResult:
+    async def generate_structured(
+        self, prompt: str, system: str, images: list[AIImageInput] | None = None,
+    ) -> AIResult:
         await asyncio.sleep(0)
         return AIResult(self.result, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}, 1, "mock")
-
-    async def generate_image(self, prompt: str) -> AIImageResult:
-        import io
-        from PIL import Image
-        buf = io.BytesIO()
-        Image.new("RGB", (200, 200), color=(50, 150, 200)).save(buf, "PNG")
-        return AIImageResult(image_bytes=buf.getvalue(), mime_type="image/png", source_model="mock", fallback_used=False)

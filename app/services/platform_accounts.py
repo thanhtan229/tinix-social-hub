@@ -59,11 +59,52 @@ class PlatformAccountService:
                 if status!="logged_in":raise RuntimeError("Account chưa đăng nhập hoặc đang có checkpoint.")
                 discovered=await publisher.discover_targets(page)
             if not discovered:raise RuntimeError("Không tìm thấy profile/channel từ UI; hãy mở Chrome tới trang kênh rồi thử lại.")
-            return await asyncio.to_thread(self.targets.sync,account_id,account["platform"],discovered)
+            existing = await asyncio.to_thread(self.targets.list, account_id)
+            synced = await asyncio.to_thread(self.targets.sync,account_id,account["platform"],discovered)
+            invalid_ids = self.INVALID_TARGET_IDS.get(account["platform"], frozenset())
+            if invalid_ids:
+                await asyncio.to_thread(
+                    self.targets.remove_invalid_discovery_targets,
+                    account_id, account["platform"], invalid_ids,
+                )
+                synced = await asyncio.to_thread(self.targets.list, account_id)
+            if account["platform"] == "youtube":
+                stale_ids = self._stale_youtube_external_ids(existing, discovered)
+                if stale_ids:
+                    await asyncio.to_thread(
+                        self.targets.remove_invalid_discovery_targets,
+                        account_id,
+                        "youtube",
+                        stale_ids,
+                        "Liên kết menu YouTube Studio, không phải kênh",
+                    )
+                    synced = await asyncio.to_thread(self.targets.list, account_id)
+            return synced
         except Exception as exc:
             await asyncio.to_thread(self.targets.set_sync_error,account_id,str(exc));raise
         finally:
             await asyncio.to_thread(self.chrome.close,account_id)
+
+    @staticmethod
+    def _youtube_channel_id(target: dict[str, Any]) -> str | None:
+        external_id = str(target.get("external_id") or "")
+        if external_id.startswith("UC") and len(external_id) == 24:
+            return external_id
+        parsed = urlparse(str(target.get("url") or ""))
+        parts = parsed.path.strip("/").split("/")
+        return parts[1] if len(parts) >= 2 and parts[0] == "channel" else None
+
+    @classmethod
+    def _stale_youtube_external_ids(
+        cls, existing: list[dict[str, Any]], discovered: list[dict[str, Any]],
+    ) -> set[str]:
+        discovered_ids = {str(item["external_id"]) for item in discovered}
+        return {
+            str(item["external_id"])
+            for item in existing
+            if cls._youtube_channel_id(item) in discovered_ids
+            and str(item.get("external_id") or "") not in discovered_ids
+        }
 
     @classmethod
     def _target_url(cls, platform: str, value: str | None) -> str:

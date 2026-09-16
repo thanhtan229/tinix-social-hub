@@ -41,7 +41,7 @@ class MigrationTests(unittest.TestCase):
             database = Database(path, root / "backups")
             self.assertTrue(database.initialize())
             with database.connection() as migrated:
-                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 15)
+                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 18)
                 self.assertEqual(migrated.execute("SELECT name FROM accounts WHERE id='a1'").fetchone()[0], "Page")
                 job = migrated.execute("SELECT status,dry_run FROM jobs WHERE id='j1'").fetchone()
                 self.assertEqual((job["status"], job["dry_run"]), ("queued", 1))
@@ -99,6 +99,38 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual((release["plan_id"], release["job_id"]), ("legacy-plan-j1", "j1"))
                 self.assertIn("legacy", release["payload_snapshot_json"])
             self.assertEqual(len(list((root / "backups").glob("tinix-pre-migration-v5-*.db"))), 1)
+
+    def test_navigation_targets_are_disabled_by_data_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "data" / "tinix_social.db"
+            path.parent.mkdir(parents=True)
+            connection = sqlite3.connect(path, isolation_level=None)
+            for version, sql in MIGRATIONS[:-1]:
+                for statement in sql.split(";"):
+                    if statement.strip():
+                        connection.execute(statement)
+                connection.execute("INSERT INTO schema_version(version,applied_at) VALUES(?,?)", (version, utc_now()))
+            now = utc_now()
+            connection.execute(
+                "INSERT INTO accounts(id,name,platform,profile_key,created_at,updated_at) VALUES('a1','Page','facebook','a1',?,?)",
+                (now, now),
+            )
+            connection.execute(
+                "INSERT INTO publishing_targets(id,account_id,platform,target_type,external_id,name,url,enabled,access_status,created_at,updated_at) "
+                "VALUES('target-1','a1','facebook','page','url:latest','Meta Business Suite','https://facebook.com/latest',1,'accessible',?,?)",
+                (now, now),
+            )
+            connection.close()
+
+            database = Database(path, root / "backups")
+            self.assertTrue(database.initialize())
+            with database.connection() as migrated:
+                target = migrated.execute(
+                    "SELECT enabled,access_status,last_error FROM publishing_targets WHERE id='target-1'"
+                ).fetchone()
+            self.assertEqual((target["enabled"], target["access_status"]), (0, "invalid_discovery"))
+            self.assertIn("không phải Page", target["last_error"])
 
 
 class StateMachineTests(unittest.TestCase):

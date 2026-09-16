@@ -37,7 +37,7 @@ Script sẽ tự động:
 2. Biên dịch icon vector SVG sang bộ icon Windows độ phân giải cao (`favicon.ico`).
 3. Tạo/cập nhật Desktop shortcut ngoài màn hình.
 4. Chạy toàn bộ 133+ test tự động để đảm bảo chất lượng.
-5. Tạo Git commit cho bản build mới.
+5. Không tự tạo Git commit. Dùng `--commit` chỉ khi bạn muốn tạo commit cho bản build đã kiểm tra.
 
 ## Cấu hình AI
 
@@ -78,7 +78,7 @@ Khởi động lại app, vào **Tài khoản & Page**, bấm **Kết nối API*
 
 Profile nằm tại `chrome_profiles/<UUID>`. UUID không đổi khi sửa account hoặc xóa account khác.
 
-Có thể dùng **Export Account & Sessions ZIP** để tạo một file `.tinix-profiles.zip` chứa toàn bộ tên account, nền tảng, username/UID, email, password, secret 2FA, mật khẩu email, cookie lưu trong database và dữ liệu phiên Chrome cần thiết; cache, model Chromium và file tạm không được đóng gói. **Import Profiles ZIP** tự tạo lại tất cả account trong một lần. Tinix không dùng chung thư mục profile sống. File ZIP không mã hóa và phải được bảo quản như dữ liệu đăng nhập.
+**Export Account & Sessions ZIP** mặc định tạo `.tinix-profiles.zip` chỉ chứa tên account, nền tảng, username/UID, email và dữ liệu phiên Chrome cần thiết; cache, model Chromium và file tạm không được đóng gói. Có thể chọn kèm credential: password, secret 2FA, mật khẩu email, cookie và recovery code được bảo vệ bằng Windows DPAPI, chỉ Import được bởi cùng tài khoản Windows đã Export. Có thể đặt mật khẩu để mã hóa toàn bộ gói thành `.tinix-profiles.enc` bằng AES-256-GCM; Import sẽ yêu cầu đúng mật khẩu. **Import Profiles** tự tạo lại tất cả account trong một lần. Tinix không dùng chung thư mục profile sống.
 
 Nút **Dọn dẹp profile** quét trước dung lượng có thể giải phóng rồi xóa cache/model có thể tạo lại của mọi profile. Cần đóng Chrome trước khi chạy; cookies, Local State, Preferences, Local Storage, Session Storage và IndexedDB được giữ nguyên.
 
@@ -148,6 +148,7 @@ Mọi transition được lưu trong `publish_job_events`; mỗi lần chạy đ
 - Tạo backup thủ công trong tab **Cài đặt**.
 - Restore chỉ chạy trong maintenance mode: request ghi khác bị khóa và worker được pause.
 - Tinix tạo safety backup trước restore và kiểm tra integrity của file nguồn.
+- **Recovery bundle** trong Cài đặt tạo `.tinix-recovery.enc` có mật khẩu, gồm database snapshot, media, Chrome profile và tùy chọn `.env`. Hãy đóng Chrome trước khi tạo; khi restore, Tinix giữ safety copy các dữ liệu bị thay thế và cần khởi động lại nếu bundle chứa `.env`.
 
 Để backup toàn bộ ứng dụng, đóng Tinix rồi sao chép:
 
@@ -180,6 +181,8 @@ Không có automated test nào gọi AI thật hoặc đăng mạng xã hội:
 ```
 
 Test suite bao phủ migrations, repositories, state machine, retry/backoff, cancellation, restart recovery, Chrome ownership, login fixtures, target parsing, content/revision/approval, media safety/dedupe, MockAI, dual-transport routing, YouTube API publisher và Playwright frontend smoke.
+
+Mỗi push và pull request trên GitHub chạy cùng bộ kiểm tra trên Windows với Python 3.11, bao gồm compile và Playwright smoke qua [Windows CI](.github/workflows/windows-ci.yml).
 
 ## Phạm vi release candidate
 

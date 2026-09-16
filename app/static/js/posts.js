@@ -19,6 +19,7 @@ const state = {
   },
   editingPost: null,
   activeCardPlatforms: new Map(), // postId -> activePlatform
+  quickSchedule: null,
 };
 
 function formatDate(isoString) {
@@ -840,21 +841,34 @@ async function openQuickSchedule(id) {
   const localIso = `${nextHour.getFullYear()}-${pad(nextHour.getMonth() + 1)}-${pad(nextHour.getDate())}T${pad(nextHour.getHours())}:${pad(nextHour.getMinutes())}`;
   document.querySelector("#quickScheduleTime").value = localIso;
 
-  // Load accounts and targets
+  // Load catalog data so the selected format is valid for the account platform.
   try {
-    const [accounts, targets] = await Promise.all([
+    const [accounts, targets, platforms] = await Promise.all([
       api("/accounts"),
       api("/targets?enabled=true"),
+      api("/platforms"),
     ]);
+    const enabledAccounts = accounts.filter(account => account.enabled);
+    if (!enabledAccounts.length) {
+      toast("Cần có ít nhất một account đang bật để lên lịch.");
+      return;
+    }
+    state.quickSchedule = {post, accounts: enabledAccounts, targets, platforms};
 
     const accountSelect = document.querySelector("#quickScheduleAccount");
-    accountSelect.innerHTML = accounts.map(a => `<option value="${a.id}">${esc(a.name)} (${esc(a.platform)})</option>`).join("");
+    accountSelect.innerHTML = enabledAccounts.map(a => `<option value="${a.id}">${esc(a.name)} (${esc(a.platform)})</option>`).join("");
 
     const targetSelect = document.querySelector("#quickScheduleTargets");
+    const formatSelect = document.querySelector("#quickScheduleFormat");
     function updateTargets() {
       const selectedAccount = accountSelect.value;
       const filteredTargets = targets.filter(t => t.account_id === selectedAccount);
       targetSelect.innerHTML = filteredTargets.map(t => `<option value="${t.id}" selected>${esc(t.name)} (${esc(t.target_type)})</option>`).join("");
+      const account = enabledAccounts.find(item => item.id === selectedAccount);
+      const platform = platforms.find(item => item.id === account?.platform);
+      const formats = (platform?.format_schemas || []).filter(item => (platform.content_formats || []).includes(item.id));
+      formatSelect.innerHTML = formats.map(item => `<option value="${esc(item.id)}">${esc(item.label)}</option>`).join("");
+      if (!formats.length) toast("Nền tảng của account chưa có định dạng xuất bản khả dụng.");
     }
     accountSelect.onchange = updateTargets;
     updateTargets();
@@ -872,15 +886,27 @@ async function handleSaveQuickSchedule(event) {
   const target_ids = Array.from(document.querySelector("#quickScheduleTargets").selectedOptions).map(o => o.value);
   const scheduled_at_str = document.querySelector("#quickScheduleTime").value;
   const dry_run = document.querySelector("#quickScheduleDryRun").checked;
+  const content_format = document.querySelector("#quickScheduleFormat").value;
+  const quickSchedule = state.quickSchedule;
 
   if (!target_ids.length) {
     toast("Hãy chọn ít nhất 1 Trang / Kênh đích.");
     return;
   }
+  if (!content_format || !quickSchedule) {
+    toast("Không tìm thấy định dạng xuất bản phù hợp.");
+    return;
+  }
 
   try {
     const scheduled_at = scheduled_at_str ? new Date(scheduled_at_str).toISOString() : null;
-    await api("/schedule", {
+    const selectedAccount = quickSchedule.accounts.find(item => item.id === account_id);
+    const platform = quickSchedule.platforms.find(item => item.id === selectedAccount?.platform);
+    const schema = (platform?.format_schemas || []).find(item => item.id === content_format);
+    const platform_settings = Object.fromEntries((schema?.settings || []).map(field => [
+      field.key, field.default ?? (field.key === "title" ? quickSchedule.post.title : ""),
+    ]));
+    await api("/schedules", {
       method: "POST",
       body: JSON.stringify({
         content_id,
@@ -891,8 +917,8 @@ async function handleSaveQuickSchedule(event) {
         delay_seconds: 0,
         random_delay_seconds: 0,
         missed_policy: "confirm",
-        content_format: "post",
-        platform_settings: {},
+        content_format,
+        platform_settings,
       }),
     });
     document.querySelector("#quickScheduleDialog").close();

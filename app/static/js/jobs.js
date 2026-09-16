@@ -100,10 +100,12 @@ async function openPublishedJob(id){
 
 async function showDetail(id){
   const job=await api(`/jobs/${id}`);currentJob=job;
-  document.querySelector("#jobSummary").innerHTML=`<div class="release-summary"><div>${badge(job.status)} ${job.dry_run?'<span class="badge good">Dry-run</span>':'<span class="badge bad">Đăng thật</span>'}</div><p><strong>Commit point:</strong> ${job.commit_reached_at?new Date(job.commit_reached_at).toLocaleString("vi-VN"):"Chưa tới"}</p><p><strong>Lỗi:</strong> ${esc(job.error||"—")}</p>${job.result?.post_url?`<p><a href="${esc(job.result.post_url)}" target="_blank" rel="noreferrer">Mở bài đăng</a></p>`:""}</div>`;
+  const release=job.release||{};
+  const verification=release.verification_status==="verified"?"Đã xác minh":release.verification_status==="rejected"?"Không xác minh được":release.verification_status==="pending"?"Chưa đối soát":"—";
+  document.querySelector("#jobSummary").innerHTML=`<div class="release-summary"><div>${badge(job.status)} ${job.dry_run?'<span class="badge good">Dry-run</span>':'<span class="badge bad">Đăng thật</span>'}</div><p><strong>Commit point:</strong> ${job.commit_reached_at?new Date(job.commit_reached_at).toLocaleString("vi-VN"):"Chưa tới"}</p><p><strong>Xác minh:</strong> ${verification}${release.verification_method?` (${esc(release.verification_method)})`:""}</p><p><strong>Lỗi:</strong> ${esc(job.error||"—")}</p>${job.result?.post_url?`<p><a href="${esc(job.result.post_url)}" target="_blank" rel="noreferrer">Mở bài đăng</a></p>`:""}</div>`;
   const attempts=new Map(job.attempt_history.map(item=>[item.attempt_number,item]));
   document.querySelector("#jobEvents").innerHTML=job.events.map(event=>`<div class="status-row"><span>${esc(event.event_type)}<small class="muted">${new Date(event.created_at).toLocaleString("vi-VN")}</small></span>${badge(event.to_status)}</div>`).join("")+`<p class="muted">${attempts.size} attempt(s)</p>`;
-  document.querySelector("#jobArtifacts").innerHTML=job.artifacts.length?job.artifacts.map(item=>`<div class="status-row"><span>${esc(item.artifact_type)}</span><code>${esc(item.relative_path)}</code></div>`).join(""):`<p class="muted">Không có artifact.</p>`;
+  document.querySelector("#jobArtifacts").innerHTML=job.artifacts.length?job.artifacts.map(item=>`<div class="status-row"><span>${esc(item.artifact_type)}</span><a href="/api/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(item.id)}/file" target="_blank" rel="noreferrer">${esc(item.relative_path)}</a></div>`).join(""):`<p class="muted">Không có artifact.</p>`;
   document.querySelector("#jobFinalize").classList.toggle("hidden",!["unknown_result","verifying"].includes(job.status));
   document.querySelector("#jobDialog").showModal();
 }

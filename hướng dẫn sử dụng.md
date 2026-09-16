@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Hub
 
-Phiên bản áp dụng: `1.0.11`  
+Phiên bản áp dụng: `1.0.24`  
 Hệ điều hành hỗ trợ: **Windows 10 / 11** (PC-first, Local-first)
 
 ---
@@ -92,7 +92,7 @@ Nhấp đúp chuột vào file **`BUILD.bat`** (hoặc chạy lệnh: `.\.venv\S
 - Biên dịch logo SVG sang bộ icon Windows `.ico` đa kích thước.
 - Làm mới shortcut ngoài Desktop.
 - Tự động chạy toàn bộ hơn 133+ bài test kiểm thử chất lượng phần mềm.
-- Tạo Git commit bản build mới.
+- Không tự tạo Git commit; chỉ dùng `--commit` khi muốn tạo commit cho bản build đã kiểm tra.
 
 ---
 
@@ -174,10 +174,10 @@ Nếu bạn có Google Cloud Console và muốn dùng API chính thức cho YouT
 
 ### 6.2. Tạo bài viết với AI Content Studio
 1. Mở tab **AI Content Studio**.
-2. Chọn loại hành động: Viết bài mới, Viết lại nội dung, Tóm tắt ngắn gọn, hoặc Chuyển đổi định dạng cho nhiều mạng xã hội.
-3. Chọn Hồ sơ thương hiệu (Brand Profile) nếu có để giữ đúng tông giọng (tone of voice).
-4. Nhập ý tưởng sơ bộ (Brief) và tích chọn các nền tảng mong muốn (Facebook, TikTok, YouTube, X...).
-5. Bấm **Tạo bản nháp**. Bản nháp hoàn thiện sẽ được gửi vào **Kho nội dung** để bạn chỉnh sửa và phê duyệt.
+2. Chọn **System Prompt** để quy định cách AI xử lý nội dung. Bạn có thể thêm, sửa, tắt hoặc xóa prompt ngay bên cạnh dropdown; ứng dụng vẫn tự bảo vệ định dạng JSON đầu ra.
+3. Chọn Hồ sơ thương hiệu (Brand Profile) nếu có để giữ đúng tông giọng (tone of voice). Hồ sơ cũng có thể được tạo, sửa hoặc xóa ngay tại đây.
+4. Nhập ý tưởng sơ bộ (Brief), chọn ảnh tham chiếu nếu cần và tích chọn các nền tảng mong muốn (Facebook, TikTok, YouTube, X...). AI chỉ nhận ảnh tham chiếu, tối đa 4 ảnh mỗi lần tạo.
+5. Bấm **Tạo bản nháp**. Ảnh tham chiếu sẽ được gửi tới text model hỗ trợ vision và tự gắn vào bản nháp. Nếu model không hỗ trợ phân tích ảnh, ứng dụng sẽ báo rõ để bạn bỏ ảnh hoặc đổi model.
 
 ### 6.3. Quy trình Phê duyệt (Approval Gate) - Nguyên tắc an toàn
 - Khi sửa đổi bất kỳ thông tin nào của bài viết, hệ thống sẽ tự động tăng số bản sửa đổi (**Revision**, ví dụ: Rev 1 -> Rev 2).

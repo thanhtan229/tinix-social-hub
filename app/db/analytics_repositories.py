@@ -95,7 +95,7 @@ class AnalyticsRepository:
                 row = connection.execute("SELECT * FROM publication_releases WHERE id=?", (release_id,)).fetchone()
                 if not row: raise KeyError(release_id)
                 connection.execute(
-                    "UPDATE publication_releases SET external_url=?,verification_status='verified',verified_at=?,verification_note=?,updated_at=? WHERE id=?",
+                    "UPDATE publication_releases SET external_url=?,verification_status='verified',verification_method='manual_connect',verified_at=?,verification_note=?,updated_at=? WHERE id=?",
                     (external_url, now, note[:2000], now, release_id),
                 )
                 connection.execute(

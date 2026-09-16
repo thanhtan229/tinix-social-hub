@@ -84,12 +84,27 @@ class SchedulingService:
             ).value
         except ValueError as exc:
             raise SchedulingError("Routing preference không hợp lệ.") from exc
+        route_transport = "chrome"
+        route_provider: str | None = None
+        route_provider_version: str | None = None
+        route_selector_version = definition.selector_version
+        route_reason = "selected_by_catalog_default"
+        route_connection_id: str | None = None
         if self.publisher_router:
             route = self.publisher_router.resolve(
                 account, content_format=content_format, dry_run=dry_run, preference=requested_routing,
             )
             if route.reason == "no_eligible_transport":
                 raise SchedulingError("Không có transport phù hợp cho account và định dạng đã chọn.")
+            transport = definition.transport(route.transport)
+            if not transport or content_format not in transport.content_formats:
+                raise SchedulingError("Định dạng đã chọn chưa được hỗ trợ bởi phương thức đăng hiện tại.")
+            route_transport = route.transport
+            route_provider = route.provider
+            route_provider_version = getattr(route.publisher, "provider_version", None)
+            route_selector_version = getattr(route.publisher, "selector_version", definition.selector_version)
+            route_reason = route.reason
+            route_connection_id = route.connection_id
         approval = self.contents.current_approval(content_id)
         if not dry_run and not approval:
             raise SchedulingError("Bản revision hiện tại chưa được duyệt.")
@@ -107,9 +122,31 @@ class SchedulingService:
             target = self.targets.get(target_id)
             if not target or target["account_id"] != account_id or not target["enabled"]:
                 raise SchedulingError("Page không hợp lệ, bị tắt hoặc không thuộc account đã chọn.")
+            if self.targets.is_system_navigation_target(target):
+                raise SchedulingError("Đích đã chọn là liên kết điều hướng hệ thống, không phải Page/Kênh có thể đăng.")
             if target["access_status"] not in {"accessible", "unknown"}:
                 raise SchedulingError(f"Page {target['name']} hiện không thể truy cập.")
             targets.append(target)
+
+        if not dry_run:
+            missing_evidence = [
+                target["name"] for target in targets
+                if not self.publications.dry_run_evidence(
+                    account_id=account_id,
+                    target_id=target["id"],
+                    content_format=content_format,
+                    transport=route_transport,
+                    selector_version=route_selector_version,
+                    provider_version=route_provider_version,
+                )
+            ]
+            if missing_evidence:
+                labels = ", ".join(missing_evidence[:3])
+                suffix = "…" if len(missing_evidence) > 3 else ""
+                raise SchedulingError(
+                    "Đăng thật yêu cầu dry-run thành công với route hiện tại "
+                    f"(account, Page/Kênh, định dạng và phiên bản publisher). Chưa có bằng chứng: {labels}{suffix}."
+                )
 
         created: list[dict[str, Any]] = []
         offset = 0
@@ -203,9 +240,14 @@ class SchedulingService:
                 scheduled_at=due,
                 settings=platform_settings,
                 payload_snapshot=payload, media_snapshot=media_snapshot,
-                selector_version=getattr(definition, "selector_version", None),
+                selector_version=route_selector_version,
                 idempotency_key=release_key,
                 requested_routing_policy=requested_routing,
+                publication_transport=route_transport,
+                provider=route_provider,
+                provider_version=route_provider_version,
+                routing_reason=route_reason,
+                connection_id=route_connection_id,
             )
             payload["publication_release_id"] = release["id"]
             job = self.jobs.create(

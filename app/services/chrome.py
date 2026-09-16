@@ -156,8 +156,15 @@ class ChromeManager:
             profile = (self.settings.chrome_profile_dir / account["profile_key"]).resolve()
             profile.mkdir(parents=True, exist_ok=True)
             port = self._port_for(account["profile_key"])
+            start_url = {
+                "facebook": "https://www.facebook.com/",
+                "instagram": "https://www.instagram.com/",
+                "tiktok": "https://www.tiktok.com/",
+                "youtube": "https://studio.youtube.com/",
+                "x": "https://x.com/",
+            }.get(account.get("platform"), "about:blank")
             process = subprocess.Popen(
-                [str(executable), f"--user-data-dir={profile}", f"--remote-debugging-port={port}", "--no-first-run", "about:blank"],
+                [str(executable), f"--user-data-dir={profile}", f"--remote-debugging-port={port}", "--no-first-run", start_url],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

@@ -46,6 +46,22 @@ const ROUTING_LABELS = {
   official_api_only:"Chỉ API",
 };
 
+const READINESS_LABELS = {
+  dry_run_ready: "Dry-run đạt",
+  published_unverified: "Đã đăng, chưa đối soát",
+  real_publish_verified: "Đã xác minh đăng thật",
+  review_required: "Cần dry-run lại",
+  attention_required: "Lần thử mới nhất cần xử lý",
+  latest_attempt_pending: "Đang chờ kết quả mới nhất",
+  no_successful_evidence: "Chưa có lần chạy thành công",
+};
+
+function readinessSummary(account) {
+  const items = account.readiness || [];
+  if (!items.length) return "Chưa có bằng chứng dry-run";
+  return items.map(item => `${item.content_format}/${item.transport || "chrome"}: ${READINESS_LABELS[item.state] || item.state}`).join(" · ");
+}
+
 function routingControl(account) {
   const preference = account.routing_preference || "chrome_preferred";
   const connection = providerConnections.find(item => item.account_id === account.id && item.transport === "official_api");
@@ -53,7 +69,7 @@ function routingControl(account) {
     `<option value="${value}"${value === preference ? " selected" : ""}>${label}</option>`
   ).join("");
   const apiButton = account.platform === "youtube"
-    ? `<button data-account-action="${connection ? "disconnect-api" : "connect-api"}" data-id="${account.id}" data-connection-id="${connection?.id || ""}">${connection ? "API đã nối" : "Kết nối API"}</button>`
+    ? `<button data-account-action="${connection ? "disconnect-api" : "connect-api"}" data-id="${account.id}" data-connection-id="${connection?.id || ""}">${connection ? "Ngắt API" : "Kết nối API"}</button>`
     : "";
   return `<div class="account-routing"><select data-routing-account="${account.id}" aria-label="Cách đăng của ${esc(account.name)}">${options}</select>${apiButton}</div>`;
 }
@@ -278,6 +294,7 @@ async function saveAccountChanges(accountId) {
   const secret2faVal = document.querySelector("#detail2fa")?.value.trim() || "";
   const recoveryCodesVal = document.querySelector("#detailRecoveryCodes")?.value || "";
   const notesVal = document.querySelector("#detailNotes")?.value || "";
+  const credentialsLoaded = document.querySelector("#detailAccountForm")?.dataset.credentialsLoaded === "true";
 
   const payload = {
     name: nameVal,
@@ -285,14 +302,16 @@ async function saveAccountChanges(accountId) {
     username: account.username || "",
     email: emailVal,
     recovery_email: recoveryEmailVal,
-    password: passwordVal,
-    secret_2fa: secret2faVal,
-    recovery_codes: recoveryCodesVal,
     notes: notesVal,
     starred: Boolean(account.starred),
-    email_pass: account.email_pass || "",
-    cookie: account.cookie || "",
   };
+  if (credentialsLoaded) {
+    Object.assign(payload, {
+      password: passwordVal,
+      secret_2fa: secret2faVal,
+      recovery_codes: recoveryCodesVal,
+    });
+  }
 
   try {
     const updated = await api(`/accounts/${accountId}`, {
@@ -359,6 +378,25 @@ function bindDetailEvents(account) {
     };
   }
 
+  const routingSelect = document.querySelector(`[data-routing-account="${accountId}"]`);
+  if (routingSelect) {
+    routingSelect.onchange = async () => {
+      const previousPreference = account.routing_preference || "chrome_preferred";
+      const routingPreference = routingSelect.value;
+      try {
+        const updated = await api(`/accounts/${accountId}/routing-preference`, {
+          method: "PATCH",
+          body: JSON.stringify({routing_preference: routingPreference}),
+        });
+        account.routing_preference = updated.routing_preference;
+        toast(`Đã lưu cách đăng cho ${account.name}.`);
+      } catch (error) {
+        routingSelect.value = previousPreference;
+        toast(error.message);
+      }
+    };
+  }
+
   const clearBtn = document.querySelector("#detailClearCredentialsBtn");
   if (clearBtn) {
     clearBtn.onclick = async () => {
@@ -412,8 +450,10 @@ async function renderAccountDetail(account) {
 
   const currentAccountId = account.id;
   let credentials = {password: "", secret_2fa: "", recovery_codes: "", email_pass: "", cookie: ""};
+  let credentialsLoaded = false;
   try {
     credentials = await api(`/accounts/${account.id}/credentials`);
+    credentialsLoaded = true;
   } catch (_) {}
 
   if (accountFilters.selectedAccountId !== currentAccountId) return;
@@ -439,8 +479,10 @@ async function renderAccountDetail(account) {
     <div class="detail-status-banner">
       ${esc(statusBanner)}
     </div>
+    <p class="muted" title="Kết quả được đối chiếu theo account, kênh, định dạng và phiên bản adapter hiện tại.">${esc(readinessSummary(account))}</p>
+    ${routingControl(account)}
 
-    <form id="detailAccountForm" onsubmit="return false;">
+    <form id="detailAccountForm" data-credentials-loaded="${credentialsLoaded}" onsubmit="return false;">
       <div class="detail-form-grid">
         <div class="detail-field">
           <label class="detail-field-label" for="detailName">Tên account</label>
@@ -537,15 +579,16 @@ function renderAccountList() {
             <td data-label="Trạng thái" class="account-cell-status">
               ${badge(account.login_status)}
               ${account.profile_operation_locked ? '<small class="profile-maintenance">Đang bảo trì</small>' : ""}
+              <small class="muted">${esc(readinessSummary(account))}</small>
             </td>
             <td data-label="Thao tác" class="account-cell-actions">
+              <button data-account-action="chrome" class="btn-card-chrome" data-id="${account.id}" title="Mở Chrome">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                Mở
+              </button>
               <button data-account-action="delete" class="btn-card-delete danger" data-id="${account.id}" title="Xóa account">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/></svg>
                 Xóa
-              </button>
-              <button data-account-action="chrome" class="btn-card-chrome" data-id="${account.id}" title="Mở Chrome">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                Mở Chrome
               </button>
             </td>
           </tr>
@@ -627,7 +670,7 @@ export async function refreshAccounts() {
     document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
     const helpEl = document.querySelector("#profileHelp");
     if (helpEl) {
-      helpEl.textContent = accounts.length ? "Export tạo ZIP chứa thông tin account, dữ liệu đăng nhập và phiên Chrome; hãy bảo quản file cẩn thận." : "Import file .tinix-profiles.zip để tạo toàn bộ account, thông tin đăng nhập và phiên Chrome trong một lần.";
+      helpEl.textContent = accounts.length ? "Export mặc định chỉ chứa thông tin account và phiên Chrome. Có thể chọn kèm credential được bảo vệ bằng Windows DPAPI của tài khoản hiện tại." : "Import file .tinix-profiles.zip để tạo toàn bộ account và phiên Chrome trong một lần.";
     }
     renderAccountList();
     renderTargetList();
@@ -649,19 +692,11 @@ async function runProfileAction(action, account = null) {
   }
   if (action === "export") {
     if (!store.accounts.length) { toast("App chưa có account để Export."); return false; }
-    const button = document.querySelector('[data-profile-action="export"]');
-    const originalLabel = button.textContent;
-    button.disabled = true;
-    button.textContent = "Đang sao chép và nén...";
-    toast("Đang Export toàn bộ profile. Vui lòng chờ, không đóng app...");
-    try {
-      const result = await api("/profiles/export", {method:"POST"});
-      toast(`Đã Export ${result.accounts_exported} phiên (${formatBytes(result.bytes_copied)}) tới ${result.archive_path}`);
-      return true;
-    } finally {
-      button.textContent = originalLabel;
-      button.disabled = !store.accounts.length;
-    }
+    const dialog = document.querySelector("#profileExportDialog");
+    dialog.querySelector("form").reset();
+    dialog.showModal();
+    setTimeout(() => document.querySelector("#profileExportPassword")?.focus(), 0);
+    return false;
   }
   if (action === "cleanup") {
     const preview = await api("/profiles/cleanup-preview");
@@ -802,11 +837,27 @@ export function initAccounts() {
     saveButton.disabled = true;
     saveButton.textContent = "Đang lưu…";
     try {
-      await api(accountId ? `/accounts/${accountId}` : "/accounts", {method:accountId ? "PUT" : "POST", body:payload});
+      const savedAccount = await api(accountId ? `/accounts/${accountId}` : "/accounts", {method:accountId ? "PUT" : "POST", body:payload});
       await refreshAccounts();
       dialog.close();
       event.target.reset();
       toast(accountId ? "Đã cập nhật account" : "Đã thêm account");
+      if (!accountId) {
+        try {
+          await api(`/accounts/${savedAccount.id}/chrome/open`, {method:"POST"});
+          try {
+            const result = await api(`/accounts/${savedAccount.id}/check-login`, {method:"POST"});
+            setAccountLoginStatus(savedAccount.id, result.login_status);
+            if (!["logged_in", "checkpoint"].includes(result.login_status)) pollLoginAfterOpen(savedAccount);
+            toast(`Đã mở Chrome của ${savedAccount.name}. Hãy đăng nhập account trên nền tảng tương ứng.`);
+          } catch (error) {
+            toast(`Đã thêm account và mở Chrome nhưng kiểm tra đăng nhập thất bại: ${error.message}`);
+          }
+        } catch (error) {
+          toast(`Đã thêm account nhưng chưa mở được Chrome: ${error.message}. Hãy thử lại bằng nút Mở.`);
+        }
+        await refreshAccounts();
+      }
     } catch(error) { toast(error.message); }
     finally { saveButton.disabled = false; saveButton.textContent = originalLabel; }
   };
@@ -819,15 +870,17 @@ export function initAccounts() {
     const submitButton = document.querySelector("#confirmProfileImport");
     const cancelButton = document.querySelector("#cancelProfileImport");
     const pathInput = document.querySelector("#profileArchivePath");
+    const passwordInput = document.querySelector("#profileArchivePassword");
     status.className = "operation-status";
-    status.textContent = "Đang đọc file ZIP và khôi phục các phiên đăng nhập… Việc này có thể mất vài phút.";
+    status.textContent = "Đang đọc gói profile và khôi phục các phiên đăng nhập… Việc này có thể mất vài phút.";
     submitButton.disabled = true;
     submitButton.textContent = "Đang Import…";
     cancelButton.disabled = true;
     pathInput.disabled = true;
+    passwordInput.disabled = true;
     toast("Đang Import toàn bộ account/profile. Vui lòng chờ...");
     try {
-      const result = await api("/profiles/import", {method:"POST", body:JSON.stringify({bundle_path:archivePath})});
+      const result = await api("/profiles/import", {method:"POST", body:JSON.stringify({bundle_path:archivePath,password:passwordInput.value || null})});
       event.target.reset();
       await refreshAccounts();
       importDialog.close();
@@ -841,6 +894,34 @@ export function initAccounts() {
       submitButton.textContent = "Bắt đầu Import";
       cancelButton.disabled = false;
       pathInput.disabled = false;
+      passwordInput.disabled = false;
+    }
+  };
+  document.querySelector("#profileExportForm").onsubmit = async event => {
+    event.preventDefault();
+    const dialog = document.querySelector("#profileExportDialog");
+    const includeCredentials = document.querySelector("#profileExportIncludeCredentials").checked;
+    const password = document.querySelector("#profileExportPassword").value;
+    const submitButton = document.querySelector("#confirmProfileExport");
+    const actionButton = document.querySelector('[data-profile-action="export"]');
+    const originalLabel = submitButton.textContent;
+    submitButton.disabled = true;
+    submitButton.textContent = "Đang Export…";
+    if (actionButton) actionButton.disabled = true;
+    toast("Đang Export toàn bộ profile. Vui lòng chờ, không đóng app...");
+    try {
+      const result = await api("/profiles/export", {
+        method:"POST", body:JSON.stringify({include_credentials:includeCredentials, password:password || null}),
+      });
+      dialog.close();
+      event.target.reset();
+      toast(`Đã Export ${result.accounts_exported} phiên (${formatBytes(result.bytes_copied)})${result.package_encrypted ? "; toàn bộ gói đã được mã hóa" : ""}${result.credentials_included ? "; credential đã được bảo vệ" : "; không kèm credential"} tới ${result.archive_path}`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = originalLabel;
+      if (actionButton) actionButton.disabled = !store.accounts.length;
     }
   };
   document.querySelector("#profileCleanupForm").onsubmit = async event => {

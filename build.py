@@ -73,7 +73,11 @@ def update_version(new_version: str) -> None:
     main_js = PROJECT_ROOT / "app" / "static" / "js" / "main.js"
     if main_js.exists():
         js_text = main_js.read_text(encoding="utf-8")
-        js_text = re.sub(r'accounts\.js\?v=[^"]+', f'accounts.js?v={new_version}', js_text)
+        js_text = re.sub(
+            r'(\./[A-Za-z0-9_-]+\.js)\?v=[^"]+',
+            lambda match: f"{match.group(1)}?v={new_version}",
+            js_text,
+        )
         main_js.write_text(js_text, encoding="utf-8")
 
     print(f"[Build] Da cap nhat version: v{new_version}")
@@ -203,7 +207,7 @@ def main() -> None:
     parser.add_argument("--version", type=str, default=None, help="Dat dich danh version")
     parser.add_argument("--no-bump", action="store_true", help="Khong thay doi version hien tai")
     parser.add_argument("--no-tests", action="store_true", help="Bo qua kiem thu tu dong")
-    parser.add_argument("--no-commit", action="store_true", help="Khong tu dong commit git")
+    parser.add_argument("--commit", action="store_true", help="Tao Git commit sau khi build thanh cong")
     parser.add_argument("-m", "--message", type=str, default=None, help="Thong diep git commit tuy chon")
     args = parser.parse_args()
 
@@ -231,8 +235,8 @@ def main() -> None:
         if not run_tests():
             sys.exit(1)
 
-    # 4. Commit git
-    if not args.no_commit:
+    # 4. Commit git is explicit so a build can never stage unrelated work by default.
+    if args.commit:
         git_commit(new_version, args.message)
 
     print(f"\n[Build HOAN TAT] Tinix Social Hub v{new_version} da san sang!")

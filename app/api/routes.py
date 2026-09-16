@@ -9,6 +9,7 @@ from typing import Any
 
 import psutil
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app import __version__
@@ -71,12 +72,28 @@ class RestoreRequest(BaseModel):
     name: str
 
 
+class RecoveryBundleCreateRequest(BaseModel):
+    password: str = Field(min_length=12, max_length=500)
+    include_environment: bool = True
+
+
+class RecoveryBundleRestoreRequest(BaseModel):
+    bundle_path: str = Field(min_length=3, max_length=2000)
+    password: str = Field(min_length=1, max_length=500)
+
+
 class ProfileImportRequest(BaseModel):
     source_path: str = Field(min_length=3, max_length=2000)
 
 
 class ProfileBundleImportRequest(BaseModel):
     bundle_path: str = Field(min_length=3, max_length=2000)
+    password: str | None = Field(default=None, max_length=500)
+
+
+class ProfileExportRequest(BaseModel):
+    include_credentials: bool = False
+    password: str | None = Field(default=None, max_length=500)
 
 
 class ProfileRestoreRequest(BaseModel):
@@ -191,7 +208,10 @@ def services(request: Request) -> Any:
     return request.app.state.services
 
 
-def public_account(account: dict[str, Any] | None, chrome_status: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def public_account(
+    account: dict[str, Any] | None, chrome_status: dict[str, Any] | None = None,
+    readiness: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     if account is None:
         return None
     hidden = {"password", "secret_2fa", "email_pass", "cookie", "recovery_codes"}
@@ -205,6 +225,7 @@ def public_account(account: dict[str, Any] | None, chrome_status: dict[str, Any]
         "recovery_email": str(account.get("recovery_email") or ""),
         "notes": str(account.get("notes") or ""),
         "starred": bool(account.get("starred")),
+        "readiness": readiness or [],
     })
     if chrome_status:
         public["chrome_state"] = chrome_status.get("state") or "stopped"
@@ -213,6 +234,19 @@ def public_account(account: dict[str, Any] | None, chrome_status: dict[str, Any]
         public["chrome_state"] = "stopped"
         public["chrome_port"] = None
     return public
+
+
+async def account_public_view(svc: Any, account: dict[str, Any]) -> dict[str, Any]:
+    definition = get_platform(str(account.get("platform") or ""))
+    readiness = await asyncio.to_thread(
+        svc.publications.account_readiness,
+        account["id"],
+        platform=account["platform"],
+        selector_version=definition.selector_version if definition else None,
+    )
+    return public_account(
+        account, chrome_status=svc.chrome.status(account["id"]), readiness=readiness,
+    )
 
 
 @router.get("/platforms")
@@ -261,6 +295,69 @@ async def health(request: Request) -> dict[str, Any]:
             "state": getattr(maintenance, "state", "unavailable"),
             "last_result": getattr(maintenance, "last_result", None),
         },
+    }
+
+
+@router.get("/diagnostics/readiness")
+async def readiness_diagnostics(request: Request) -> dict[str, Any]:
+    """Check local prerequisites without calling an AI provider or social network."""
+    svc = services(request)
+    database = await asyncio.to_thread(svc.database.ping)
+    usage = shutil.disk_usage(svc.settings.data_dir)
+    chrome_path = await asyncio.to_thread(getattr(svc.chrome, "detect_executable", lambda: None))
+    minimum_free = max(2 * 1024**3, int(usage.total * 0.1))
+    checks = [
+        {
+            "id": "database", "label": "Database", "state": "ready" if database["ok"] else "error",
+            "detail": "SQLite integrity connection is available." if database["ok"] else database["result"],
+        },
+        {
+            "id": "chrome", "label": "Google Chrome", "state": "ready" if chrome_path else "error",
+            "detail": str(chrome_path) if chrome_path else "Cài Google Chrome hoặc đặt TINIX_CHROME_PATH.",
+        },
+        {
+            "id": "disk", "label": "Dung lượng ổ đĩa", "state": "ready" if usage.free >= minimum_free else "warning",
+            "detail": f"Còn trống {usage.free / 1024**3:.1f} GB; ngưỡng cảnh báo {minimum_free / 1024**3:.1f} GB.",
+        },
+        {
+            "id": "worker", "label": "Worker", "state": "ready" if svc.worker.state in {"idle", "running"} else "warning",
+            "detail": f"Trạng thái: {svc.worker.state}.",
+        },
+        {
+            "id": "ai", "label": "AI provider", "state": "ready" if svc.ai.configured else "warning",
+            "detail": "Đã cấu hình." if svc.ai.configured else "Chưa cấu hình; AI Content Studio sẽ không thể tạo nội dung.",
+        },
+    ]
+    media_creator = getattr(getattr(svc, "image_generation", None), "media_creator", None)
+    if media_creator:
+        try:
+            providers = await media_creator.providers()
+            checks.append({
+                "id": "media_creator", "label": "Tinix Media Creator",
+                "state": "ready" if providers else "warning",
+                "detail": f"Sẵn sàng với {len(providers)} provider." if providers else "Đã kết nối nhưng chưa có provider ảnh.",
+            })
+        except Exception as exc:
+            checks.append({
+                "id": "media_creator", "label": "Tinix Media Creator", "state": "warning",
+                "detail": str(exc),
+            })
+    youtube_configured = bool(
+        getattr(svc.settings, "youtube_client_id", "")
+        and getattr(svc.settings, "youtube_client_secret", "")
+    )
+    provider_accounts = getattr(svc, "provider_accounts", None)
+    if not youtube_configured and provider_accounts:
+        youtube_configured = await asyncio.to_thread(
+            lambda: bool(provider_accounts.youtube_configured)
+        )
+    checks.append({
+        "id": "youtube_api", "label": "YouTube Official API", "state": "ready" if youtube_configured else "optional",
+        "detail": "OAuth client đã cấu hình." if youtube_configured else "Tùy chọn; Chrome vẫn dùng được cho YouTube.",
+    })
+    return {
+        "status": "ready" if all(item["state"] != "error" for item in checks) else "attention",
+        "checks": checks,
     }
 
 
@@ -419,10 +516,7 @@ async def runtime_readiness(request: Request) -> dict[str, Any]:
 async def list_accounts(request: Request) -> list[dict[str, Any]]:
     svc = services(request)
     accounts = await asyncio.to_thread(svc.accounts.list)
-    return [
-        public_account(account, chrome_status=svc.chrome.status(account["id"]))
-        for account in accounts
-    ]
+    return [await account_public_view(svc, account) for account in accounts]
 
 
 @router.get("/accounts/{account_id}")
@@ -431,7 +525,7 @@ async def get_account(account_id: str, request: Request) -> dict[str, Any]:
     account = await asyncio.to_thread(svc.accounts.get, account_id)
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")
-    return public_account(account, chrome_status=svc.chrome.status(account_id))
+    return await account_public_view(svc, account)
 
 
 @router.get("/accounts/{account_id}/credentials")
@@ -484,7 +578,7 @@ async def update_account(account_id: str, body: AccountUpdate, request: Request)
         raise HTTPException(422, "Nền tảng không được hỗ trợ.")
     account = await asyncio.to_thread(
         services(request).accounts.update, account_id, body.name, body.platform,
-        metadata=body.model_dump(exclude={"name", "platform"}),
+        metadata=body.model_dump(exclude={"name", "platform"}, exclude_unset=True),
     )
     if not account:
         raise HTTPException(404, "Không tìm thấy account.")
@@ -690,7 +784,7 @@ async def import_profile_bundle(body: ProfileBundleImportRequest, request: Reque
     svc = services(request)
     try:
         logger.info("Profile bundle import started: %s", body.bundle_path)
-        result = await asyncio.to_thread(svc.profile_transfer.import_all_profiles, body.bundle_path)
+        result = await asyncio.to_thread(svc.profile_transfer.import_all_profiles, body.bundle_path, body.password)
         if "accounts" in result:
             result["accounts"] = [public_account(account) for account in result["accounts"]]
         logger.info("Profile bundle import completed: accounts=%s", result.get("accounts_imported", 0))
@@ -701,12 +795,17 @@ async def import_profile_bundle(body: ProfileBundleImportRequest, request: Reque
 
 
 @router.post("/profiles/export")
-async def export_all_profiles(request: Request) -> dict[str, Any]:
+async def export_all_profiles(
+    request: Request, body: ProfileExportRequest | None = None,
+) -> dict[str, Any]:
     from app.services.profile_transfer import ProfileTransferError
     svc = services(request)
     try:
         logger.info("Profile bundle export started")
-        result = await asyncio.to_thread(svc.profile_transfer.export_all_profiles)
+        result = await asyncio.to_thread(
+            svc.profile_transfer.export_all_profiles,
+            bool(body and body.include_credentials), body.password if body else None,
+        )
         logger.info("Profile bundle export completed: accounts=%s", result.get("accounts_exported", 0))
         return result
     except (ProfileTransferError, RuntimeError, ValueError, OSError) as exc:
@@ -742,8 +841,12 @@ async def cleanup_profiles(request: Request) -> dict[str, Any]:
 
 
 @router.post("/accounts/{account_id}/profile/export")
-async def export_profile(account_id: str, request: Request) -> dict[str, Any]:
-    return await _profile_operation(request, account_id, "export_profile")
+async def export_profile(
+    account_id: str, request: Request, body: ProfileExportRequest | None = None,
+) -> dict[str, Any]:
+    return await _profile_operation(
+        request, account_id, "export_profile", bool(body and body.include_credentials), body.password if body else None,
+    )
 
 
 @router.post("/accounts/{account_id}/profile/backup")
@@ -954,6 +1057,11 @@ async def create_job(body: JobCreate, request: Request) -> dict[str, Any]:
     svc = services(request)
     if body.kind == "publish" and not body.account_id:
         raise HTTPException(422, "Job publish cần account_id.")
+    if body.kind == "publish" and not body.dry_run:
+        raise HTTPException(
+            422,
+            "Không thể tạo publish job đăng thật trực tiếp. Dùng /api/schedules hoặc /api/v1/plans để áp dụng approval, target và dry-run safety gate.",
+        )
     if body.account_id and not await asyncio.to_thread(svc.accounts.get, body.account_id):
         raise HTTPException(404, "Không tìm thấy account.")
     scheduled_at = body.scheduled_at.astimezone(timezone.utc).isoformat() if body.scheduled_at else None
@@ -1151,6 +1259,19 @@ async def job_artifacts(job_id: str, request: Request) -> list[dict[str, Any]]:
     return await asyncio.to_thread(services(request).jobs.artifacts, job_id)
 
 
+@router.get("/jobs/{job_id}/artifacts/{artifact_id}/file", include_in_schema=False)
+async def job_artifact_file(artifact_id: str, job_id: str, request: Request) -> FileResponse:
+    artifacts = await asyncio.to_thread(services(request).jobs.artifacts, job_id)
+    artifact = next((item for item in artifacts if item["id"] == artifact_id), None)
+    if not artifact:
+        raise HTTPException(404, "Không tìm thấy artifact của job.")
+    root = services(request).settings.screenshot_dir.resolve()
+    path = (root / str(artifact["relative_path"])).resolve()
+    if root not in path.parents or path.is_symlink() or not path.is_file():
+        raise HTTPException(404, "Tệp artifact không còn tồn tại.")
+    return FileResponse(path)
+
+
 @router.get("/chrome")
 async def chrome_status(request: Request) -> Any:
     return await asyncio.to_thread(services(request).chrome.status)
@@ -1198,16 +1319,112 @@ async def create_backup(request: Request) -> dict[str, str]:
 async def restore_backup(body: RestoreRequest, request: Request) -> dict[str, bool]:
     svc = services(request)
     async with svc.scheduler.maintenance_lock:
+        safety_name: str | None = None
+        resume_worker = True
         try:
             await svc.worker.pause()
-            await asyncio.to_thread(svc.database.restore_backup, body.name)
+        except TimeoutError as exc:
+            svc.worker.resume()
+            raise HTTPException(409, str(exc)) from exc
+        except Exception:
+            svc.worker.resume()
+            raise
+        try:
+            try:
+                safety = await asyncio.to_thread(svc.database.restore_backup, body.name)
+                safety_name = safety.name
+            except (FileNotFoundError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+
+            try:
+                await asyncio.to_thread(svc.database.initialize)
+                await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
+            except Exception as exc:
+                try:
+                    await asyncio.to_thread(svc.database.restore_backup, safety_name)
+                    await asyncio.to_thread(svc.database.initialize)
+                    await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
+                except Exception as rollback_exc:
+                    resume_worker = False
+                    logger.exception("Could not roll back database after restore migration failure")
+                    raise HTTPException(
+                        500,
+                        "Khôi phục database thất bại và không thể hoàn nguyên an toàn. Worker vẫn tạm dừng; khởi động lại ứng dụng và dùng safety backup mới nhất.",
+                    ) from rollback_exc
+                logger.exception("Database restore failed after replacement; safety backup was restored")
+                raise HTTPException(
+                    500, "Khôi phục database không hoàn tất; dữ liệu trước đó đã được hoàn nguyên."
+                ) from exc
+        finally:
+            if resume_worker:
+                svc.worker.resume()
+    return {"restored": True}
+
+
+@router.post("/recovery/export")
+async def create_recovery_bundle(
+    body: RecoveryBundleCreateRequest, request: Request,
+) -> dict[str, Any]:
+    from app.services.recovery_bundle import RecoveryBundleError
+    svc = services(request)
+    recovery = getattr(svc, "recovery", None)
+    if not recovery:
+        raise HTTPException(503, "Recovery service không khả dụng.")
+    async with svc.scheduler.maintenance_lock:
+        try:
+            await svc.worker.pause()
+            return await asyncio.to_thread(
+                recovery.create_bundle, body.password, include_environment=body.include_environment,
+            )
         except TimeoutError as exc:
             raise HTTPException(409, str(exc)) from exc
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+        except RecoveryBundleError as exc:
+            raise HTTPException(409, str(exc)) from exc
         finally:
             svc.worker.resume()
-    return {"restored": True}
+
+
+@router.post("/recovery/restore")
+async def restore_recovery_bundle(
+    body: RecoveryBundleRestoreRequest, request: Request,
+) -> dict[str, Any]:
+    from app.services.recovery_bundle import RecoveryBundleError
+    svc = services(request)
+    recovery = getattr(svc, "recovery", None)
+    if not recovery:
+        raise HTTPException(503, "Recovery service không khả dụng.")
+    async with svc.scheduler.maintenance_lock:
+        result: dict[str, Any] | None = None
+        resume_worker = True
+        try:
+            await svc.worker.pause()
+            result = await asyncio.to_thread(recovery.restore_bundle, body.bundle_path, body.password)
+            await asyncio.to_thread(svc.database.initialize)
+            await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
+        except TimeoutError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except RecoveryBundleError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except Exception as exc:
+            if result:
+                try:
+                    await asyncio.to_thread(recovery.rollback_restore, result)
+                    await asyncio.to_thread(svc.database.initialize)
+                    await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
+                except Exception as rollback_exc:
+                    resume_worker = False
+                    logger.exception("Could not roll back recovery bundle restore failure")
+                    raise HTTPException(
+                        500,
+                        "Khôi phục recovery bundle thất bại và không thể hoàn nguyên an toàn. Worker vẫn tạm dừng; khởi động lại ứng dụng.",
+                    ) from rollback_exc
+            logger.exception("Recovery bundle restore failed after replacement")
+            raise HTTPException(500, "Khôi phục recovery bundle không hoàn tất; dữ liệu trước đó đã được hoàn nguyên.") from exc
+        finally:
+            if resume_worker:
+                svc.worker.resume()
+    result.pop("_rollback", None)
+    return result
 
 
 @router.post("/maintenance/run")

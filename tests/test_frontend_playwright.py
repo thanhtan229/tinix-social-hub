@@ -87,6 +87,9 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             self.assertEqual(response.status, 200)
+            main_js = Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "main.js"
+            self.assertIn(f'./ai.js?v={__version__}', main_js.read_text(encoding="utf-8"))
+            self.assertIn(f'./integrations.js?v={__version__}', main_js.read_text(encoding="utf-8"))
             self.assertEqual(page.locator("#nav button").count(), 8)
             self.assertEqual(page.locator("#platformRoadmap .platform-card").count(), 5)
             self.assertEqual(page.locator("#platformRoadmap .operational").count(), 5)
@@ -145,9 +148,10 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             # Test Tab 2 AI Brand Profile button and modal opening
             page.locator('#nav button[data-tab="ai"]').click()
             page.wait_for_timeout(200)
-            self.assertEqual(page.locator("#aiImageEngine").count(), 1)
+            self.assertEqual(page.locator("#aiImageEngine").count(), 0)
+            self.assertEqual(page.locator("#aiImageFallback").count(), 0)
+            self.assertEqual(page.locator("#aiImageQuality").count(), 0)
             self.assertTrue(page.locator("#aiImageControls").is_visible())
-            self.assertTrue(page.locator("#aiImageEngine").is_visible())
             self.assertTrue(page.locator("#aiImageSource").is_visible())
             self.assertEqual(page.locator("#aiImageAspectRatio option").count(), 6)
             self.assertEqual(page.locator("#aiImageCount option").count(), 3)
@@ -212,6 +216,28 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(page.locator("#accountList .account-table tbody tr").count(), 1)
             self.assertEqual(page.locator("#accountList .account-index").last.inner_text(), "1")
             self.assertEqual(page.locator("#accountResultCount").inner_text(), "Hiển thị 1/1")
+            account_id = page.locator("#accountList [data-account-row]").first.get_attribute("data-account-row")
+            page.route("**/api/jobs?limit=100", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([{
+                    "id": "responsive-job", "kind": "publish", "account_id": account_id,
+                    "status": "permanent_failure", "dry_run": True, "created_at": "2026-09-12T06:00:00+00:00",
+                }]),
+            ))
+            page.set_viewport_size({"width": 320, "height": 900})
+            page.locator('#nav button[data-tab="jobs"]').click()
+            page.locator("#jobsTable tr").wait_for()
+            jobs_wrap = page.locator("#tab-jobs .table-wrap")
+            job_kind_cell = page.locator("#jobsTable td").nth(0)
+            job_account_cell = page.locator("#jobsTable td").nth(1)
+            self.assertEqual(page.locator("#selectAllJobs").evaluate("element => element.getBoundingClientRect().width"), 15)
+            self.assertEqual(job_kind_cell.locator("input[type=checkbox]").evaluate("element => element.getBoundingClientRect().width"), 15)
+            self.assertGreater(jobs_wrap.evaluate("element => element.scrollWidth"), jobs_wrap.evaluate("element => element.clientWidth"))
+            self.assertTrue(job_kind_cell.evaluate("element => element.scrollWidth <= element.clientWidth"))
+            self.assertTrue(job_account_cell.evaluate("element => element.scrollWidth <= element.clientWidth"))
+            self.assertEqual(job_account_cell.inner_text(), "Imported UI Account")
+            page.unroute("**/api/jobs?limit=100")
+            page.set_viewport_size({"width": 1365, "height": 900})
+            page.locator('#nav button[data-tab="accounts"]').click()
             account_row = page.locator("#accountList .account-table tbody tr").first
             account_row.locator("td").nth(1).click()
             self.assertIn("selected", account_row.get_attribute("class"))
@@ -240,8 +266,8 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(unknown_badge.evaluate("element => getComputedStyle(element).color"), "rgb(95, 99, 104)")
             account_actions = page.locator("#accountList [data-account-action]")
             self.assertEqual(account_actions.count(), 2)
-            self.assertIn("Xóa", account_actions.first.inner_text())
-            self.assertIn("Mở Chrome", account_actions.last.inner_text())
+            self.assertIn("Mở", account_actions.first.inner_text())
+            self.assertIn("Xóa", account_actions.last.inner_text())
             sync_flow: list[str] = []
 
             def fake_target_sync(route):
@@ -305,28 +331,201 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
 
             page.route("**/api/accounts/*/chrome/open", fake_open)
             page.route("**/api/accounts/*/check-login", fake_login_check)
-            page.get_by_role("button", name="Mở Chrome", exact=True).first.click()
+            page.get_by_role("button", name="Mở", exact=True).first.click()
             page.wait_for_function("() => document.querySelector('#toast')?.textContent.includes('Đã đăng nhập')")
             self.assertEqual(open_flow, ["open", "check-login"])
-            self.assertIn("Đã đăng nhập", page.locator("#toast").inner_text())
+            row = page.locator('#accountList [data-account-row]').first
+            self.assertEqual(row.locator('[data-account-action]').evaluate_all("els => els.map(el => el.dataset.accountAction)"), ["chrome", "delete"])
+            page.locator('#newAccount').click()
+            page.locator('#accountName').fill('Auto open account')
+            page.locator('#accountPlatform').select_option('tiktok')
+            page.locator('#saveAccount').click()
+            page.wait_for_function("() => document.querySelector('#toast')?.textContent.includes('Hãy đăng nhập account')")
+            self.assertEqual(open_flow, ["open", "check-login", "open", "check-login"])
+            self.assertIn("Hãy đăng nhập account", page.locator("#toast").inner_text())
             self.assertEqual(errors, [])
             browser.close()
 
-    def test_image_source_options_display_provider_and_model(self) -> None:
+    def test_youtube_detail_exposes_routing_preference_and_api_connection(self) -> None:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
             page = browser.new_page(viewport={"width": 1365, "height": 900})
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            account = page.evaluate("""async () => {
+                const response = await fetch('/api/accounts', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: 'YouTube routing', platform: 'youtube'}),
+                });
+                return response.json();
+            }""")
+            page.locator('#nav button[data-tab="accounts"]').click()
+            row = page.locator(f'[data-account-row="{account["id"]}"]')
+            row.wait_for(state="visible")
+            row.click()
+            routing = page.locator(f'[data-routing-account="{account["id"]}"]')
+            routing.wait_for(state="visible")
+            self.assertEqual(routing.input_value(), "chrome_preferred")
+            self.assertEqual(page.locator('[data-account-action="connect-api"]').count(), 1)
+            with page.expect_response(
+                lambda response: response.url.endswith(f'/api/accounts/{account["id"]}/routing-preference')
+                and response.request.method == "PATCH"
+            ) as saved:
+                routing.select_option("official_api_preferred")
+            self.assertEqual(saved.value.status, 200)
+            browser.close()
+
+    def test_settings_show_readiness_and_recovery_bundle_controls(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            page.route("**/api/diagnostics/readiness", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps({
+                    "status": "ready", "checks": [{
+                        "id": "database", "label": "Database", "state": "ready", "detail": "SQLite is available.",
+                    }],
+                }),
+            ))
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="settings"]').click()
+            page.locator("#runReadiness").click()
+            page.get_by_text("SQLite is available.", exact=True).wait_for()
+            page.locator("#exportRecovery").click()
+            self.assertTrue(page.locator("#recoveryExportDialog").is_visible())
+            page.locator("#recoveryExportDialog [data-close]").click()
+            page.locator("#restoreRecovery").click()
+            self.assertTrue(page.locator("#recoveryRestoreDialog").is_visible())
+            browser.close()
+
+    def test_ai_studio_system_prompt_and_reference_image_controls(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            uploads = []
+
+            def route_media_asset_upload(route) -> None:
+                if route.request.method != "POST":
+                    route.continue_()
+                    return
+                uploads.append(route.request.method)
+                route.fulfill(status=201, content_type="application/json", body=json.dumps({
+                    "id": "reference-image", "media_type": "image", "original_name": "reference.png",
+                    "relative_path": "media-library/reference.png", "thumbnail_relative_path": "media-library/reference-thumb.jpg",
+                }))
+
+            page.route("**/api/media-assets", route_media_asset_upload)
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="ai"]').click()
+            page.wait_for_function("() => document.querySelector('#aiPromptTemplate option[value=system-write]')")
+            self.assertEqual(page.locator("#aiPromptTemplate").input_value(), "system-write")
+            self.assertTrue(page.locator("#btnQuickEditPromptTemplate").is_visible())
+            self.assertEqual(page.locator("#aiReferenceImageUpload").get_attribute("accept"), ".jpg,.jpeg,.png,.webp,.gif,.jfif,image/*")
+            self.assertEqual(
+                page.locator("#btnUploadReferenceImages").get_attribute("class"),
+                page.locator("#btnChooseReferenceImages").get_attribute("class"),
+            )
+            page.evaluate("""() => {
+                const transfer = new DataTransfer();
+                transfer.items.add(new File(["image"], "reference.png", {type: "image/png"}));
+                document.querySelector("#aiReferenceImageDropzone").dispatchEvent(
+                    new DragEvent("dragover", {bubbles: true, cancelable: true, dataTransfer: transfer})
+                );
+            }""")
+            self.assertTrue(page.locator("#aiReferenceImageDropzone").evaluate("element => element.classList.contains('is-dragging')"))
+            page.locator("#aiReferenceImageDropzone").dispatch_event("dragleave")
+            self.assertFalse(page.locator("#aiReferenceImageDropzone").evaluate("element => element.classList.contains('is-dragging')"))
+            page.evaluate("""() => {
+                const transfer = new DataTransfer();
+                transfer.items.add(new File(["image"], "reference.png", {type: "image/png"}));
+                document.querySelector("#aiReferenceImageDropzone").dispatchEvent(
+                    new DragEvent("drop", {bubbles: true, cancelable: true, dataTransfer: transfer})
+                );
+            }""")
+            page.wait_for_function("() => document.querySelectorAll('#aiReferenceImageList .ai-reference-image-card').length === 1")
+            self.assertEqual(uploads, ["POST"])
+            page.locator("#btnQuickAddPromptTemplate").click()
+            self.assertTrue(page.locator("#promptTemplateDialog").is_visible())
+            page.locator("#promptTemplateDialog [data-close]").first.click()
+            page.locator("#btnChooseReferenceImages").click()
+            self.assertTrue(page.locator("#referenceImageDialog").is_visible())
+            browser.close()
+
+    def test_image_source_options_display_media_creator_providers(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            provider = {"id": "local-sdxl", "label": "SDXL Local"}
             page.route("**/api/ai/image-options", lambda route: route.fulfill(
                 status=200, content_type="application/json", body=json.dumps({
-                    "direct_api": [{"config_id": "image-config", "provider": "openai", "name": "OpenAI team", "model": "gpt-image-1"}],
-                    "defaults": {"image_config_id": "image-config"},
-                    "media_creator": {"available": True, "providers": []},
+                    "media_creator": {"available": True, "providers": [provider]},
                 }),
             ))
             page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             page.locator('#nav button[data-tab="ai"]').click()
-            self.assertEqual(page.locator("#aiImageSource option").all_text_contents(), ["OpenAI team · gpt-image-1"])
-            self.assertEqual(page.locator("#aiImageSource").input_value(), "image-config")
+            self.assertEqual(page.locator("#aiImageSource option").all_text_contents(), ["SDXL Local"])
+            self.assertEqual(page.locator("#aiImageSource").input_value(), "local-sdxl")
+            provider.update(id="local-sd3", label="SD 3 Local")
+            page.locator('#nav button[data-tab="settings"]').click()
+            page.locator('#nav button[data-tab="ai"]').click()
+            page.wait_for_function("() => document.querySelector('#aiImageSource option')?.textContent === 'SD 3 Local'")
+            self.assertEqual(page.locator("#aiImageSource").input_value(), "local-sd3")
+            browser.close()
+
+    def test_settings_only_shows_default_text_provider(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            page.route("**/api/integrations/catalog", lambda route: route.fulfill(
+                status=200, content_type="application/json", body='{"ai_providers":[],"platform_apps":[]}',
+            ))
+            page.route("**/api/integrations/ai", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps({
+                    "configs": [{
+                        "id": "gemini-config", "name": "Gemini", "enabled": True,
+                        "text_model": "gemini-2.5-flash", "text_model_display_name": "Gemini 2.5 Flash",
+                        "image_model": "gemini-3.1-flash-lite-image", "image_model_display_name": "Nano Banana 2 Lite",
+                    }],
+                    "defaults": {"text_config_id": "gemini-config", "image_config_id": "gemini-config"},
+                    "legacy_configured": False, "legacy": None,
+                }),
+            ))
+            page.route("**/api/integrations/platform-apps", lambda route: route.fulfill(
+                status=200, content_type="application/json", body="[]",
+            ))
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="settings"]').click()
+            page.wait_for_function("() => document.querySelector('#defaultTextProvider option[value=gemini-config]')?.textContent.includes('Gemini 2.5 Flash')")
+            self.assertEqual(page.locator("#defaultTextProvider option[value=gemini-config]").inner_text(), "Gemini · Gemini 2.5 Flash")
+            self.assertEqual(page.locator("#defaultImageProvider").count(), 0)
+            browser.close()
+
+    def test_ai_image_thumbnail_opens_fullsize_lightbox(self) -> None:
+        image_one = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Jf8sAAAAASUVORK5CYII="
+        image_two = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        history = [{
+            "id": "history-image", "displayTime": "10:00", "operationLabel": "Viết mới",
+            "inputs": {"platforms": ["facebook"]},
+            "output": {"raw_json": "{}", "structured_content": {"image_prompt": "A studio product photo", "platform_variants": {}}, "content_id": None, "image_prompt": "A studio product photo"},
+            "image": {"url": image_one, "images": [{"url": image_one}, {"url": image_two}], "prompt": "A studio product photo", "source_model": "Local Provider", "attached": False},
+        }]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            page.add_init_script("localStorage.setItem('tinix_ai_studio_history_v1', " + json.dumps(json.dumps(history)) + ");")
+            page.route("**/api/ai/image-options", lambda route: route.fulfill(
+                status=200, content_type="application/json", body='{"media_creator":{"available":true,"providers":[{"id":"local-provider","label":"Local Provider"}]}}',
+            ))
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="ai"]').click()
+            self.assertEqual(page.locator("#aiImageGallery button").count(), 2)
+            page.locator("#aiImageGallery button").nth(1).click()
+            self.assertTrue(page.locator("#aiImageLightboxDialog").is_visible())
+            self.assertEqual(page.locator("#aiImageLightboxIndex").inner_text(), "2 / 2")
+            self.assertTrue(page.locator("#aiImageLightboxPrev").is_enabled())
+            self.assertFalse(page.locator("#aiImageLightboxNext").is_enabled())
+            page.keyboard.press("ArrowLeft")
+            self.assertEqual(page.locator("#aiImageLightboxIndex").inner_text(), "1 / 2")
+            page.keyboard.press("Escape")
+            page.locator("#aiImageLightboxDialog").wait_for(state="hidden")
             browser.close()
 
     def test_integration_buttons_open_dialog(self) -> None:

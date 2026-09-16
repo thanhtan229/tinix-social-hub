@@ -107,7 +107,7 @@ def foundation_transports(content_formats: tuple[str, ...]) -> tuple[TransportDe
 
 
 def youtube_transports() -> tuple[TransportDefinition, ...]:
-    chrome, _scaffold = foundation_transports(("video", "short", "community_post"))
+    chrome, _scaffold = foundation_transports(("video", "short"))
     return (
         chrome,
         TransportDefinition(
@@ -126,55 +126,51 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
     PlatformDefinition(
         id="facebook", name="Facebook", phase="MVP release candidate",
         account_label="Facebook account", target_label="Page", target_types=("page",),
-        content_formats=("text", "multi_image", "video"),
+        content_formats=("post",),
         capabilities=PlatformCapabilities("ready", "ready", "ready", "review_required", "review_required", "review_required"),
         next_milestone="Kiểm thử dry-run và đăng thật có giám sát trên Page thực tế.",
         selector_version="facebook-web-v1", operational=True,
-        transports=foundation_transports(("text", "multi_image", "video")),
+        transports=foundation_transports(("post",)),
         format_schemas=(
             FormatSchema("post", "Bài viết", 63206, 0, 10, ("image", "video"), (
                 SettingSchema("first_comment", "Bình luận đầu tiên", "textarea"),
             )),
-            FormatSchema("video", "Video", 63206, 1, 1, ("video",)),
         ),
     ),
     PlatformDefinition(
         id="instagram", name="Instagram", phase="Chrome adapter · image/carousel",
         account_label="Instagram account", target_label="Profile", target_types=("profile",),
-        content_formats=("image", "carousel", "reel", "story"),
+        content_formats=("image", "carousel"),
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
-        next_milestone="Dry-run thủ công trên profile thật; Reel/Story tiếp tục bị khóa.",
+        next_milestone="Dry-run thủ công trên profile thật; Reel/Story chưa được hỗ trợ.",
         selector_version="instagram-web-v1", operational=True,
-        transports=foundation_transports(("image", "carousel", "reel", "story")),
+        transports=foundation_transports(("image", "carousel")),
         format_schemas=(
             FormatSchema("image", "Ảnh", 2200, 1, 1, ("image",)),
             FormatSchema("carousel", "Carousel", 2200, 2, 10, ("image",)),
-            FormatSchema("reel", "Reel", 2200, 1, 1, ("video",)),
-            FormatSchema("story", "Story", 2200, 1, 1, ("image", "video")),
         ),
     ),
     PlatformDefinition(
         id="tiktok", name="TikTok", phase="Chrome adapter · short video",
         account_label="TikTok account", target_label="Channel", target_types=("channel",),
-        content_formats=("short_video", "photo_post"),
+        content_formats=("short_video",),
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
         next_milestone="Dry-run TikTok Studio và xác nhận privacy/comment trên UI thật.",
         selector_version="tiktok-studio-web-v1", operational=True,
-        transports=foundation_transports(("short_video", "photo_post")),
+        transports=foundation_transports(("short_video",)),
         format_schemas=(
             FormatSchema("short_video", "Video ngắn", 2200, 1, 1, ("video",), (
                 SettingSchema("privacy", "Quyền riêng tư", "select", True, "public", ("public", "friends", "private")),
                 SettingSchema("allow_comments", "Cho phép bình luận", "checkbox", False, True),
             )),
-            FormatSchema("photo_post", "Bài ảnh", 2200, 1, 35, ("image",)),
         ),
     ),
     PlatformDefinition(
         id="youtube", name="YouTube", phase="Chrome adapter · video/Short",
         account_label="Google account", target_label="Channel", target_types=("channel",),
-        content_formats=("video", "short", "community_post"),
+        content_formats=("video", "short"),
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
-        next_milestone="Dry-run YouTube Studio trên channel thật; community post tiếp tục bị khóa.",
+        next_milestone="Dry-run YouTube Studio trên channel thật; Community post chưa được hỗ trợ.",
         selector_version="youtube-studio-web-v1", operational=True,
         transports=youtube_transports(),
         format_schemas=(
@@ -187,7 +183,6 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
                 SettingSchema("title", "Tiêu đề", "text", True),
                 SettingSchema("privacy", "Quyền riêng tư", "select", True, "private", ("private", "unlisted", "public")),
             )),
-            FormatSchema("community_post", "Community post", 1500, 0, 5, ("image",)),
         ),
     ),
     PlatformDefinition(

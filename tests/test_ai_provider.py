@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from app.services.ai import AIError, OpenAICompatibleProvider
+from app.services.ai import AIError, AIImageInput, OpenAICompatibleProvider
 
 
 def settings():
@@ -82,82 +82,31 @@ class AIProviderTests(unittest.TestCase):
             asyncio.run(run())
         self.assertEqual(caught.exception.code, "invalid_output")
 
-    def test_generate_image_primary_b64(self) -> None:
-        import base64
-        fake_png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
-        b64_str = base64.b64encode(fake_png).decode("ascii")
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/images/generations":
-                return httpx.Response(200, json={
-                    "data": [{"b64_json": b64_str}]
-                })
-            return httpx.Response(404)
-
-        provider = self.provider_with(handler)
-
-        async def run():
-            res = await provider.generate_image("test prompt")
-            await provider.close()
-            return res
-
-        result = asyncio.run(run())
-        self.assertEqual(result.image_bytes, fake_png)
-        self.assertFalse(result.fallback_used)
-
-    def test_generate_multiple_images_uses_openai_size_and_quality(self) -> None:
-        import base64
-        first = base64.b64encode(b"first-image").decode("ascii")
-        second = base64.b64encode(b"second-image").decode("ascii")
-        captured: dict[str, object] = {}
+    def test_reference_image_is_sent_as_multimodal_content(self) -> None:
+        captured = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured.update(json.loads(request.content))
-            return httpx.Response(200, json={"data": [{"b64_json": first}, {"b64_json": second}]})
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": json.dumps({
+                    "topic": "Topic", "summary": "", "platform_variants": {}, "media_suggestions": [], "warnings": [],
+                })}}],
+            })
 
         provider = self.provider_with(handler)
-        provider.settings.ai_base_url = "https://api.openai.com/v1"
 
         async def run():
             try:
-                return await provider.generate_images("test prompt", count=2, aspect_ratio="9:16", quality="high")
+                return await provider.generate_structured(
+                    "brief", "system", [AIImageInput("data:image/jpeg;base64,AA==", "reference.jpg")],
+                )
             finally:
                 await provider.close()
 
-        results = asyncio.run(run())
-        self.assertEqual([item.image_bytes for item in results], [b"first-image", b"second-image"])
-        self.assertEqual(captured["n"], 2)
-        self.assertEqual(captured["size"], "1024x1536")
-        self.assertEqual(captured["quality"], "high")
-
-    def test_generate_image_fallback_when_primary_fails(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            # Simulate 429 Quota Exceeded on primary API
-            return httpx.Response(429, json={"error": "quota exceeded"})
-
-        provider = self.provider_with(handler)
-
-        # Mock _fallback_pollinations
-        from app.services.ai import AIImageResult
-        async def mock_fallback(prompt: str):
-            return AIImageResult(
-                image_bytes=b"mock-fallback-bytes",
-                mime_type="image/jpeg",
-                source_model="FLUX (Pollinations AI)",
-                fallback_used=True,
-            )
-        provider._fallback_pollinations = mock_fallback
-
-        async def run():
-            res = await provider.generate_image("test prompt")
-            await provider.close()
-            return res
-
-        result = asyncio.run(run())
-        self.assertEqual(result.image_bytes, b"mock-fallback-bytes")
-        self.assertTrue(result.fallback_used)
-        self.assertEqual(result.source_model, "FLUX (Pollinations AI)")
-
+        asyncio.run(run())
+        content = captured["messages"][1]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "brief"})
+        self.assertEqual(content[1]["image_url"]["url"], "data:image/jpeg;base64,AA==")
 
 if __name__ == "__main__":
     unittest.main()

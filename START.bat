@@ -18,11 +18,29 @@ if errorlevel 1 (
 
 set "VENV_PY=.venv\Scripts\python.exe"
 set "VENV_PYW=.venv\Scripts\pythonw.exe"
+set "NEED_DEPS=0"
 
 if not exist "%VENV_PY%" (
   echo [Tinix] Dang khoi tao moi truong .venv...
   %PYTHON_CMD% -m venv .venv
+  if errorlevel 1 exit /b 1
+  set "NEED_DEPS=1"
+)
+
+if "!NEED_DEPS!"=="0" (
+  "%VENV_PY%" -c "from hashlib import sha256; from pathlib import Path; import sys; marker=Path('.venv/.tinix-requirements.sha256'); digest=sha256(Path('requirements.txt').read_bytes()).hexdigest(); sys.exit(0 if marker.is_file() and marker.read_text(encoding='ascii').strip()==digest else 1)" >nul 2>nul
+  if errorlevel 1 set "NEED_DEPS=1"
+)
+if "!NEED_DEPS!"=="0" (
+  "%VENV_PY%" -c "import cryptography, fastapi, httpx, multipart, PIL, playwright, psutil, tzdata, uvicorn" >nul 2>nul
+  if errorlevel 1 set "NEED_DEPS=1"
+)
+if "!NEED_DEPS!"=="1" (
+  echo [Tinix] Dang dong bo dependencies...
   "%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
+  if errorlevel 1 exit /b 1
+  "%VENV_PY%" -c "from hashlib import sha256; from pathlib import Path; marker=Path('.venv/.tinix-requirements.sha256'); marker.write_text(sha256(Path('requirements.txt').read_bytes()).hexdigest() + '\n', encoding='ascii')"
+  if errorlevel 1 exit /b 1
 )
 
 if not exist ".env" copy /y ".env.example" ".env" >nul
@@ -39,7 +57,7 @@ if exist ".env" (
 
 REM Kiem tra icon va desktop shortcut
 if not exist "app\static\favicon.ico" (
-  "%VENV_PY%" build.py --no-bump --no-tests --no-commit
+  "%VENV_PY%" build.py --no-bump --no-tests
 )
 
 REM Kiem tra server ngam da chay chua va dung phien ban khong

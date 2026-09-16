@@ -60,6 +60,19 @@ class Session:
 
 
 class PlatformAccountNavigationTests(unittest.IsolatedAsyncioTestCase):
+    def test_youtube_menu_targets_for_discovered_channel_are_stale(self) -> None:
+        channel_id = "UCXdYgfzFMIvyE-tgjosC6MQ"
+        existing = [
+            {"external_id": f"channel/{channel_id}/analytics", "url": f"https://studio.youtube.com/channel/{channel_id}/analytics"},
+            {"external_id": f"channel/{channel_id}/content", "url": f"https://studio.youtube.com/channel/{channel_id}/content"},
+            {"external_id": "another-channel", "url": "https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa"},
+        ]
+        discovered = [{"external_id": channel_id}]
+        self.assertEqual(
+            PlatformAccountService._stale_youtube_external_ids(existing, discovered),
+            {f"channel/{channel_id}/analytics", f"channel/{channel_id}/content"},
+        )
+
     async def test_open_target_uses_owning_account_and_saved_url(self) -> None:
         service = PlatformAccountService(Accounts(), Targets(), Chrome(), object())
         with patch("app.services.platform_accounts.BrowserSession", Session):

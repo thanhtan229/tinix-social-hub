@@ -70,6 +70,23 @@ class IntegrationRepositoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.update_ai(config["id"], enabled=False)
 
+    def test_ai_list_includes_cached_model_display_names(self) -> None:
+        config = self.ai.create(
+            provider="gemini", name="Gemini", api_key="gemini-key-1122",
+            text_model="gemini-2.5-flash", image_model="gemini-3.1-flash-lite-image",
+        )
+        self.ai.replace_models(config["id"], [
+            {"model_id": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "capabilities": ["text"]},
+            {"model_id": "gemini-3.1-flash-lite-image", "display_name": "Nano Banana 2 Lite", "capabilities": ["text", "image"]},
+        ])
+        service = IntegrationService(
+            SimpleNamespace(ai_api_key="", ai_base_url="", ai_model="", ai_image_model="", ai_timeout_seconds=5, ai_max_retries=0),
+            self.ai, self.apps, AppSettingsRepository(self.database),
+        )
+        item = service.ai_list()["configs"][0]
+        self.assertEqual(item["text_model_display_name"], "Gemini 2.5 Flash")
+        self.assertEqual(item["image_model_display_name"], "Nano Banana 2 Lite")
+
     def test_gemini_discovery_uses_native_paginated_models_endpoint(self) -> None:
         settings = SimpleNamespace(
             ai_api_key="legacy-gemini-key", ai_base_url="https://generativelanguage.googleapis.com/v1beta/openai",

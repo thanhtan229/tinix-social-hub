@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.11`
+Phiên bản áp dụng: `1.0.24`
 
 Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media và lập lịch đăng bài. Chrome automation vẫn là cách đăng mặc định; account YouTube có thể tùy chọn kết nối YouTube Data API chính thức. Mỗi tài khoản vẫn có Chrome profile riêng để dùng khi chọn hoặc fallback về Chrome.
 
@@ -68,8 +68,8 @@ Mỗi account có một profile tại `chrome_profiles/<UUID>`. Không đăng nh
 
 Trong **Tài khoản & Page**, mỗi account có bốn thao tác quản lý profile:
 
-- **Import Profiles ZIP**: đọc một file `.tinix-profiles.zip`, tự tạo toàn bộ account cùng tên/nền tảng và sao chép các phiên Chrome trong một lần. Vẫn hỗ trợ thư mục `.tinix-profile` cũ.
-- **Export Account & Sessions ZIP**: tạo một file ZIP di động tại `exports/chrome_profiles/`, gồm thông tin account (username/UID, email, password, secret 2FA, mật khẩu email, cookie database) và dữ liệu phiên đăng nhập cần thiết. Cache/model Chromium không được đưa vào ZIP. File ZIP không mã hóa nên phải được bảo quản như dữ liệu đăng nhập.
+- **Import Profiles**: đọc `.tinix-profiles.zip` hoặc `.tinix-profiles.enc`, tự tạo toàn bộ account cùng tên/nền tảng và sao chép các phiên Chrome trong một lần. Nhập mật khẩu khi mở gói `.enc`. Vẫn hỗ trợ thư mục `.tinix-profile` cũ.
+- **Export Account & Sessions**: mặc định tạo ZIP tại `exports/chrome_profiles/` với tên, nền tảng, username/UID, email và dữ liệu phiên cần thiết; cache/model Chromium không được đưa vào gói. Có thể chọn kèm credential đã được bảo vệ bằng Windows DPAPI và đặt mật khẩu để mã hóa toàn bộ gói thành `.tinix-profiles.enc` bằng AES-256-GCM. Mật khẩu không được lưu; cookie Chrome vẫn có thể bị gắn với Windows/Chrome gốc.
 - **Dọn dẹp profile**: quét dung lượng trước, sau đó xóa cache và dữ liệu tạm của mọi profile khi Chrome đã đóng. Chức năng này giữ cookies, Preferences, Local/Session Storage và IndexedDB.
 - **Backup**: tạo điểm khôi phục nội bộ tại `data/backups/chrome_profiles/<ACCOUNT_ID>/`.
 - **Khôi phục**: thay profile hiện tại bằng một backup đã chọn; profile trước khôi phục lại được backup tự động.
@@ -84,7 +84,7 @@ Trong tab **Cài đặt**, bật hoặc tắt **Tự động dọn Chrome profil
 
 ### Khi gặp CAPTCHA, 2FA hoặc checkpoint
 
-Tinix vẫn ưu tiên xử lý đăng nhập trực tiếp trong Chrome. Thông tin đăng nhập được Import từ gói profile sẽ được giữ lại để Export/Import giữa các app:
+Tinix vẫn ưu tiên xử lý đăng nhập trực tiếp trong Chrome. Credential được lưu bằng Windows DPAPI; chỉ gói Export có chọn kèm credential mới chuyển chúng giữa ứng dụng dưới cùng tài khoản Windows:
 
 1. Mở Chrome của đúng account.
 2. Hoàn thành CAPTCHA, 2FA hoặc checkpoint.

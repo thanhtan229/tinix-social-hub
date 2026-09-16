@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.core.secrets import SecretProtector
 from app.db.database import Database, row_to_dict, utc_now
 from app.domain.jobs import ACCOUNT_BUSY_STATUSES, TERMINAL_STATUSES, JobStatus, validate_transition
 
@@ -36,31 +37,80 @@ class AppSettingsRepository:
 
 
 class AccountRepository:
-    def __init__(self, database: Database) -> None:
+    CREDENTIAL_FIELDS = ("password", "secret_2fa", "email_pass", "cookie", "recovery_codes")
+
+    def __init__(self, database: Database, secrets: SecretProtector | None = None) -> None:
         self.db = database
+        self.secrets = secrets or SecretProtector()
+
+    def _protected_credentials(self, metadata: dict[str, Any]) -> dict[str, str]:
+        return {
+            field: self.secrets.protect_secret(str(metadata.get(field) or ""))
+            if metadata.get(field) else ""
+            for field in self.CREDENTIAL_FIELDS
+        }
+
+    def _hydrate_credentials(self, account: dict[str, Any] | None) -> dict[str, Any] | None:
+        if account is None:
+            return None
+        legacy = {field: str(account.get(field) or "") for field in self.CREDENTIAL_FIELDS}
+        protected = {
+            field: str(account.pop(f"{field}_protected", "") or "")
+            for field in self.CREDENTIAL_FIELDS
+        }
+        if any(legacy.values()):
+            protected = {
+                field: self.secrets.protect_secret(legacy[field]) if legacy[field] else protected[field]
+                for field in self.CREDENTIAL_FIELDS
+            }
+            with self.db.connection() as connection:
+                connection.execute(
+                    """UPDATE accounts SET
+                        password='',secret_2fa='',email_pass='',cookie='',recovery_codes='',
+                        password_protected=?,secret_2fa_protected=?,email_pass_protected=?,
+                        cookie_protected=?,recovery_codes_protected=?,updated_at=? WHERE id=?""",
+                    (
+                        protected["password"], protected["secret_2fa"], protected["email_pass"],
+                        protected["cookie"], protected["recovery_codes"], utc_now(), account["id"],
+                    ),
+                )
+        for field in self.CREDENTIAL_FIELDS:
+            account[field] = legacy[field] or (
+                self.secrets.unprotect_secret(protected[field]) if protected[field] else ""
+            )
+        return account
+
+    def migrate_legacy_credentials(self) -> int:
+        with self.db.connection() as connection:
+            rows = [row_to_dict(row) for row in connection.execute("SELECT * FROM accounts")]
+        return sum(1 for account in rows if any((account or {}).get(field) for field in self.CREDENTIAL_FIELDS)
+                   and self._hydrate_credentials(account))
 
     def create(self, name: str, platform: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         account_id = str(uuid.uuid4())
         profile_id = str(uuid.uuid4())
         now = utc_now()
         metadata = metadata or {}
+        protected = self._protected_credentials(metadata)
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute(
                     """INSERT INTO accounts(
                         id,name,platform,profile_key,username,email,password,secret_2fa,email_pass,cookie,
-                        recovery_email,recovery_codes,notes,starred,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        recovery_email,recovery_codes,notes,starred,password_protected,secret_2fa_protected,
+                        email_pass_protected,cookie_protected,recovery_codes_protected,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         account_id, name.strip(), platform.strip().lower(), account_id,
                         str(metadata.get("username") or ""), str(metadata.get("email") or ""),
-                        str(metadata.get("password") or ""), str(metadata.get("secret_2fa") or ""),
-                        str(metadata.get("email_pass") or ""), str(metadata.get("cookie") or ""),
+                        "", "", "", "",
                         str(metadata.get("recovery_email") or "").strip(),
-                        str(metadata.get("recovery_codes") or ""),
+                        "",
                         str(metadata.get("notes") or ""),
                         1 if metadata.get("starred") else 0,
+                        protected["password"], protected["secret_2fa"], protected["email_pass"],
+                        protected["cookie"], protected["recovery_codes"],
                         now, now,
                     ),
                 )
@@ -76,27 +126,31 @@ class AccountRepository:
 
     def get(self, account_id: str) -> dict[str, Any] | None:
         with self.db.connection() as connection:
-            return row_to_dict(connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone())
+            account = row_to_dict(connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone())
+        return self._hydrate_credentials(account)
 
     def list(self, include_disabled: bool = True) -> list[dict[str, Any]]:
         query = "SELECT * FROM accounts" + ("" if include_disabled else " WHERE enabled=1") + " ORDER BY created_at DESC"
         with self.db.connection() as connection:
-            return [row_to_dict(row) for row in connection.execute(query)]
+            accounts = [row_to_dict(row) for row in connection.execute(query)]
+        return [account for row in accounts if (account := self._hydrate_credentials(row)) is not None]
 
     def update(
         self, account_id: str, name: str, platform: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         metadata = metadata or {}
-        fields = ["name=?", "platform=?", "username=?", "email=?"]
-        values: list[Any] = [
-            name.strip(), platform.strip().lower(),
-            str(metadata.get("username") or "").strip(), str(metadata.get("email") or "").strip(),
-        ]
-        for field in ("password", "secret_2fa", "email_pass", "cookie", "recovery_email", "recovery_codes", "notes"):
-            value = str(metadata.get(field) or "")
-            fields.append(f"{field}=?")
-            values.append(value)
+        fields = ["name=?", "platform=?"]
+        values: list[Any] = [name.strip(), platform.strip().lower()]
+        for field in ("username", "email", "recovery_email", "notes"):
+            if field in metadata:
+                fields.append(f"{field}=?")
+                values.append(str(metadata.get(field) or "").strip())
+        for field in self.CREDENTIAL_FIELDS:
+            if field in metadata:
+                protected = self.secrets.protect_secret(str(metadata[field])) if metadata[field] else ""
+                fields.extend((f"{field}=?", f"{field}_protected=?"))
+                values.extend(("", protected))
         if "starred" in metadata:
             fields.append("starred=?")
             values.append(1 if metadata["starred"] else 0)
@@ -129,7 +183,9 @@ class AccountRepository:
         with self.db.connection() as connection:
             connection.execute(
                 """UPDATE accounts SET
-                    password='',secret_2fa='',recovery_codes='',email_pass='',cookie='',updated_at=?
+                    password='',secret_2fa='',recovery_codes='',email_pass='',cookie='',
+                    password_protected='',secret_2fa_protected='',recovery_codes_protected='',
+                    email_pass_protected='',cookie_protected='',updated_at=?
                 WHERE id=?""",
                 (utc_now(), account_id),
             )
@@ -592,7 +648,32 @@ class JobRepository:
                 (cutoff,),
             ).fetchone()[0]
             attention = connection.execute(
-                "SELECT COUNT(*) FROM jobs WHERE status IN ('login_required','checkpoint','unknown_result','permanent_failure')",
+                """SELECT COUNT(*)
+                   FROM jobs AS job
+                   LEFT JOIN publication_releases AS failed_release
+                     ON failed_release.id=job.publication_release_id
+                   WHERE job.status IN ('login_required','checkpoint','unknown_result')
+                      OR (
+                          job.status='permanent_failure'
+                          AND (
+                              failed_release.id IS NULL
+                              OR NOT EXISTS (
+                                  SELECT 1
+                                  FROM publication_releases AS later_release
+                                  WHERE later_release.account_id=failed_release.account_id
+                                    AND later_release.target_id=failed_release.target_id
+                                    AND later_release.content_format=failed_release.content_format
+                                    AND COALESCE(later_release.publication_transport, 'chrome')
+                                        =COALESCE(failed_release.publication_transport, 'chrome')
+                                    AND COALESCE(later_release.selector_version, '')
+                                        =COALESCE(failed_release.selector_version, '')
+                                    AND COALESCE(later_release.provider_version, '')
+                                        =COALESCE(failed_release.provider_version, '')
+                                    AND later_release.status IN ('dry_run_ready','succeeded')
+                                    AND later_release.updated_at>failed_release.updated_at
+                              )
+                          )
+                      )""",
             ).fetchone()[0]
         return {"stuck": stuck, "needs_attention": attention}
 
@@ -648,7 +729,7 @@ class JobRepository:
         if job.get("publication_release_id"):
             with self.db.connection() as connection:
                 connection.execute(
-                    "UPDATE publication_releases SET verification_status=?,verified_at=?,verification_note=?,external_url=COALESCE(?,external_url),updated_at=? WHERE id=?",
+                    "UPDATE publication_releases SET verification_status=?,verification_method='manual',verified_at=?,verification_note=?,external_url=COALESCE(?,external_url),updated_at=? WHERE id=?",
                     ("verified" if succeeded else "rejected", now, note[:2000], post_url, now, job["publication_release_id"]),
                 )
         return self.get(job_id)
@@ -666,6 +747,9 @@ class JobRepository:
         failure_code: str | None = None,
         next_attempt_at: str | None = None,
         commit_reached: bool = False,
+        verification_status: str | None = None,
+        verification_method: str | None = None,
+        verification_note: str | None = None,
     ) -> dict[str, Any]:
         target_status = JobStatus(target)
         now = utc_now()
@@ -695,10 +779,16 @@ class JobRepository:
                     post_url = result.get("post_url") if result else None
                     connection.execute(
                         "UPDATE publication_releases SET status=?,external_url=COALESCE(?,external_url),"
-                        "published_at=CASE WHEN ?='succeeded' THEN COALESCE(published_at,?) ELSE published_at END,updated_at=? WHERE id=?",
+                        "published_at=CASE WHEN ?='succeeded' THEN COALESCE(published_at,?) ELSE published_at END,"
+                        "verification_status=COALESCE(?,verification_status),"
+                        "verification_method=COALESCE(?,verification_method),"
+                        "verified_at=CASE WHEN ?='verified' THEN COALESCE(verified_at,?) ELSE verified_at END,"
+                        "verification_note=COALESCE(?,verification_note),updated_at=? WHERE id=?",
                         (
                             validated_target.value, post_url, validated_target.value,
-                            finished_at, now, row["publication_release_id"],
+                            finished_at, verification_status, verification_method,
+                            verification_status, now, verification_note[:2000] if verification_note else None,
+                            now, row["publication_release_id"],
                         ),
                     )
                     self._sync_plan_status(connection, row["publication_release_id"])
@@ -867,10 +957,16 @@ class JobRepository:
         job = self.get(job_id)
         if not job:
             raise KeyError(job_id)
+        publisher_verified = result.get("outcome") == "published"
+        verification = {
+            "verification_status": "verified" if publisher_verified else None,
+            "verification_method": "publisher" if publisher_verified else None,
+            "verification_note": "Publisher đã xác minh kết quả trước khi đánh dấu thành công." if publisher_verified else None,
+        }
         if job["status"] == JobStatus.PUBLISHING.value:
-            self.transition(job_id, JobStatus.SUCCEEDED, event_type="completed", result=result)
+            self.transition(job_id, JobStatus.SUCCEEDED, event_type="completed", result=result, **verification)
         elif job["status"] in {JobStatus.VERIFYING.value, JobStatus.UNKNOWN_RESULT.value}:
-            self.transition(job_id, JobStatus.SUCCEEDED, event_type="verified", result=result)
+            self.transition(job_id, JobStatus.SUCCEEDED, event_type="verified", result=result, **verification)
         else:
             validate_transition(job["status"], JobStatus.SUCCEEDED)
 
@@ -929,10 +1025,28 @@ class JobRepository:
 
 
 class TargetRepository:
+    # These URLs are navigation surfaces returned by Facebook's page menu, not
+    # publishable Pages. Keep this policy at the repository boundary so every
+    # caller (UI, API and scheduler) gets the same safety rule.
+    SYSTEM_NAVIGATION_EXTERNAL_IDS: dict[str, frozenset[str]] = {
+        "facebook": frozenset({"url:latest", "url:ad_center"}),
+    }
+
     def __init__(self, database: Database) -> None:
         self.db = database
 
+    @classmethod
+    def is_system_navigation_target(cls, target: dict[str, Any]) -> bool:
+        platform = str(target.get("platform") or "").strip().lower()
+        external_id = str(target.get("external_id") or "")
+        return external_id in cls.SYSTEM_NAVIGATION_EXTERNAL_IDS.get(platform, frozenset())
+
     def sync(self, account_id: str, platform: str, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized_platform = platform.strip().lower()
+        targets = [
+            target for target in targets
+            if not self.is_system_navigation_target({**target, "platform": normalized_platform})
+        ]
         now = utc_now()
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -940,7 +1054,7 @@ class TargetRepository:
                 for target in targets:
                     existing = connection.execute(
                         "SELECT id FROM publishing_targets WHERE account_id=? AND platform=? AND external_id=?",
-                        (account_id, platform, target["external_id"]),
+                        (account_id, normalized_platform, target["external_id"]),
                     ).fetchone()
                     if existing:
                         connection.execute(
@@ -952,7 +1066,7 @@ class TargetRepository:
                             "INSERT INTO publishing_targets(id,account_id,platform,target_type,external_id,name,url,access_status,last_synced_at,created_at,updated_at) "
                             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                             (
-                                str(uuid.uuid4()), account_id, platform, target.get("target_type", "page"),
+                                str(uuid.uuid4()), account_id, normalized_platform, target.get("target_type", "page"),
                                 target["external_id"], target["name"], target.get("url"), "accessible", now, now, now,
                             ),
                         )
@@ -964,6 +1078,7 @@ class TargetRepository:
 
     def remove_invalid_discovery_targets(
         self, account_id: str, platform: str, external_ids: set[str] | frozenset[str],
+        reason: str = "Liên kết điều hướng Facebook, không phải Page",
     ) -> dict[str, int]:
         """Remove false discovery results without breaking publication history."""
         if not external_ids:
@@ -989,8 +1104,8 @@ class TargetRepository:
                     if referenced:
                         connection.execute(
                             "UPDATE publishing_targets SET enabled=0,access_status='invalid_discovery',"
-                            "last_error='Liên kết điều hướng Facebook, không phải Page',updated_at=? WHERE id=?",
-                            (utc_now(), target_id),
+                            "last_error=?,updated_at=? WHERE id=?",
+                            (reason[:1000], utc_now(), target_id),
                         )
                         preserved += 1
                     else:

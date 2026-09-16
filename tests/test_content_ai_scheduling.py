@@ -13,6 +13,7 @@ from PIL import Image
 
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
 from app.db.database import Database
+from app.db.prompt_repositories import PromptTemplateRepository
 from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
@@ -144,6 +145,23 @@ class BrandProfileRepositoryTests(ContentFixture):
         self.assertFalse(self.brands.delete(created["id"]))
 
 
+class PromptTemplateRepositoryTests(ContentFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.prompts = PromptTemplateRepository(self.database)
+
+    def test_seeded_prompts_and_custom_crud(self) -> None:
+        self.assertEqual(self.prompts.get("system-write")["operation"], "write")
+        created = self.prompts.create({"name": "Ưu đãi cuối tuần", "system_prompt": "Ưu tiên lợi ích cụ thể.", "enabled": True})
+        self.assertTrue(created["enabled"])
+        updated = self.prompts.update(created["id"], {
+            "name": "Ưu đãi cuối tuần mới", "system_prompt": "Ưu tiên lợi ích và CTA.", "enabled": False,
+        })
+        self.assertFalse(updated["enabled"])
+        self.assertNotIn(created["id"], [item["id"] for item in self.prompts.list(enabled_only=True)])
+        self.assertTrue(self.prompts.delete(created["id"]))
+
+
 class AIStudioTests(ContentFixture):
     def test_mock_generation_saves_draft_and_usage(self) -> None:
         generations = AIGenerationRepository(self.database)
@@ -156,18 +174,34 @@ class AIStudioTests(ContentFixture):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM ai_generations").fetchone()[0], 1)
             self.assertEqual(connection.execute("SELECT total_tokens FROM ai_usage").fetchone()[0], 2)
 
-    def test_image_generation_and_attachment(self) -> None:
-        generations = AIGenerationRepository(self.database)
-        media_service = MediaService(SimpleNamespace(media_dir=self.root / "media"), self.contents)
-        studio = AIContentStudioService(MockAIProvider(), generations, self.brands, self.contents, media=media_service)
-        draft = self.create_content()
-        result = asyncio.run(studio.generate_image("A cute dog in the park", content_id=draft["id"]))
-        self.assertIn("url", result)
-        self.assertIn("data_uri", result)
-        self.assertEqual(result["attached_content_id"], draft["id"])
-        updated_draft = self.contents.get(draft["id"])
-        self.assertEqual(len(updated_draft["media"]), 1)
+    def test_generation_uses_selected_prompt_and_attaches_reference_image(self) -> None:
+        class RecordingProvider(MockAIProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.images = []
 
+            async def generate_structured(self, prompt, system, images=None):
+                self.images = images or []
+                self.system = system
+                self.prompt = prompt
+                return await super().generate_structured(prompt, system, images)
+
+        media = MediaService(SimpleNamespace(media_dir=self.root / "media"), self.contents)
+        asset = media.upload_asset(MediaServiceTests.image_stream(), "reference.png", "image/png", alt_text="Sản phẩm màu xanh")
+        provider = RecordingProvider()
+        studio = AIContentStudioService(
+            provider, AIGenerationRepository(self.database), self.brands, self.contents,
+            PromptTemplateRepository(self.database), media,
+        )
+        result = asyncio.run(studio.generate(
+            None, "Ra mắt sản phẩm", None, ["facebook"], True,
+            prompt_template_id="system-write", media_asset_ids=[asset["id"]],
+        ))
+        self.assertIn("Tạo một bài viết mới", provider.system)
+        self.assertIn("<MEDIA_CONTEXT>", provider.prompt)
+        self.assertEqual(len(provider.images), 1)
+        self.assertTrue(provider.images[0].data_url.startswith("data:image/jpeg;base64,"))
+        self.assertEqual(result["content"]["media"][0]["asset_id"], asset["id"])
 
 class SchedulingTests(ContentFixture):
     def setUp(self) -> None:
@@ -186,13 +220,63 @@ class SchedulingTests(ContentFixture):
         )[0]
         self.content = self.create_content()
 
+    def _complete_dry_run(self) -> dict:
+        job = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
+        )[0]
+        self.assertEqual(self.jobs.claim_next()["id"], job["id"])
+        self.jobs.transition(job["id"], "checking_login")
+        self.jobs.transition(job["id"], "publishing")
+        self.jobs.dry_run_ready(job["id"], {"post_url": None})
+        return job
+
     def test_real_schedule_requires_current_approval(self) -> None:
         with self.assertRaises(SchedulingError):
             self.scheduling.schedule(
                 self.content["id"], self.account["id"], [self.target["id"]], None, False, 0, 0, "confirm"
             )
 
+    def test_real_schedule_requires_current_route_dry_run(self) -> None:
+        approval = self.contents.request_approval(self.content["id"])
+        self.contents.decide_approval(approval["id"], True)
+        with self.assertRaisesRegex(SchedulingError, "dry-run thành công"):
+            self.scheduling.schedule(
+                self.content["id"], self.account["id"], [self.target["id"]], None, False, 0, 0, "confirm"
+            )
+        self.assertEqual(self.publications.list_releases(), [])
+
+    def test_real_schedule_rejects_dry_run_with_stale_selector(self) -> None:
+        dry_run = self._complete_dry_run()
+        with self.database.connection() as connection:
+            connection.execute(
+                "UPDATE publication_releases SET selector_version='facebook-web-v0' WHERE job_id=?",
+                (dry_run["id"],),
+            )
+        approval = self.contents.request_approval(self.content["id"])
+        self.contents.decide_approval(approval["id"], True)
+        with self.assertRaisesRegex(SchedulingError, "dry-run thành công"):
+            self.scheduling.schedule(
+                self.content["id"], self.account["id"], [self.target["id"]], None, False, 0, 0, "confirm"
+            )
+
+    def test_later_same_route_dry_run_resolves_old_permanent_failure_health(self) -> None:
+        failed = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
+        )[0]
+        self.assertEqual(self.jobs.claim_next()["id"], failed["id"])
+        self.jobs.transition(failed["id"], "checking_login")
+        self.jobs.transition(failed["id"], "permanent_failure", error="selector missing", failure_code="selector")
+        self.assertEqual(self.jobs.health_counts()["needs_attention"], 1)
+
+        self.contents.update(self.content["id"], {
+            "title": "Launch retry", "caption": "Updated after failure", "hashtags": ["#tinix"],
+            "platform_variants": {"facebook": {"caption": "Facebook retry", "hashtags": ["#fb"]}},
+        })
+        self._complete_dry_run()
+        self.assertEqual(self.jobs.health_counts()["needs_attention"], 0)
+
     def test_approved_schedule_is_idempotent(self) -> None:
+        self._complete_dry_run()
         approval = self.contents.request_approval(self.content["id"])
         self.contents.decide_approval(approval["id"], True)
         due = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -205,12 +289,46 @@ class SchedulingTests(ContentFixture):
         self.assertEqual(first[0]["id"], second[0]["id"])
         self.assertEqual(first[0]["dry_run"], 0)
 
+    def test_publisher_verified_result_marks_release_verified(self) -> None:
+        self._complete_dry_run()
+        approval = self.contents.request_approval(self.content["id"])
+        self.contents.decide_approval(approval["id"], True)
+        job = self.scheduling.schedule(
+            self.content["id"], self.account["id"], [self.target["id"]], None, False, 0, 0, "confirm"
+        )[0]
+        self.assertEqual(self.jobs.claim_next()["id"], job["id"])
+        self.jobs.transition(job["id"], "checking_login")
+        self.jobs.transition(job["id"], "publishing")
+        self.jobs.transition(job["id"], "verifying", commit_reached=True)
+        self.jobs.complete(job["id"], {
+            "outcome": "published", "post_url": "https://www.facebook.com/page/posts/123",
+        })
+
+        release = self.publications.get_release(job["publication_release_id"])
+        self.assertEqual(release["status"], "succeeded")
+        self.assertEqual(release["verification_status"], "verified")
+        self.assertEqual(release["verification_method"], "publisher")
+        self.assertIsNotNone(release["verified_at"])
+
     def test_dry_run_is_allowed_for_draft(self) -> None:
         jobs = self.scheduling.schedule(
             self.content["id"], self.account["id"], [self.target["id"]], None, True, 0, 0, "confirm"
         )
         self.assertEqual(jobs[0]["status"], "queued")
         self.assertEqual(jobs[0]["dry_run"], 1)
+
+    def test_system_navigation_target_is_rejected_even_if_legacy_row_is_enabled(self) -> None:
+        target_id = "legacy-facebook-navigation"
+        with self.database.connection() as connection:
+            connection.execute(
+                "INSERT INTO publishing_targets(id,account_id,platform,target_type,external_id,name,url,enabled,access_status,created_at,updated_at) "
+                "VALUES(?,?, 'facebook','page','url:latest','Meta Business Suite','https://facebook.com/latest',1,'accessible',datetime('now'),datetime('now'))",
+                (target_id, self.account["id"]),
+            )
+        with self.assertRaisesRegex(SchedulingError, "liên kết điều hướng"):
+            self.scheduling.schedule(
+                self.content["id"], self.account["id"], [target_id], None, True, 0, 0, "confirm"
+            )
 
     def test_instagram_dry_run_schedule_uses_provider_variant(self) -> None:
         account = self.accounts.create("Instagram", "instagram")
@@ -241,6 +359,8 @@ class SchedulingTests(ContentFixture):
         self.assertEqual(len(plans[0]["releases"]), 1)
         release = plans[0]["releases"][0]
         self.assertEqual(jobs[0]["publication_release_id"], release["id"])
+        self.assertEqual(release["publication_transport"], "chrome")
+        self.assertEqual(release["selector_version"], "facebook-web-v1")
         self.assertEqual(release["payload_snapshot"]["caption"], "Facebook caption")
         self.assertEqual(release["content_revision_id"], self.contents.revisions(self.content["id"])[0]["id"])
 

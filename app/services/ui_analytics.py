@@ -55,6 +55,19 @@ def parse_visible_number(value: str) -> float | None:
     if suffix:
         number=float(raw.replace(",","."));multiplier={"k":1e3,"nghìn":1e3,"m":1e6,"triệu":1e6,"b":1e9,"tỷ":1e9}[suffix]
         return number*multiplier
+    number_match=re.search(r"\d[\d.,]*", normalized)
+    if not number_match:return None
+    raw=number_match.group(0)
+    if "." in raw and "," in raw:
+        decimal_separator="." if raw.rfind(".") > raw.rfind(",") else ","
+        thousands_separator="," if decimal_separator=="." else "."
+        return float(raw.replace(thousands_separator, "").replace(decimal_separator, "."))
+    separator="." if "." in raw else "," if "," in raw else ""
+    if separator and raw.count(separator)==1:
+        left,right=raw.split(separator)
+        if len(right)==3 and left:
+            return float(left+right)
+        return float(f"{left}.{right}")
     return float(raw.replace(".","").replace(",",""))
 
 
@@ -73,7 +86,8 @@ class UIAnalyticsCollector:
             "x": ("x.com", "twitter.com"),
         }
         parsed=urlparse(url)
-        if parsed.scheme!="https" or not any(parsed.netloc.lower().endswith(host) for host in hosts[platform]):
+        hostname=(parsed.hostname or "").lower()
+        if parsed.scheme!="https" or not any(hostname==host or hostname.endswith(f".{host}") for host in hosts[platform]):
             raise AnalyticsCollectionError("URL bài đăng không thuộc đúng nền tảng.")
 
     async def collect(self, release_id: str) -> dict[str, Any]:

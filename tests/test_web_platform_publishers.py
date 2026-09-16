@@ -9,9 +9,11 @@ from unittest.mock import patch
 
 from app.services.publishers import PublishContext, PublishOutcome
 from app.services.web_platform_publisher import (
+    ChromeWebPublisher,
     SPECS,
     InstagramChromePublisher,
     TikTokChromePublisher,
+    VerificationBaseline,
     XChromePublisher,
 )
 
@@ -24,6 +26,41 @@ class FakeButton:
 class FakePage:
     url = "https://www.instagram.com/"
     async def goto(self, *args, **kwargs) -> None: pass
+
+
+class VerificationElement:
+    def __init__(self, visible: bool) -> None:
+        self.visible = visible
+
+    async def is_visible(self) -> bool:
+        return self.visible
+
+
+class VerificationLocator:
+    def __init__(self, page, kind: str) -> None:
+        self.page = page
+        self.kind = kind
+
+    async def count(self) -> int:
+        if self.kind == "links":
+            return len(self.page.links)
+        return int(self.page.success_present)
+
+    def nth(self, _index: int):
+        return VerificationElement(self.page.success_visible)
+
+    async def evaluate_all(self, _script: str):
+        return list(self.page.links)
+
+
+class VerificationPage:
+    def __init__(self, links=(), *, success_present: bool = False, success_visible: bool = False) -> None:
+        self.links = list(links)
+        self.success_present = success_present
+        self.success_visible = success_visible
+
+    def locator(self, selector: str):
+        return VerificationLocator(self, "links" if selector == "a[href]" else "success")
 
 
 class FakeSession:
@@ -65,10 +102,19 @@ class PublisherUnderTest(InstagramChromePublisher):
     async def prepare_composer(self, page, context):
         await context.transition("publishing", "composer_ready", False)
         return self.button, []
-    async def verify(self, page): return True, "https://www.instagram.com/p/test/"
+    async def capture_verification_baseline(self, page): return VerificationBaseline(frozenset(), 0)
+    async def verify(self, page, baseline): return True, "https://www.instagram.com/p/test/"
 
 
 class WebPlatformPublisherTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def verifier(root: Path, platform: str) -> ChromeWebPublisher:
+        return ChromeWebPublisher(
+            SPECS[platform],
+            SimpleNamespace(screenshot_dir=root, close_chrome_after_job=False),
+            SimpleNamespace(), Accounts(), SimpleNamespace(), SimpleNamespace(),
+        )
+
     def test_specs_are_versioned_and_never_reference_platform_api(self) -> None:
         self.assertEqual(set(SPECS), {"instagram", "tiktok", "youtube", "x"})
         for platform, spec in SPECS.items():
@@ -110,6 +156,69 @@ class WebPlatformPublisherTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(publisher.validate_target("https://x.com/tinix"), "https://x.com/tinix")
             with self.assertRaises(ValueError):
                 publisher.validate_target("https://example.com/tinix")
+            with self.assertRaises(ValueError):
+                publisher.validate_target("https://notx.com/tinix")
+
+    async def test_youtube_discovery_collapses_studio_menu_links_to_one_channel(self) -> None:
+        channel_id = "UCXdYgfzFMIvyE-tgjosC6MQ"
+        with tempfile.TemporaryDirectory() as root:
+            publisher = self.verifier(Path(root), "youtube")
+            page = VerificationPage([
+                {"url": f"https://studio.youtube.com/channel/{channel_id}/analytics", "name": "Analytics"},
+                {"url": f"https://studio.youtube.com/channel/{channel_id}/content", "name": "Content"},
+                {"url": f"https://www.youtube.com/channel/{channel_id}", "name": "Tan Nguyen"},
+                {"url": f"https://studio.youtube.com/channel/{channel_id}/posts", "name": "Community"},
+            ])
+            self.assertEqual(await publisher.discover_targets(page), [{
+                "external_id": channel_id,
+                "name": "Tan Nguyen",
+                "url": f"https://www.youtube.com/channel/{channel_id}",
+                "target_type": "channel",
+            }])
+
+    async def test_verifier_rejects_existing_post_link_and_hidden_success_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            old_urls = {
+                "instagram": "https://www.instagram.com/p/old-post/",
+                "tiktok": "https://www.tiktok.com/@tinix/video/old-post",
+                "youtube": "https://www.youtube.com/watch?v=old-post",
+                "x": "https://x.com/tinix/status/old-post",
+            }
+            for platform, old_url in old_urls.items():
+                publisher = self.verifier(Path(root), platform)
+                page = VerificationPage([old_url])
+                baseline = await publisher.capture_verification_baseline(page)
+                page.success_present = True
+                page.success_visible = False
+                self.assertEqual(await publisher.verify(page, baseline, timeout_seconds=0), (False, None))
+
+    async def test_verifier_accepts_new_visible_evidence_only(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            evidence = {
+                "instagram": ("https://www.instagram.com/p/old-post/", "https://www.instagram.com/p/new-post/"),
+                "tiktok": ("https://www.tiktok.com/@tinix/video/old-post", "https://www.tiktok.com/@tinix/video/new-post"),
+                "youtube": ("https://www.youtube.com/watch?v=old-post", "https://www.youtube.com/watch?v=new-post"),
+                "x": ("https://x.com/tinix/status/old-post", "https://x.com/tinix/status/new-post"),
+            }
+            for platform, (old_url, new_url) in evidence.items():
+                publisher = self.verifier(Path(root), platform)
+                page = VerificationPage([old_url])
+                baseline = await publisher.capture_verification_baseline(page)
+                page.links.append(new_url)
+                self.assertEqual(await publisher.verify(page, baseline, timeout_seconds=0), (True, new_url.rstrip("/")))
+            publisher = self.verifier(Path(root), "instagram")
+            page = VerificationPage()
+            baseline = await publisher.capture_verification_baseline(page)
+            page.success_present = True
+            page.success_visible = True
+            self.assertEqual(await publisher.verify(page, baseline, timeout_seconds=0), (True, None))
+
+    async def test_verifier_rejects_lookalike_hostname(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            publisher = self.verifier(Path(root), "instagram")
+            page = VerificationPage(["https://notinstagram.com/p/not-ours/"])
+            baseline = await publisher.capture_verification_baseline(page)
+            self.assertEqual(await publisher.verify(page, baseline, timeout_seconds=0), (False, None))
 
     async def test_dry_run_reaches_ready_without_clicking_submit(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -140,6 +249,24 @@ class WebPlatformPublisherTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.outcome,PublishOutcome.PUBLISHED)
             self.assertEqual(publisher.button.clicks,1)
             self.assertIn(("verifying","commit_point_reached",True),transitions)
+
+    async def test_unverified_real_publish_is_unknown_result(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            publisher = PublisherUnderTest(Path(root))
+
+            async def unverified(_page, _baseline):
+                return False, None
+
+            publisher.verify = unverified
+            context = PublishContext(
+                job={"id": "job-3", "dry_run": 0}, account={"id": "a", "platform": "instagram"},
+                payload={"content_format": "image", "target_url": "https://www.instagram.com/example/"},
+                is_cancelled=lambda: asyncio.sleep(0, result=False), transition=lambda *_args: asyncio.sleep(0),
+            )
+            with patch("app.services.web_platform_publisher.BrowserSession", FakeSession):
+                result = await publisher.publish(context)
+            self.assertEqual(result.outcome, PublishOutcome.UNKNOWN_RESULT)
+            self.assertEqual(publisher.button.clicks, 1)
 
 
 if __name__ == "__main__": unittest.main()

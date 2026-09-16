@@ -16,7 +16,7 @@ from app.db.integration_repositories import AIProviderConfigRepository, Platform
 from app.db.database import utc_now
 from app.db.repositories import AppSettingsRepository
 from app.integrations.catalog import ai_provider, integration_catalog, platform_app
-from app.services.ai import AIConfigurationError, AIError, AIImageResult, AIProvider, AIResult, OpenAICompatibleProvider
+from app.services.ai import AIConfigurationError, AIError, AIImageInput, AIProvider, AIResult, OpenAICompatibleProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +94,13 @@ class IntegrationService:
     def ai_list(self) -> dict[str, Any]:
         legacy = self._legacy()
         defaults = {"text_config_id": self.app_settings.get("ai.default_text_config_id"), "image_config_id": self.app_settings.get("ai.default_image_config_id")}
+        configs = self.ai_configs.list()
+        for item in configs:
+            for capability in ("text", "image"):
+                model_key = f"{capability}_model"
+                model = str(item.get(model_key) or "")
+                if model:
+                    item[f"{model_key}_display_name"] = self.ai_configs.model_display_name(item["id"], model)
         legacy_descriptor = None
         if legacy:
             legacy_descriptor = {
@@ -102,7 +109,7 @@ class IntegrationService:
                 "text_model": legacy.settings.ai_model,
                 "image_model": legacy.settings.ai_image_model,
             }
-        return {"configs": self.ai_configs.list(), "defaults": defaults, "legacy_configured": bool(legacy), "legacy": legacy_descriptor}
+        return {"configs": configs, "defaults": defaults, "legacy_configured": bool(legacy), "legacy": legacy_descriptor}
 
     def create_ai(self, **payload: Any) -> dict[str, Any]:
         return self.ai_configs.create(**payload)
@@ -281,18 +288,12 @@ class ManagedAIProvider(AIProvider):
         except AIConfigurationError:
             return {"provider": self.name, "model": "unconfigured", "config_id": ""}
 
-    async def generate_structured(self, prompt: str, system: str) -> AIResult:
+    async def generate_structured(
+        self, prompt: str, system: str, images: list[AIImageInput] | None = None,
+    ) -> AIResult:
         resolved = self.integrations.resolve_ai("text")
         provider = OpenAICompatibleProvider(resolved.settings)
         try:
-            return await provider.generate_structured(prompt, system)
-        finally:
-            await provider.close()
-
-    async def generate_image(self, prompt: str) -> AIImageResult:
-        resolved = self.integrations.resolve_ai("image")
-        provider = OpenAICompatibleProvider(resolved.settings)
-        try:
-            return await provider.generate_image(prompt)
+            return await provider.generate_structured(prompt, system, images)
         finally:
             await provider.close()

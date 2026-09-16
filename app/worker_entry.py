@@ -15,6 +15,7 @@ logger=logging.getLogger(__name__)
 async def run()->None:
     settings=get_settings();configure_logging(settings);services=build_services(settings)
     await asyncio.to_thread(services.database.initialize)
+    await asyncio.to_thread(services.accounts.migrate_legacy_credentials)
     stop=asyncio.Event();loop=asyncio.get_running_loop()
     for name in ("SIGINT","SIGTERM"):
         signum=getattr(signal,name,None)

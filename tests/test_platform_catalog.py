@@ -52,6 +52,11 @@ class PlatformCatalogTests(unittest.TestCase):
         self.assertEqual(transport.content_formats, ("video", "short"))
         self.assertNotIn("community_post", transport.content_formats)
 
+    def test_catalog_only_exposes_formats_implemented_by_the_active_transport(self) -> None:
+        self.assertEqual(get_platform("instagram").content_formats, ("image", "carousel"))
+        self.assertEqual(get_platform("tiktok").content_formats, ("short_video",))
+        self.assertEqual(get_platform("youtube").content_formats, ("video", "short"))
+
 
 if __name__ == "__main__":
     unittest.main()

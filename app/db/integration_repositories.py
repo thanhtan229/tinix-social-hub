@@ -131,6 +131,14 @@ class AIProviderConfigRepository:
             rows = connection.execute("SELECT * FROM ai_provider_models WHERE config_id=? ORDER BY model_id", (config_id,)).fetchall()
         return [{**row_to_dict(row), "capabilities": json.loads(row["capabilities_json"]), "metadata": json.loads(row["raw_metadata_json"])} for row in rows]
 
+    def model_display_name(self, config_id: str, model_id: str) -> str:
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT display_name FROM ai_provider_models WHERE config_id=? AND model_id=?",
+                (config_id, model_id),
+            ).fetchone()
+        return str(row[0]) if row and row[0] else model_id
+
     def mark_test(self, config_id: str, *, status: str, error_code: str | None = None, error_message: str | None = None) -> None:
         with self.db.connection() as connection:
             connection.execute("UPDATE ai_provider_configs SET last_test_status=?,last_test_at=?,last_error_code=?,last_error_message=?,updated_at=? WHERE id=?", (status, utc_now(), error_code, (error_message or "")[:500] or None, utc_now(), config_id))

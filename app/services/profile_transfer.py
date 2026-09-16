@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
 import shutil
+import struct
 import tempfile
 import uuid
 import zipfile
@@ -13,8 +16,13 @@ from pathlib import Path
 from typing import Any
 
 import psutil
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 
 from app.core.config import Settings
+from app.core.secrets import SecretProtector
 from app.db.database import Database, utc_now
 from app.db.repositories import AccountRepository
 
@@ -49,11 +57,18 @@ class ChromeProfileTransferService:
     BUNDLE_VERSION = 1
     COLLECTION_FORMAT = "tinix-profiles"
     COLLECTION_VERSION = 1
+    ENCRYPTED_MAGIC = b"TINIX-PROFILES-ENC-v1\n"
+    ENCRYPTED_ALGORITHM = "AES-256-GCM"
+    ENCRYPTED_KDF = "PBKDF2-HMAC-SHA256"
+    ENCRYPTED_KDF_ITERATIONS = 600_000
+    ENCRYPTED_CHUNK_BYTES = 1024 * 1024
+    ENCRYPTED_HEADER_LIMIT = 4096
     MAX_ARCHIVE_FILES = 250_000
     MAX_ARCHIVE_BYTES = 100 * 1024 * 1024 * 1024
     ACCOUNT_FIELD_LIMITS = {
         "username": 500, "email": 500, "password": 2_000,
         "secret_2fa": 500, "email_pass": 2_000, "cookie": 200_000,
+        "recovery_codes": 10_000,
     }
 
     def __init__(
@@ -61,11 +76,13 @@ class ChromeProfileTransferService:
         settings: Settings,
         database: Database,
         accounts: AccountRepository,
+        secrets: SecretProtector | None = None,
         path_in_use: Callable[[Path], bool] | None = None,
     ) -> None:
         self.settings = settings
         self.db = database
         self.accounts = accounts
+        self.secrets = secrets or accounts.secrets
         self.path_in_use = path_in_use or self._chrome_uses_path
         self.backup_root = (settings.backup_dir / "chrome_profiles").resolve()
         self.export_root = (settings.export_dir / "chrome_profiles").resolve()
@@ -120,6 +137,39 @@ class ChromeProfileTransferService:
                 raise ProfileTransferError(f"Trường {field} trong ZIP không hợp lệ.")
             result[field] = value
         return result
+
+    def _account_metadata_for_export(self, account: dict[str, Any], *, include_credentials: bool) -> dict[str, Any]:
+        metadata = {
+            "account_name": account["name"], "platform": account["platform"],
+            "username": account.get("username") or "", "email": account.get("email") or "",
+        }
+        if include_credentials:
+            metadata["credentials_protected"] = {
+                field: self.secrets.protect_secret(str(account.get(field) or ""))
+                for field in AccountRepository.CREDENTIAL_FIELDS
+                if account.get(field)
+            }
+        return metadata
+
+    def _decode_export_credentials(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        result = dict(metadata)
+        protected = result.pop("credentials_protected", None)
+        if protected is None:
+            return self._validate_account_metadata(result)
+        if not isinstance(protected, dict):
+            raise ProfileTransferError("Credential trong gói profile không hợp lệ.")
+        for field in AccountRepository.CREDENTIAL_FIELDS:
+            encoded = protected.get(field, "")
+            if not isinstance(encoded, str) or len(encoded) > 500_000:
+                raise ProfileTransferError("Credential trong gói profile không hợp lệ.")
+            if encoded:
+                try:
+                    result[field] = self.secrets.unprotect_secret(encoded)
+                except (ValueError, OSError) as exc:
+                    raise ProfileTransferError(
+                        "Credential trong gói chỉ có thể được Import bởi cùng tài khoản Windows đã Export."
+                    ) from exc
+        return self._validate_account_metadata(result)
 
     @classmethod
     def _validate_profile(cls, path: Path) -> None:
@@ -378,7 +428,7 @@ class ChromeProfileTransferService:
         if profile.parent != bundle:
             raise ProfileTransferError("Đường dẫn Chrome profile trong gói không hợp lệ.")
         self._validate_profile(profile)
-        return bundle, self._validate_account_metadata(manifest), profile
+        return bundle, self._decode_export_credentials(manifest), profile
 
     def import_bundle(self, bundle_path: str) -> dict[str, Any]:
         _, manifest, profile = self._read_bundle(bundle_path)
@@ -443,6 +493,125 @@ class ChromeProfileTransferService:
         except (zipfile.BadZipFile, OSError) as exc:
             raise ProfileTransferError("Không đọc được file ZIP Tinix profile.") from exc
 
+    @classmethod
+    def _is_encrypted_collection(cls, source: Path) -> bool:
+        if not source.is_absolute() or not source.is_file() or cls._is_reparse(source):
+            raise ProfileTransferError("Gói profile không tồn tại hoặc không an toàn.")
+        try:
+            with source.open("rb") as payload:
+                return payload.read(len(cls.ENCRYPTED_MAGIC)) == cls.ENCRYPTED_MAGIC
+        except OSError as exc:
+            raise ProfileTransferError("Không thể đọc gói profile.") from exc
+
+    @classmethod
+    def _derive_bundle_key(cls, password: str, salt: bytes, iterations: int) -> bytes:
+        if not password:
+            raise ProfileTransferError("Gói profile đã mã hóa cần mật khẩu để tiếp tục.")
+        if len(salt) != 16 or iterations != cls.ENCRYPTED_KDF_ITERATIONS:
+            raise ProfileTransferError("Thông tin mã hóa của gói profile không hợp lệ.")
+        return PBKDF2HMAC(
+            algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations,
+        ).derive(password.encode("utf-8"))
+
+    @classmethod
+    def _encryption_header(cls, salt: bytes, nonce_prefix: bytes) -> bytes:
+        return json.dumps(
+            {
+                "algorithm": cls.ENCRYPTED_ALGORITHM,
+                "kdf": cls.ENCRYPTED_KDF,
+                "iterations": cls.ENCRYPTED_KDF_ITERATIONS,
+                "salt": base64.b64encode(salt).decode("ascii"),
+                "nonce_prefix": base64.b64encode(nonce_prefix).decode("ascii"),
+                "chunk_size": cls.ENCRYPTED_CHUNK_BYTES,
+            }, separators=(",", ":"), sort_keys=True,
+        ).encode("ascii")
+
+    @classmethod
+    def _parse_encryption_header(cls, raw: bytes) -> tuple[bytes, bytes, int]:
+        if not raw or len(raw) > cls.ENCRYPTED_HEADER_LIMIT:
+            raise ProfileTransferError("Thông tin mã hóa của gói profile không hợp lệ.")
+        try:
+            header = json.loads(raw.decode("ascii"))
+            salt = base64.b64decode(header["salt"], validate=True)
+            nonce_prefix = base64.b64decode(header["nonce_prefix"], validate=True)
+            iterations = int(header["iterations"])
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+            raise ProfileTransferError("Thông tin mã hóa của gói profile không hợp lệ.") from exc
+        if not isinstance(header, dict):
+            raise ProfileTransferError("Thông tin mã hóa của gói profile không hợp lệ.")
+        if (
+            header.get("algorithm") != cls.ENCRYPTED_ALGORITHM
+            or header.get("kdf") != cls.ENCRYPTED_KDF
+            or header.get("chunk_size") != cls.ENCRYPTED_CHUNK_BYTES
+            or len(nonce_prefix) != 8
+        ):
+            raise ProfileTransferError("Gói profile sử dụng định dạng mã hóa không được hỗ trợ.")
+        return salt, nonce_prefix, iterations
+
+    @classmethod
+    def _encrypt_archive(cls, source: Path, destination: Path, password: str) -> None:
+        salt, nonce_prefix = os.urandom(16), os.urandom(8)
+        header = cls._encryption_header(salt, nonce_prefix)
+        cipher = AESGCM(cls._derive_bundle_key(password, salt, cls.ENCRYPTED_KDF_ITERATIONS))
+        try:
+            with source.open("rb") as plain, destination.open("xb") as encrypted:
+                encrypted.write(cls.ENCRYPTED_MAGIC)
+                encrypted.write(header + b"\n")
+                for index in range(0x1_0000_0000):
+                    chunk = plain.read(cls.ENCRYPTED_CHUNK_BYTES)
+                    if not chunk:
+                        encrypted.write(struct.pack(">I", 0))
+                        break
+                    counter = struct.pack(">I", index)
+                    protected = cipher.encrypt(nonce_prefix + counter, chunk, header + counter)
+                    encrypted.write(struct.pack(">I", len(protected)))
+                    encrypted.write(protected)
+                else:
+                    raise ProfileTransferError("Gói profile vượt giới hạn mã hóa.")
+        except OSError as exc:
+            raise ProfileTransferError("Không thể ghi gói profile đã mã hóa.") from exc
+
+    @classmethod
+    def _decrypt_encrypted_archive(cls, source: Path, destination: Path, password: str) -> None:
+        try:
+            with source.open("rb") as encrypted:
+                if encrypted.read(len(cls.ENCRYPTED_MAGIC)) != cls.ENCRYPTED_MAGIC:
+                    raise ProfileTransferError("Gói profile mã hóa không hợp lệ.")
+                header = encrypted.readline(cls.ENCRYPTED_HEADER_LIMIT + 1).rstrip(b"\r\n")
+                if len(header) > cls.ENCRYPTED_HEADER_LIMIT:
+                    raise ProfileTransferError("Thông tin mã hóa của gói profile không hợp lệ.")
+                salt, nonce_prefix, iterations = cls._parse_encryption_header(header)
+                cipher = AESGCM(cls._derive_bundle_key(password, salt, iterations))
+                copied = 0
+                with destination.open("xb") as plain:
+                    for index in range(0x1_0000_0000):
+                        raw_length = encrypted.read(4)
+                        if len(raw_length) != 4:
+                            raise ProfileTransferError("Gói profile mã hóa bị thiếu dữ liệu.")
+                        length = struct.unpack(">I", raw_length)[0]
+                        if length == 0:
+                            if encrypted.read(1):
+                                raise ProfileTransferError("Gói profile mã hóa có dữ liệu dư.")
+                            break
+                        if length > cls.ENCRYPTED_CHUNK_BYTES + 16:
+                            raise ProfileTransferError("Gói profile mã hóa có block không hợp lệ.")
+                        protected = encrypted.read(length)
+                        if len(protected) != length:
+                            raise ProfileTransferError("Gói profile mã hóa bị thiếu dữ liệu.")
+                        counter = struct.pack(">I", index)
+                        try:
+                            chunk = cipher.decrypt(nonce_prefix + counter, protected, header + counter)
+                        except InvalidTag as exc:
+                            raise ProfileTransferError("Mật khẩu không đúng hoặc gói profile đã bị thay đổi.") from exc
+                        copied += len(chunk)
+                        if copied > cls.MAX_ARCHIVE_BYTES:
+                            raise ProfileTransferError("Gói profile vượt giới hạn dung lượng 100 GB.")
+                        plain.write(chunk)
+                    else:
+                        raise ProfileTransferError("Gói profile vượt giới hạn mã hóa.")
+        except OSError as exc:
+            raise ProfileTransferError("Không thể đọc gói profile đã mã hóa.") from exc
+
     def _read_collection(self, root: Path) -> tuple[dict[str, Any], list[tuple[dict[str, Any], Path]]]:
         try:
             manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
@@ -467,10 +636,12 @@ class ChromeProfileTransferService:
             if profiles_root not in profile.parents or profile == profiles_root:
                 raise ProfileTransferError("Đường dẫn profile trong manifest không hợp lệ.")
             self._validate_profile(profile)
-            result.append((self._validate_account_metadata({**raw, "account_name": name, "platform": platform}), profile))
+            result.append((self._decode_export_credentials({**raw, "account_name": name, "platform": platform}), profile))
         return manifest, result
 
-    def export_all_profiles(self) -> dict[str, Any]:
+    def export_all_profiles(
+        self, include_credentials: bool = False, password: str | None = None,
+    ) -> dict[str, Any]:
         accounts = self.accounts.list()
         if not accounts:
             raise ProfileTransferError("App chưa có account để Export.")
@@ -485,9 +656,12 @@ class ChromeProfileTransferService:
             sources.append((account, source))
 
         from app import __version__
-        destination = self.export_root / f"Tinix-Social-Hub-all-profiles-{self._timestamp()}.tinix-profiles.zip"
+        encrypted = bool(password)
+        extension = ".tinix-profiles.enc" if encrypted else ".tinix-profiles.zip"
+        destination = self.export_root / f"Tinix-Social-Hub-all-profiles-{self._timestamp()}{extension}"
         staging = Path(tempfile.mkdtemp(prefix=".tinix-profiles-", dir=self.export_root))
-        temporary_zip = destination.with_suffix(destination.suffix + ".tmp")
+        temporary_zip = self.export_root / f".{uuid.uuid4()}.tinix-profiles.zip"
+        temporary_encrypted = self.export_root / f".{uuid.uuid4()}.tinix-profiles.enc"
         files = 0
         size = 0
         manifest_accounts: list[dict[str, Any]] = []
@@ -498,14 +672,7 @@ class ChromeProfileTransferService:
                 files += copied_files
                 size += copied_size
                 manifest_accounts.append({
-                    "account_name": account["name"],
-                    "platform": account["platform"],
-                    "username": account.get("username") or "",
-                    "email": account.get("email") or "",
-                    "password": account.get("password") or "",
-                    "secret_2fa": account.get("secret_2fa") or "",
-                    "email_pass": account.get("email_pass") or "",
-                    "cookie": account.get("cookie") or "",
+                    **self._account_metadata_for_export(account, include_credentials=include_credentials),
                     "source_account_id": account["id"],
                     "profile_path": relative,
                 })
@@ -515,7 +682,9 @@ class ChromeProfileTransferService:
                 "source_app": "Tinix Social Hub",
                 "source_app_version": __version__,
                 "profile_content": "session-only-v1",
-                "contains_account_secrets": True,
+                "contains_account_secrets": include_credentials,
+                "credential_protection": "windows_dpapi" if include_credentials else None,
+                "package_encryption": "password_aes_256_gcm" if encrypted else None,
                 "exported_at": utc_now(),
                 "accounts": manifest_accounts,
             }
@@ -524,27 +693,44 @@ class ChromeProfileTransferService:
                 for item in staging.rglob("*"):
                     if item.is_file():
                         archive.write(item, item.relative_to(staging).as_posix())
-            os.replace(temporary_zip, destination)
+            if encrypted:
+                self._encrypt_archive(temporary_zip, temporary_encrypted, password or "")
+                temporary_zip.unlink()
+                os.replace(temporary_encrypted, destination)
+            else:
+                os.replace(temporary_zip, destination)
         except Exception:
             if temporary_zip.exists():
                 temporary_zip.unlink()
+            if temporary_encrypted.exists():
+                temporary_encrypted.unlink()
             raise
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         return {
             "archive_path": str(destination), "bundle_path": str(destination),
             "accounts_exported": len(manifest_accounts), "files_copied": files, "bytes_copied": size,
+            "credentials_included": include_credentials,
+            "credential_protection": "windows_dpapi" if include_credentials else None,
+            "package_encrypted": encrypted,
+            "package_encryption": "password_aes_256_gcm" if encrypted else None,
         }
 
-    def import_all_profiles(self, bundle_path: str) -> dict[str, Any]:
+    def import_all_profiles(self, bundle_path: str, password: str | None = None) -> dict[str, Any]:
         source = Path(os.path.expandvars(os.path.expanduser(bundle_path))).resolve()
         if source.is_dir():
             imported = self.import_bundle(bundle_path)
             return {"accounts_imported": 1, "accounts": [imported["account"]], "source_app": imported.get("source_app")}
-        extraction = Path(tempfile.mkdtemp(prefix="tinix-profiles-import-"))
+        workspace = Path(tempfile.mkdtemp(prefix="tinix-profiles-import-"))
+        extraction = workspace / "extracted"
+        extraction.mkdir()
         created: list[dict[str, Any]] = []
         try:
-            self._extract_archive(source, extraction)
+            archive = source
+            if self._is_encrypted_collection(source):
+                archive = workspace / "bundle.zip"
+                self._decrypt_encrypted_archive(source, archive, password or "")
+            self._extract_archive(archive, extraction)
             manifest, entries = self._read_collection(extraction)
             for metadata, profile in entries:
                 account = self.accounts.create(metadata["account_name"], metadata["platform"], metadata=metadata)
@@ -562,7 +748,7 @@ class ChromeProfileTransferService:
                 self.accounts.delete_if_safe(account["id"])
             raise
         finally:
-            shutil.rmtree(extraction, ignore_errors=True)
+            shutil.rmtree(workspace, ignore_errors=True)
 
     def _run(self, account_id: str, operation: str, source: Path | None, destination: Path | None, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         self.accounts.begin_profile_operation(account_id)
@@ -618,8 +804,73 @@ class ChromeProfileTransferService:
 
         return self._run(account_id, "import", source, target, action)
 
-    def export_profile(self, account_id: str) -> dict[str, Any]:
+    def export_profile(
+        self, account_id: str, include_credentials: bool = False, password: str | None = None,
+    ) -> dict[str, Any]:
         account, source = self._account_and_target(account_id)
+        if password:
+            destination = self.export_root / (
+                f"{self._safe_label(account['name'])}-{self._timestamp()}.tinix-profiles.enc"
+            )
+
+            def encrypted_action() -> dict[str, Any]:
+                self._validate_profile(source)
+                self._ensure_available(source)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                staging = Path(tempfile.mkdtemp(prefix=".tinix-profile-", dir=destination.parent))
+                temporary_zip = self.export_root / f".{uuid.uuid4()}.tinix-profiles.zip"
+                temporary_encrypted = self.export_root / f".{uuid.uuid4()}.tinix-profiles.enc"
+                try:
+                    profile_path = "profiles/0001"
+                    files, size = self._copy_session_profile(source, staging / profile_path)
+                    from app import __version__
+                    manifest = {
+                        "bundle_format": self.COLLECTION_FORMAT,
+                        "format_version": self.COLLECTION_VERSION,
+                        "source_app": "Tinix Social Hub",
+                        "source_app_version": __version__,
+                        "profile_content": "session-only-v1",
+                        "contains_account_secrets": include_credentials,
+                        "credential_protection": "windows_dpapi" if include_credentials else None,
+                        "package_encryption": "password_aes_256_gcm",
+                        "exported_at": utc_now(),
+                        "accounts": [{
+                            **self._account_metadata_for_export(account, include_credentials=include_credentials),
+                            "source_account_id": account["id"],
+                            "profile_path": profile_path,
+                        }],
+                    }
+                    (staging / "manifest.json").write_text(
+                        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    with zipfile.ZipFile(
+                        temporary_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=6,
+                    ) as archive:
+                        for item in staging.rglob("*"):
+                            if item.is_file():
+                                archive.write(item, item.relative_to(staging).as_posix())
+                    self._encrypt_archive(temporary_zip, temporary_encrypted, password)
+                    temporary_zip.unlink()
+                    os.replace(temporary_encrypted, destination)
+                except Exception:
+                    if temporary_zip.exists():
+                        temporary_zip.unlink()
+                    if temporary_encrypted.exists():
+                        temporary_encrypted.unlink()
+                    raise
+                finally:
+                    shutil.rmtree(staging, ignore_errors=True)
+                return {
+                    "export_path": str(destination), "bundle_path": str(destination),
+                    "files_copied": files, "bytes_copied": size,
+                    "credentials_included": include_credentials,
+                    "credential_protection": "windows_dpapi" if include_credentials else None,
+                    "package_encrypted": True,
+                    "package_encryption": "password_aes_256_gcm",
+                }
+
+            return self._run(account_id, "export", source, destination, encrypted_action)
+
         destination = self.export_root / f"{self._safe_label(account['name'])}-{self._timestamp()}.tinix-profile"
 
         def action() -> dict[str, Any]:
@@ -635,18 +886,12 @@ class ChromeProfileTransferService:
                 manifest = {
                     "bundle_format": self.BUNDLE_FORMAT,
                     "format_version": self.BUNDLE_VERSION,
-                    "account_name": account["name"],
-                    "platform": account["platform"],
-                    "username": account.get("username") or "",
-                    "email": account.get("email") or "",
-                    "password": account.get("password") or "",
-                    "secret_2fa": account.get("secret_2fa") or "",
-                    "email_pass": account.get("email_pass") or "",
-                    "cookie": account.get("cookie") or "",
+                    **self._account_metadata_for_export(account, include_credentials=include_credentials),
                     "source_app": "Tinix Social Hub",
                     "source_app_version": __version__,
                     "profile_content": "session-only-v1",
-                    "contains_account_secrets": True,
+                    "contains_account_secrets": include_credentials,
+                    "credential_protection": "windows_dpapi" if include_credentials else None,
                     "source_account_id": account["id"],
                     "exported_at": utc_now(),
                 }

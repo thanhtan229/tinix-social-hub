@@ -105,7 +105,7 @@ class ProfileTransferTests(unittest.TestCase):
         second_target = self.root / "profiles" / second["profile_key"]
         make_profile(second_target, "youtube-session")
 
-        exported = self.service.export_all_profiles()
+        exported = self.service.export_all_profiles(include_credentials=True)
         archive = Path(exported["archive_path"])
         self.assertTrue(archive.is_file())
         self.assertEqual(exported["accounts_exported"], 2)
@@ -114,12 +114,12 @@ class ProfileTransferTests(unittest.TestCase):
             self.assertEqual(manifest["bundle_format"], "tinix-profiles")
             self.assertEqual(manifest["profile_content"], "session-only-v1")
             self.assertTrue(manifest["contains_account_secrets"])
+            self.assertEqual(manifest["credential_protection"], "windows_dpapi")
             main_metadata = next(item for item in manifest["accounts"] if item["account_name"] == "Main Account")
             self.assertEqual(main_metadata["email"], "main@example.com")
-            self.assertEqual(main_metadata["password"], "fb-password")
-            self.assertEqual(main_metadata["secret_2fa"], "JBSWY3DPEHPK3PXP")
-            self.assertEqual(main_metadata["email_pass"], "mail-password")
-            self.assertEqual(main_metadata["cookie"], "db-cookie")
+            self.assertNotIn("password", main_metadata)
+            self.assertNotIn("secret_2fa", main_metadata)
+            self.assertTrue(main_metadata["credentials_protected"]["password"].startswith("dpapi:"))
             self.assertEqual({item["account_name"] for item in manifest["accounts"]}, {"Main Account", "Video Account"})
             self.assertIn("profiles/0001/Default/Cookies", bundle.namelist())
             self.assertNotIn("profiles/0001/Default/Cache/ignored.bin", bundle.namelist())
@@ -137,6 +137,33 @@ class ProfileTransferTests(unittest.TestCase):
         imported_main = next(item for item in imported_accounts if item["name"] == "Main Account")
         self.assertEqual(imported_main["email"], "main@example.com")
         self.assertEqual(imported_main["secret_2fa"], "JBSWY3DPEHPK3PXP")
+
+    def test_export_omits_credentials_by_default(self) -> None:
+        make_profile(self.target, "facebook-session")
+        exported = self.service.export_all_profiles()
+        with zipfile.ZipFile(exported["archive_path"]) as bundle:
+            manifest = json.loads(bundle.read("manifest.json"))
+        self.assertFalse(manifest["contains_account_secrets"])
+        account = manifest["accounts"][0]
+        self.assertNotIn("credentials_protected", account)
+        self.assertNotIn("password", account)
+
+    def test_password_encrypted_export_requires_the_correct_password(self) -> None:
+        make_profile(self.target, "facebook-session")
+        exported = self.service.export_all_profiles(password="correct horse battery staple")
+        archive = Path(exported["archive_path"])
+        self.assertEqual(archive.suffix, ".enc")
+        self.assertTrue(exported["package_encrypted"])
+        self.assertFalse(archive.read_bytes().startswith(b"PK"))
+        with self.assertRaisesRegex(ProfileTransferError, "cần mật khẩu"):
+            self.service.import_all_profiles(str(archive))
+        with self.assertRaisesRegex(ProfileTransferError, "Mật khẩu không đúng"):
+            self.service.import_all_profiles(str(archive), password="not-the-password")
+
+        imported = self.service.import_all_profiles(str(archive), password="correct horse battery staple")
+        self.assertEqual(imported["accounts_imported"], 1)
+        profile = self.root / "profiles" / imported["accounts"][0]["profile_key"]
+        self.assertEqual((profile / "Default" / "Cookies").read_text(encoding="utf-8"), "facebook-session")
 
     def test_cleanup_preview_and_execute_keep_session_state(self) -> None:
         make_profile(self.target, "keep-session")

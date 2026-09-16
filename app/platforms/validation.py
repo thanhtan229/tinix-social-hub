@@ -15,6 +15,8 @@ def get_format_schema(platform: str, content_format: str) -> FormatSchema:
     definition = get_platform(platform)
     if not definition:
         raise PlatformValidationError([f"Nền tảng không tồn tại: {platform}"])
+    if content_format not in definition.content_formats:
+        raise PlatformValidationError([f"Định dạng {content_format} chưa được hỗ trợ cho {definition.name}."])
     schema = next((item for item in definition.format_schemas if item.id == content_format), None)
     if not schema:
         raise PlatformValidationError([f"Định dạng {content_format} không hợp lệ cho {definition.name}."])

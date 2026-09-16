@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,300..700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=1.0.11">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.24">
 </head>
 <body>
   <aside class="sidebar">
@@ -61,14 +61,21 @@
           <span id="aiHistoryCounter" class="ai-history-counter" title="Vị trí bản ghi hiện tại / Tổng số">0 / 0</span>
           <button type="button" id="btnAiHistoryNext" class="btn-nav-history" disabled title="Xem nội dung sau (Alt + →)">Sau ▶</button>
           <div class="history-divider"></div>
-          <button type="button" id="btnAiNewPrompt" class="btn-nav-action secondary" title="Soạn brief mới">+ Tạo mới</button>
+          <button type="button" id="btnAiNewPrompt" class="btn-nav-action secondary" title="Soạn brief mới">+ Brief mới</button>
           <button type="button" id="btnAiClearHistory" class="btn-nav-action danger-subtle" title="Xóa toàn bộ lịch sử">🗑️ Xóa</button>
         </div>
       </div>
 
       <div class="grid two ai-studio-grid">
         <form id="aiForm" class="panel form-grid ai-form-panel">
-          <label>Thao tác<select id="aiOperation"><option value="write">Viết mới</option><option value="rewrite">Viết lại</option><option value="shorten">Rút gọn</option><option value="expand">Mở rộng</option><option value="hook">Tạo hook</option><option value="cta">Tạo CTA</option><option value="hashtags">Tạo hashtag</option><option value="variants">Nhiều phiên bản</option><option value="cross_platform">Chuyển đa nền tảng</option><option value="video_script">Video script</option></select></label>
+          <div class="brand-form-field">
+            <label for="aiPromptTemplate">System Prompt</label>
+            <div class="brand-field-row">
+              <select id="aiPromptTemplate" required disabled aria-busy="true"><option value="">Đang tải System Prompt…</option></select>
+              <button type="button" id="btnQuickAddPromptTemplate" class="btn-brand-action secondary" title="Tạo System Prompt mới">＋ Thêm</button>
+              <button type="button" id="btnQuickEditPromptTemplate" class="btn-brand-action secondary" title="Chỉnh sửa System Prompt đang chọn" style="display:none;">✏️ Sửa</button>
+            </div>
+          </div>
           <div class="brand-form-field">
             <label for="aiBrand">Brand Profile</label>
             <div class="brand-field-row">
@@ -80,6 +87,21 @@
             </div>
           </div>
           <label class="full">Brief<textarea id="aiBrief" rows="9" required placeholder="Mục tiêu, sản phẩm, khách hàng và thông điệp..."></textarea></label>
+          <section id="aiReferenceImageDropzone" class="full ai-reference-images" aria-labelledby="aiReferenceImagesTitle" aria-describedby="aiReferenceImageStatus">
+            <div class="ai-reference-images-head">
+              <div>
+                <span id="aiReferenceImagesTitle" class="field-label-text">🖼️ <strong>Ảnh tham chiếu</strong></span>
+                <small>Tối đa 4 ảnh. Ảnh sẽ được gửi đến AI để phân tích và gắn vào bản nháp.</small>
+              </div>
+              <div class="ai-reference-image-actions">
+                <button type="button" id="btnUploadReferenceImages" class="btn-brand-action secondary">＋ Tải ảnh</button>
+                <input id="aiReferenceImageUpload" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.jfif,image/*" multiple hidden>
+                <button type="button" id="btnChooseReferenceImages" class="btn-brand-action secondary">🗂️ Thư viện</button>
+              </div>
+            </div>
+            <div id="aiReferenceImageList" class="ai-reference-image-list" aria-live="polite"></div>
+            <p id="aiReferenceImageStatus" class="muted ai-reference-image-status">Kéo thả tối đa 4 ảnh vào đây, hoặc dùng Tải ảnh / Thư viện.</p>
+          </section>
           <div class="full ai-platforms-group">
             <span class="field-label-text">Nền tảng xuất bản</span>
             <div class="platform-checkbox-bar ai-platforms-bar">
@@ -92,18 +114,22 @@
           </div>
           <button class="primary full" type="submit" id="btnGenerateDraft">✨ Tạo bản nháp</button>
           
-          <div class="ai-image-gen-section">
+          <section class="ai-image-gen-section" aria-labelledby="aiImageSectionTitle">
+            <div class="ai-image-section-head">
+              <div>
+                <span id="aiImageSectionTitle" class="field-label-text">🎨 <strong>Tạo ảnh</strong></span>
+                <small>Ảnh được tạo bởi Tinix Media Creator</small>
+              </div>
+              <span class="badge badge-teal ai-image-engine-badge">Tinix Media Creator</span>
+            </div>
             <div id="aiImagePromptInputWrap" class="ai-prompt-input-wrap" style="display: none;">
               <label class="field-label-text" for="aiCustomImagePrompt">🎨 <strong>Prompt tạo ảnh:</strong></label>
               <textarea id="aiCustomImagePrompt" rows="3" placeholder="AI sẽ tự động điền prompt tạo ảnh tại đây (bạn có thể chỉnh sửa trước khi tạo)..."></textarea>
             </div>
-            <div id="aiImageControls" class="ai-image-controls" style="display:grid;">
-              <label>Engine<select id="aiImageEngine"><option value="direct_api">Direct API</option><option value="media_creator">Tinix Media Creator</option></select></label>
-              <label>Provider / Model<select id="aiImageSource" disabled aria-busy="true"><option value="" selected>Đang tải provider/model…</option></select></label>
+            <div id="aiImageControls" class="ai-image-controls">
+              <label class="full">Provider ảnh<select id="aiImageSource" disabled aria-busy="true"><option value="" selected>Đang tải provider từ Tinix Media Creator…</option></select></label>
               <label>Tỷ lệ<select id="aiImageAspectRatio"><option value="auto">Tự động</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="16:9">16:9</option><option value="9:16">9:16</option></select></label>
               <label>Số ảnh<select id="aiImageCount"><option value="1">1 ảnh</option><option value="2">2 ảnh</option><option value="4">4 ảnh</option></select></label>
-              <label>Chất lượng<select id="aiImageQuality"><option value="auto">Tự động</option><option value="low">Thấp</option><option value="medium">Trung bình</option><option value="high">Cao</option></select></label>
-              <label class="check ai-image-fallback"><input id="aiImageFallback" type="checkbox"><span>Cho phép FLUX dự phòng</span></label>
             </div>
             <div class="ai-image-actions"><button type="button" id="btnGenerateImage" class="secondary full btn-generate-image" disabled title="Tạo ảnh dựa trên prompt sau khi AI sinh nội dung">🎨 Tạo Ảnh</button><button type="button" id="btnCancelAiImage" class="danger" hidden>Hủy</button></div>
             <p id="aiImageJobStatus" class="muted" role="status" aria-live="polite"></p>
@@ -114,7 +140,7 @@
                 <span id="aiImageSourceBadge" class="badge badge-teal" style="font-size:10.5px;">AI Image</span>
               </div>
               <div class="ai-image-preview-container">
-                <img id="aiGeneratedImg" src="" alt="Ảnh tạo bởi AI" class="ai-generated-img">
+                <img id="aiGeneratedImg" src="" alt="Ảnh tạo bởi Tinix Media Creator" class="ai-generated-img" role="button" tabindex="0" title="Mở ảnh kích thước đầy đủ">
                 <div class="ai-image-overlay-actions">
                   <a id="btnDownloadAiImg" class="btn-img-action" download="ai-generated.png" target="_blank" title="Tải ảnh về máy">⬇️ Tải về</a>
                   <button type="button" id="btnAttachAiImageToDraft" class="btn-img-action primary" title="Đính kèm ảnh vào bài viết">📎 Gắn vào bài viết</button>
@@ -123,7 +149,7 @@
               <div id="aiImageGallery" class="ai-image-gallery" aria-label="Các ảnh đã tạo"></div>
               <p id="aiImagePromptMeta" class="ai-image-meta muted"></p>
             </div>
-          </div>
+          </section>
         </form>
         <article class="panel ai-result-panel">
           <div class="panel-head">
@@ -295,7 +321,7 @@
         <label>Delay giữa Page (giây)<input id="delaySeconds" type="number" min="0" value="0"></label>
         <label>Delay ngẫu nhiên tối đa<input id="randomDelay" type="number" min="0" value="0"></label>
         <label class="check full"><input id="dryRun" type="checkbox" checked><span><strong>Dry-run an toàn</strong><small>Dừng trước nút Đăng. Bỏ chọn chỉ khi đã duyệt và dry-run thành công.</small></span></label>
-        <div id="realWarning" class="warning full hidden">Bạn đang chọn ĐĂNG THẬT. Job chỉ chạy nếu revision hiện tại đã được duyệt.</div>
+        <div id="realWarning" class="warning full hidden">Bạn đang chọn ĐĂNG THẬT. Backend sẽ chỉ tạo job khi revision hiện tại đã duyệt và từng Page/Kênh đã có dry-run thành công với định dạng và phiên bản publisher hiện tại.</div>
         <button class="primary full" type="submit">Lưu lịch</button>
       </form>
       <div class="grid">
@@ -308,7 +334,7 @@
     <section id="tab-jobs" class="tab">
       <div class="page-head"><div><p class="eyebrow">RELEASE CONTROL CENTER</p><h1>Hàng đợi & Lịch sử</h1><p>Retry chỉ mở trước commit point; kết quả chưa rõ phải được xác minh thủ công.</p></div><div class="actions"><button id="cleanupJobs">Dọn lịch sử</button><button id="refreshJobs">Làm mới</button></div></div>
       <div class="grid two release-control"><article class="panel"><div class="panel-head"><h2>Cần chú ý</h2><button id="readAllNotifications">Đã đọc tất cả</button></div><div id="notificationList" class="status-list"></div></article><article class="panel"><h2>Bulk retry an toàn</h2><p class="muted">Chọn các job lỗi bằng checkbox trong bảng, xem trước phạm vi rồi mới retry.</p><div class="actions"><button id="previewRetry">Xem trước</button><button id="executeRetry" class="primary">Retry đã chọn</button></div><div id="retryPreview" class="muted">Chưa chọn job.</div></article></div>
-      <div class="table-wrap panel"><table><thead><tr><th><input id="selectAllJobs" type="checkbox" aria-label="Chọn tất cả tác vụ có thể xóa"> Loại</th><th>Account</th><th>Trạng thái</th><th>Chế độ</th><th>Thời gian</th><th></th></tr></thead><tbody id="jobsTable"></tbody></table></div>
+      <div class="table-wrap panel"><table class="jobs-table"><thead><tr><th><input id="selectAllJobs" type="checkbox" aria-label="Chọn tất cả tác vụ có thể xóa"> Loại</th><th>Account</th><th>Trạng thái</th><th>Chế độ</th><th>Thời gian</th><th></th></tr></thead><tbody id="jobsTable"></tbody></table></div>
     </section>
 
     <section id="tab-accounts" class="tab">
@@ -334,7 +360,7 @@
             </div>
             <div class="account-panel-controls">
               <button data-profile-action="import">Import Profiles</button>
-              <button data-profile-action="export" title="ZIP chứa thông tin đăng nhập và phiên Chrome; hãy bảo quản cẩn thận">Export Profiles</button>
+              <button data-profile-action="export" title="Mặc định chỉ xuất phiên Chrome; có thể chọn kèm credential DPAPI và mã hóa toàn bộ gói bằng mật khẩu">Export Profiles</button>
               <button id="closeAllChrome" class="primary">Đóng tất cả Chrome</button>
             </div>
           </div>
@@ -400,14 +426,19 @@
     <section id="tab-settings" class="tab">
       <div class="page-head"><div><p class="eyebrow">LOCAL SETTINGS</p><h1>Cài đặt & Dữ liệu</h1><p>Credential được mã hóa bằng Windows DPAPI và chỉ hiển thị ở dạng che mờ.</p></div></div>
       <div class="grid two"><article class="panel"><h2>Database</h2><p id="databaseText"></p><div class="actions"><button id="integrity">Integrity check</button><button id="backup" class="primary">Tạo backup</button><button id="restore">Khôi phục gần nhất</button></div></article><article class="panel"><h2>Bảo trì</h2><p id="maintenanceText">Dọn screenshot, file tạm và kiểm tra ngưỡng profile.</p><button id="maintenance">Chạy dọn ngay</button></article></div>
+      <article class="panel"><div class="panel-head"><div><h2>Kiểm tra sẵn sàng</h2><p id="readinessText" class="muted">Kiểm tra Chrome, database, ổ đĩa và các tích hợp local.</p></div><button id="runReadiness">Kiểm tra ngay</button></div><div id="readinessChecks" class="status-list"></div></article>
+      <article class="panel"><div class="panel-head"><div><h2>Khôi phục toàn ứng dụng</h2><p class="muted">Tạo một gói AES-256-GCM chứa database, media, Chrome profile và tùy chọn file `.env`.</p></div><div class="actions"><button id="exportRecovery" class="primary">Tạo recovery bundle</button><button id="restoreRecovery">Khôi phục bundle</button></div></div></article>
       <article class="panel"><h2>Tự động dọn Chrome profile</h2><p id="profileCleanupPolicyText" class="muted">Đang tải thiết lập…</p><form id="profileCleanupSettingsForm" class="form-grid compact"><label class="check full"><input id="profileCleanupEnabled" type="checkbox"><span>Bật tự động dọn<small>Chỉ xóa cache và dữ liệu có thể tạo lại; phiên đăng nhập được giữ nguyên.</small></span></label><label>Ngưỡng cache<select id="profileCleanupThreshold"><option value="2">2 GB</option><option value="5">5 GB (khuyến nghị)</option><option value="10">10 GB</option><option value="custom">Tùy chỉnh</option></select></label><label id="profileCleanupCustomWrap" class="hidden">Dung lượng tùy chỉnh (GB)<input id="profileCleanupCustom" type="number" min="0.5" max="100" step="0.5" value="5"></label><p class="muted full">App cũng dọn khi ổ chứa profile còn dưới 10 GB. Nếu Chrome đang mở, việc dọn sẽ được hoãn đến lần kiểm tra sau.</p><div class="actions full"><button type="submit" class="primary">Lưu thiết lập</button></div></form></article>
-      <article class="panel integrations-panel"><div class="panel-head"><div><h2>Tích hợp & API</h2><p class="muted">AI provider có hiệu lực ngay sau khi lưu. Platform App cần kết nối OAuth riêng cho từng account.</p></div><div class="actions"><button id="addAiProvider" class="primary">+ AI Provider</button><button id="addPlatformApp">+ Platform App</button></div></div><div id="integrationStatus" class="muted" role="status" aria-live="polite">Đang tải tích hợp…</div><div class="integration-defaults"><label>AI mặc định cho nội dung<select id="defaultTextProvider"></select></label><label>AI mặc định cho ảnh<select id="defaultImageProvider"></select></label><button id="saveAiDefaults">Lưu mặc định</button></div><div class="integration-sections"><section><h3>AI Providers</h3><div id="aiProviderCards" class="integration-cards"></div></section><section><h3>Platform Developer Apps</h3><div id="platformAppCards" class="integration-cards"></div></section></div></article>
+      <article class="panel integrations-panel"><div class="panel-head"><div><h2>Tích hợp & API</h2><p class="muted">AI provider có hiệu lực ngay sau khi lưu. Ảnh được tạo riêng qua Tinix Media Creator; Platform App cần kết nối OAuth riêng cho từng account.</p></div><div class="actions"><button id="addAiProvider" class="primary">+ AI Provider</button><button id="addPlatformApp">+ Platform App</button></div></div><div id="integrationStatus" class="muted" role="status" aria-live="polite">Đang tải tích hợp…</div><div class="integration-defaults"><label>AI mặc định cho nội dung<select id="defaultTextProvider"></select></label><button id="saveAiDefaults">Lưu mặc định</button></div><div class="integration-sections"><section><h3>AI Providers</h3><div id="aiProviderCards" class="integration-cards"></div></section><section><h3>Platform Developer Apps</h3><div id="platformAppCards" class="integration-cards"></div></section></div></article>
     </section>
   </main>
 
   <dialog id="accountDialog"><form id="accountForm"><h2 id="accountDialogTitle">Thêm tài khoản</h2><input id="accountId" type="hidden"><label>Tên account<input id="accountName" required maxlength="100"></label><label>Nền tảng<select id="accountPlatform"><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok Studio</option><option value="youtube">YouTube Studio</option><option value="x">X</option></select></label><label>Username / UID<input id="accountUsername" maxlength="500" autocomplete="username"></label><label>Email<input id="accountEmail" type="email" maxlength="500" autocomplete="email"></label><label>Mật khẩu<input id="accountPassword" type="text" maxlength="2000" autocomplete="off"></label><label>Secret 2FA<input id="account2fa" type="text" maxlength="500" autocomplete="off"></label><label>Mật khẩu email<input id="accountEmailPassword" type="text" maxlength="2000" autocomplete="off"></label><label>Cookie lưu riêng<textarea id="accountCookie" rows="3" maxlength="200000"></textarea></label><p class="muted account-secret-note">Thông tin đăng nhập được hiển thị đầy đủ theo chế độ dùng cá nhân của app.</p><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="saveAccount" class="primary">Tạo</button></div></form></dialog>
-  <dialog id="profileImportDialog"><form id="profileImportForm"><h2>Import Profiles ZIP</h2><p class="muted">Nhập đường dẫn tuyệt đối tới file ZIP đã Export từ một ứng dụng Tinix.</p><label>Đường dẫn file ZIP<input id="profileArchivePath" required placeholder="D:\...\Tinix-...-all-profiles.tinix-profiles.zip"></label><p id="profileImportStatus" class="operation-status hidden" role="status" aria-live="polite"></p><div class="dialog-actions"><button id="cancelProfileImport" type="button" data-close>Hủy</button><button id="confirmProfileImport" type="submit" class="primary">Bắt đầu Import</button></div></form></dialog>
+  <dialog id="profileImportDialog"><form id="profileImportForm"><h2>Import Profiles</h2><p class="muted">Nhập đường dẫn tuyệt đối tới file ZIP hoặc gói .enc đã Export từ một ứng dụng Tinix.</p><label>Đường dẫn file<input id="profileArchivePath" required placeholder="D:\...\Tinix-...-all-profiles.tinix-profiles.zip"></label><label>Mật khẩu gói .enc (nếu có)<input id="profileArchivePassword" type="password" maxlength="500" autocomplete="off"></label><p id="profileImportStatus" class="operation-status hidden" role="status" aria-live="polite"></p><div class="dialog-actions"><button id="cancelProfileImport" type="button" data-close>Hủy</button><button id="confirmProfileImport" type="submit" class="primary">Bắt đầu Import</button></div></form></dialog>
+  <dialog id="profileExportDialog"><form id="profileExportForm"><h2>Export Profiles</h2><p class="muted">Gói mặc định không kèm credential. Có thể đặt mật khẩu để mã hóa toàn bộ gói bằng AES-256-GCM.</p><label class="check"><input id="profileExportIncludeCredentials" type="checkbox"><span>Kèm credential đã lưu<small>Credential vẫn được bảo vệ bằng Windows DPAPI và chỉ import được bởi cùng tài khoản Windows.</small></span></label><label>Mật khẩu mã hóa toàn bộ gói (tùy chọn)<input id="profileExportPassword" type="password" maxlength="500" autocomplete="new-password"></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="confirmProfileExport" type="submit" class="primary">Bắt đầu Export</button></div></form></dialog>
   <dialog id="profileCleanupDialog"><form id="profileCleanupForm"><h2>Dọn dẹp Chrome profile</h2><p id="profileCleanupSummary"></p><p class="muted">Chỉ xóa cache, model và dữ liệu tạm có thể tạo lại. Cookies, phiên đăng nhập, Local Storage, IndexedDB và thông tin account được giữ nguyên.</p><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="confirmProfileCleanup" class="danger">Dọn dẹp ngay</button></div></form></dialog>
+  <dialog id="recoveryExportDialog"><form id="recoveryExportForm"><h2>Tạo recovery bundle</h2><p class="muted">Đóng Chrome trước khi tạo bundle. Mật khẩu không được lưu và cần để khôi phục.</p><label>Mật khẩu mã hóa<input id="recoveryExportPassword" type="password" minlength="12" maxlength="500" required autocomplete="new-password"></label><label class="check"><input id="recoveryIncludeEnvironment" type="checkbox" checked><span>Kèm file `.env`<small>File này có thể chứa API key và chỉ an toàn khi giữ mật khẩu bundle kín.</small></span></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="confirmRecoveryExport" class="primary">Tạo bundle</button></div></form></dialog>
+  <dialog id="recoveryRestoreDialog"><form id="recoveryRestoreForm"><h2>Khôi phục recovery bundle</h2><p class="muted">Database, media và Chrome profile hiện tại sẽ được giữ làm safety copy cạnh thư mục gốc. Khởi động lại app sau khi khôi phục nếu bundle có `.env`.</p><label>Đường dẫn file<input id="recoveryBundlePath" required placeholder="D:\...\Tinix-Social-Hub-recovery-....tinix-recovery.enc"></label><label>Mật khẩu bundle<input id="recoveryRestorePassword" type="password" maxlength="500" required autocomplete="off"></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="confirmRecoveryRestore" class="danger">Khôi phục ngay</button></div></form></dialog>
   <dialog id="deleteAccountDialog"><div><h2>Xóa account</h2><p>Bạn muốn xử lý Chrome profile của <strong id="deleteAccountName"></strong> thế nào?</p><p class="muted">Giữ profile nếu muốn khôi phục phiên sau này. Xóa cả profile sẽ xóa vĩnh viễn cookies, phiên đăng nhập và các bản backup profile của account này.</p><div class="dialog-actions delete-account-actions"><button type="button" data-close>Hủy</button><button id="deleteAccountKeepProfile">Chỉ xóa account</button><button id="deleteAccountWithProfile" class="danger">Xóa account và profile</button></div></div></dialog>
   <dialog id="integrationDialog"><form id="integrationForm"><h2 id="integrationDialogTitle">Tích hợp API</h2><div id="integrationDialogFields" class="form-grid"></div><p id="integrationDialogStatus" class="muted" role="status" aria-live="polite"></p><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="saveIntegration" type="submit" class="primary">Lưu</button></div></form></dialog>
 
@@ -549,6 +580,23 @@
     </div>
   </dialog>
 
+  <dialog id="aiImageLightboxDialog" class="media-lightbox-dialog ai-image-lightbox-dialog">
+    <div class="lightbox-wrapper">
+      <div class="lightbox-top-bar">
+        <span id="aiImageLightboxTitle" class="lightbox-title">Ảnh tạo bởi Tinix Media Creator</span>
+        <button type="button" class="lightbox-close-btn" data-close aria-label="Đóng">&#x2715;</button>
+      </div>
+      <div class="lightbox-media-slot">
+        <img id="aiImageLightboxImg" alt="Ảnh tạo bởi Tinix Media Creator" class="lightbox-image-preview">
+      </div>
+      <div class="lightbox-bottom-bar">
+        <button type="button" id="aiImageLightboxPrev" class="lightbox-nav-btn">◀ Ảnh trước</button>
+        <span id="aiImageLightboxIndex" class="lightbox-indicator">1 / 1</span>
+        <button type="button" id="aiImageLightboxNext" class="lightbox-nav-btn">Ảnh sau ▶</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Media Manager Modal (Replaces Tab 4 standalone view) -->
   <dialog id="mediaManagerDialog" class="media-manager-dialog">
     <div class="media-manager-wrapper">
@@ -592,6 +640,9 @@
       <label class="full">Fanpage / Kênh đích
         <select id="quickScheduleTargets" multiple size="4" required></select>
       </label>
+      <label class="full">Định dạng xuất bản
+        <select id="quickScheduleFormat" required></select>
+      </label>
       <label class="full">Ngày &amp; Giờ đăng (giờ máy)
         <input id="quickScheduleTime" type="datetime-local" required>
       </label>
@@ -609,6 +660,53 @@
   <dialog id="jobDialog"><div><h2>Release detail</h2><div id="jobSummary"></div><h3>Attempts & events</h3><div id="jobEvents"></div><h3>Artifacts</h3><div id="jobArtifacts" class="status-list"></div><div id="jobFinalize" class="form-grid compact hidden"><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận thất bại</button><button id="finalizeSuccess" class="primary">Xác nhận thành công</button></div></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <dialog id="historyCleanupDialog"><form id="historyCleanupForm"><h2>Dọn lịch sử</h2><p class="muted">Chỉ xóa lịch sử kỹ thuật trong ứng dụng. Bài đã đăng, nội dung, tài khoản và Page/kênh không bị xóa.</p><div class="form-grid compact"><label>Khoảng thời gian<select id="historyRange"><option value="7">Cũ hơn 7 ngày</option><option value="30" selected>Cũ hơn 30 ngày</option><option value="90">Cũ hơn 90 ngày</option><option value="custom">Khoảng ngày tùy chọn</option><option value="selected">Các mục đã chọn</option><option value="all">Toàn bộ lịch sử</option></select></label><label>Loại tác vụ<select id="historyStatus"><option value="all" selected>Tất cả trạng thái</option><option value="succeeded">Chỉ đăng thành công</option><option value="dry_run">Chỉ dry-run</option><option value="failed">Chỉ tác vụ lỗi</option></select></label><label id="historyFromWrap" class="hidden">Từ ngày<input id="historyFrom" type="date"></label><label id="historyToWrap" class="hidden">Đến ngày<input id="historyTo" type="date"></label><label class="check full"><input id="historyDeleteArtifacts" type="checkbox" checked><span>Xóa ảnh chụp lỗi và tệp kỹ thuật liên quan<small>Không xóa media của nội dung hoặc bài trên mạng xã hội.</small></span></label></div><div id="historyCleanupPreview" class="cleanup-preview muted">Chọn phạm vi rồi bấm Xem trước.</div><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="previewHistoryCleanup" type="button">Xem trước</button><button id="executeHistoryCleanup" type="button" class="danger" disabled>Xóa lịch sử</button></div></form></dialog>
   <!-- Brand Profile Modal -->
+  <dialog id="promptTemplateDialog" class="brand-profile-dialog prompt-template-dialog">
+    <form id="promptTemplateForm" class="brand-profile-form">
+      <div class="dialog-head full">
+        <div>
+          <h2 id="promptTemplateModalTitle">✨ System Prompt</h2>
+          <p class="muted">Quy định vai trò và cách AI xử lý brief. Ứng dụng vẫn tự bổ sung định dạng JSON đầu ra để tạo bản nháp an toàn.</p>
+        </div>
+        <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
+      </div>
+      <div class="brand-modal-select-row full">
+        <label>Chọn System Prompt để xem/sửa (hoặc tạo mới):
+          <select id="promptTemplateSelectActive"><option value="">＋ Tạo System Prompt mới</option></select>
+        </label>
+      </div>
+      <input type="hidden" id="promptTemplateId" value="">
+      <div class="form-grid two">
+        <label class="full">Tên <span class="required-star">*</span>
+          <input id="promptTemplateName" required maxlength="120" placeholder="VD: Bài viết giới thiệu sản phẩm">
+        </label>
+        <label class="full">Instruction <span class="required-star">*</span>
+          <textarea id="promptTemplateSystemPrompt" rows="10" required maxlength="30000" placeholder="Bạn là... Hãy tạo..."></textarea>
+          <small class="field-hint">Không cần tự viết JSON schema; Tinix Social Hub sẽ tự thêm Output Contract bắt buộc.</small>
+        </label>
+        <label class="check full"><input id="promptTemplateEnabled" type="checkbox" checked><span>Bật System Prompt này<small>Prompt tắt sẽ không xuất hiện trong dropdown AI Studio.</small></span></label>
+      </div>
+      <details class="full prompt-contract-preview">
+        <summary>Output Contract do ứng dụng quản lý</summary>
+        <p>AI phải trả JSON hợp lệ gồm topic, summary, platform variants, image prompt, media suggestions và warnings.</p>
+      </details>
+      <div class="dialog-actions full brand-dialog-actions">
+        <button type="button" id="btnDeletePromptTemplate" class="danger" style="display:none;">🗑️ Xóa System Prompt</button>
+        <div class="right-actions"><button type="button" data-close>Đóng</button><button type="submit" class="primary" id="btnSavePromptTemplate">Lưu System Prompt</button></div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="referenceImageDialog" class="brand-profile-dialog reference-image-dialog">
+    <div class="brand-profile-form">
+      <div class="dialog-head full">
+        <div><h2>🗂️ Chọn ảnh từ Media Library</h2><p class="muted">Chọn tối đa 4 ảnh tham chiếu cho lần tạo nội dung này.</p></div>
+        <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
+      </div>
+      <div id="referenceImageLibrary" class="reference-image-library"><p class="muted">Đang tải ảnh…</p></div>
+      <div class="dialog-actions full"><button type="button" data-close>Đóng</button><button type="button" id="btnConfirmReferenceImages" class="primary">Dùng ảnh đã chọn</button></div>
+    </div>
+  </dialog>
+
   <dialog id="brandProfileDialog" class="brand-profile-dialog">
     <form id="brandProfileForm" class="brand-profile-form">
       <div class="dialog-head full">
@@ -693,6 +791,6 @@
   </dialog>
 
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js?v=1.0.11"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.24"></script>
 </body>
 </html>

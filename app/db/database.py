@@ -689,6 +689,34 @@ MIGRATIONS: list[tuple[int, str]] = [
     ALTER TABLE oauth_states ADD COLUMN platform_app_id TEXT REFERENCES platform_apps(id) ON DELETE SET NULL;
     CREATE INDEX idx_account_connections_platform_app ON account_connections(platform_app_id);
     """),
+    (16, """
+    INSERT OR IGNORE INTO prompt_templates(id,name,operation,system_prompt,user_template,enabled,created_at,updated_at) VALUES
+    ('system-write','Viết bài mới','write','Tạo một bài viết mới hoàn chỉnh từ brief và ảnh tham chiếu. Bám sát dữ kiện được cung cấp, nêu lợi ích rõ ràng, không tự bịa cam kết hoặc số liệu.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-rewrite','Viết lại','rewrite','Viết lại nội dung từ brief theo cách diễn đạt mới. Giữ nguyên ý chính, dữ kiện, mục tiêu và giọng thương hiệu, đồng thời cải thiện độ rõ ràng và sức thuyết phục.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-shorten','Rút gọn','shorten','Rút gọn nội dung trong brief thành phiên bản súc tích, dễ đọc. Giữ lại thông tin thiết yếu, thông điệp chính và CTA phù hợp.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-expand','Mở rộng','expand','Mở rộng brief thành nội dung giàu ngữ cảnh hơn. Làm rõ lợi ích và điểm khác biệt bằng diễn giải hữu ích, nhưng không thêm dữ kiện chưa được cung cấp.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-hook','Tạo hook','hook','Tập trung tạo phần mở đầu gây chú ý ngay lập tức. Hook phải cụ thể, đúng đối tượng và có thể dùng trong caption hoặc video hook.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-cta','Tạo CTA','cta','Tập trung tạo lời kêu gọi hành động tự nhiên, rõ lợi ích và phù hợp mục tiêu chuyển đổi. Không dùng thúc ép hoặc cam kết sai sự thật.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-hashtags','Tạo hashtag','hashtags','Tập trung đề xuất hashtag liên quan, dễ tìm kiếm và phù hợp từng nền tảng. Kết hợp hashtag thương hiệu, chủ đề và ngách, tránh nhồi nhét.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-variants','Nhiều phiên bản','variants','Tạo một phiên bản chính chất lượng cao và đề xuất các hướng diễn đạt khác biệt về góc tiếp cận, hook hoặc CTA trong phần nội dung phù hợp.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-cross-platform','Chuyển đa nền tảng','cross_platform','Điều chỉnh nội dung riêng cho từng nền tảng được chọn: độ dài, nhịp điệu, định dạng và CTA phải phù hợp hành vi người dùng của nền tảng đó.','ai-studio-context-v1',1,datetime('now'),datetime('now')),
+    ('system-video-script','Video script','video_script','Tạo hook và kịch bản video ngắn, rõ nhịp mở đầu, phần triển khai và lời kêu gọi hành động. Dùng brief và ảnh tham chiếu làm ngữ cảnh, không cần video đầu vào.','ai-studio-context-v1',1,datetime('now'),datetime('now'));
+    """),
+    (17, """
+    ALTER TABLE accounts ADD COLUMN password_protected TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN secret_2fa_protected TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN email_pass_protected TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN cookie_protected TEXT NOT NULL DEFAULT '';
+    ALTER TABLE accounts ADD COLUMN recovery_codes_protected TEXT NOT NULL DEFAULT '';
+    """),
+    (18, """
+    UPDATE publishing_targets
+    SET enabled=0,
+        access_status='invalid_discovery',
+        last_error='Liên kết điều hướng Facebook, không phải Page có thể đăng.',
+        updated_at=datetime('now')
+    WHERE platform='facebook' AND external_id IN ('url:latest','url:ad_center');
+    """),
 ]
 
 
@@ -771,7 +799,7 @@ class Database:
             for p in sorted(self.backup_dir.glob("tinix-*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
         ]
 
-    def restore_backup(self, name: str) -> None:
+    def restore_backup(self, name: str) -> Path:
         source = (self.backup_dir / Path(name).name).resolve()
         if source.parent != self.backup_dir.resolve() or not source.is_file():
             raise FileNotFoundError("Không tìm thấy bản backup hợp lệ.")
@@ -786,6 +814,7 @@ class Database:
             with closing(sqlite3.connect(safety)) as backup, closing(sqlite3.connect(self.path)) as target:
                 backup.backup(target)
             raise
+        return safety
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

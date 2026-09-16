@@ -20,6 +20,7 @@ from app.core.logging import configure_logging
 from app.db.database import Database
 from app.db.calendar_repositories import PostingSlotRepository
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
+from app.db.prompt_repositories import PromptTemplateRepository
 from app.db.publication_repositories import PublicationRepository
 from app.db.provider_repositories import OAuthStateRepository, ProviderConnectionRepository
 from app.db.integration_repositories import AIProviderConfigRepository, PlatformAppRepository
@@ -51,6 +52,7 @@ from app.services.web_platform_publisher import (
 )
 from app.services.platform_accounts import PlatformAccountService
 from app.services.profile_transfer import ChromeProfileTransferService
+from app.services.recovery_bundle import RecoveryBundleService
 from app.services.ui_analytics import UIAnalyticsCollector
 from app.services.webhooks import WebhookDispatcher
 from app.core.secrets import SecretProtector
@@ -70,6 +72,7 @@ class Services:
     targets: TargetRepository
     contents: ContentRepository
     brands: BrandProfileRepository
+    prompts: PromptTemplateRepository
     ai_generations: AIGenerationRepository
     publications: PublicationRepository
     posting_slots: PostingSlotRepository
@@ -102,23 +105,25 @@ class Services:
     image_generation: ImageGenerationService
     scheduling: SchedulingService
     profile_transfer: ChromeProfileTransferService
+    recovery: RecoveryBundleService
     application_lock: asyncio.Lock
 
 
 def build_services(settings: Settings) -> Services:
     database = Database(settings.database_path, settings.backup_dir)
-    accounts = AccountRepository(database)
+    secret_store = SecretProtector()
+    accounts = AccountRepository(database, secret_store)
     jobs = JobRepository(database)
     targets = TargetRepository(database)
     contents = ContentRepository(database)
     brands = BrandProfileRepository(database)
+    prompts = PromptTemplateRepository(database)
     ai_generations = AIGenerationRepository(database)
     publications = PublicationRepository(database)
     posting_slots = PostingSlotRepository(database)
     notifications = NotificationRepository(database)
     media_assets = MediaAssetRepository(database)
     analytics = AnalyticsRepository(database)
-    secret_store = SecretProtector()
     app_settings = AppSettingsRepository(database)
     ai_provider_configs = AIProviderConfigRepository(database, secret_store)
     platform_apps = PlatformAppRepository(database, secret_store)
@@ -141,7 +146,7 @@ def build_services(settings: Settings) -> Services:
     media = MediaService(settings, contents, media_assets, storage)
     media_creator = MediaCreatorClient(settings.media_creator_url, settings.media_creator_timeout_seconds)
     image_generation = ImageGenerationService(
-        integrations, ai_generations, media, media_creator, settings.media_creator_timeout_seconds,
+        ai_generations, media, media_creator, settings.media_creator_timeout_seconds,
     )
     publishers.register("facebook", FacebookPublisher(settings, chrome, accounts, artifacts, media))
     publishers.register("instagram", InstagramChromePublisher(settings, chrome, accounts, artifacts, media))
@@ -156,15 +161,16 @@ def build_services(settings: Settings) -> Services:
     platform_accounts = PlatformAccountService(accounts, targets, chrome, publishers)
     analytics_collector = UIAnalyticsCollector(accounts, publications, analytics, publishers)
     webhook_dispatcher = WebhookDispatcher(webhooks)
-    ai_studio = AIContentStudioService(ai, ai_generations, brands, contents, media=media)
+    ai_studio = AIContentStudioService(ai, ai_generations, brands, contents, prompts, media)
     scheduling = SchedulingService(
         jobs, accounts, targets, contents, publications=publications, publisher_router=publisher_router,
     )
-    profile_transfer = ChromeProfileTransferService(settings, database, accounts)
+    profile_transfer = ChromeProfileTransferService(settings, database, accounts, secret_store)
+    recovery = RecoveryBundleService(settings, database, profile_transfer)
     maintenance = MaintenanceService(settings, profile_transfer, app_settings, notifications)
     return Services(
         settings=settings, database=database, accounts=accounts, jobs=jobs, targets=targets,
-        contents=contents, brands=brands, ai_generations=ai_generations, publications=publications,
+        contents=contents, brands=brands, prompts=prompts, ai_generations=ai_generations, publications=publications,
         posting_slots=posting_slots, notifications=notifications, media_assets=media_assets, analytics=analytics,
         api_tokens=api_tokens, webhooks=webhooks,
         chrome=chrome, ai=ai, integrations=integrations, ai_provider_configs=ai_provider_configs, platform_apps=platform_apps, publishers=publishers, publisher_router=publisher_router,
@@ -174,7 +180,7 @@ def build_services(settings: Settings) -> Services:
         maintenance=maintenance, facebook_accounts=facebook_accounts, platform_accounts=platform_accounts,
         analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher,
         storage=storage, secrets=secret_store, media=media,
-        ai_studio=ai_studio, image_generation=image_generation, scheduling=scheduling, profile_transfer=profile_transfer,
+        ai_studio=ai_studio, image_generation=image_generation, scheduling=scheduling, profile_transfer=profile_transfer, recovery=recovery,
         application_lock=asyncio.Lock(),
     )
 
@@ -186,9 +192,12 @@ async def lifespan(application: FastAPI):
     services = build_services(settings)
     application.state.services = services
     changed = await asyncio.to_thread(services.database.initialize)
+    migrated_credentials = await asyncio.to_thread(services.accounts.migrate_legacy_credentials)
     recovered_profile_locks = await asyncio.to_thread(services.accounts.recover_profile_operations)
     await asyncio.to_thread(services.api_tokens.ensure_default)
     logger.info("Database ready%s", " after migration" if changed else "")
+    if migrated_credentials:
+        logger.info("Protected credentials for %s legacy account(s)", migrated_credentials)
     if recovered_profile_locks:
         logger.warning("Recovered %s interrupted Chrome profile operation lock(s)", recovered_profile_locks)
     if settings.embedded_worker:

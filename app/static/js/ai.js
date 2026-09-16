@@ -1,6 +1,8 @@
 import {api, esc, toast} from "./api.js";
 import {store} from "./store.js";
 
+const PROMPT_TEMPLATE_SELECTION_KEY = "tinix_ai_prompt_template_id";
+
 function parseList(text) {
   if (!text) return [];
   return text
@@ -44,6 +46,61 @@ export async function refreshBrands(selectedId = null) {
       store.brands.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join("");
     bpSelect.value = (aiBrand && aiBrand.value) || "";
   }
+}
+
+function updatePromptTemplateEditButton() {
+  const select = document.querySelector("#aiPromptTemplate");
+  const editBtn = document.querySelector("#btnQuickEditPromptTemplate");
+  if (editBtn) editBtn.style.display = select?.value ? "inline-flex" : "none";
+}
+
+export async function refreshPromptTemplates(selectedId = null) {
+  store.promptTemplates = await api("/prompt-templates?include_disabled=true");
+  const promptSelect = document.querySelector("#aiPromptTemplate");
+  const enabledTemplates = (store.promptTemplates || []).filter(item => item.enabled);
+  const savedId = selectedId || localStorage.getItem(PROMPT_TEMPLATE_SELECTION_KEY) || "system-write";
+
+  if (promptSelect) {
+    promptSelect.innerHTML = enabledTemplates.length
+      ? enabledTemplates.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")
+      : '<option value="">Chưa có System Prompt đang bật</option>';
+    promptSelect.disabled = !enabledTemplates.length;
+    promptSelect.setAttribute("aria-busy", "false");
+    promptSelect.value = enabledTemplates.some(item => item.id === savedId) ? savedId : (enabledTemplates[0]?.id || "");
+    if (promptSelect.value) localStorage.setItem(PROMPT_TEMPLATE_SELECTION_KEY, promptSelect.value);
+  }
+
+  const modalSelect = document.querySelector("#promptTemplateSelectActive");
+  if (modalSelect) {
+    modalSelect.innerHTML = '<option value="">＋ Tạo System Prompt mới</option>' +
+      (store.promptTemplates || []).map(item => `<option value="${esc(item.id)}">${esc(item.name)}${item.enabled ? "" : " (đã tắt)"}</option>`).join("");
+    modalSelect.value = promptSelect?.value || "";
+  }
+  updatePromptTemplateEditButton();
+}
+
+function openPromptTemplateModal(templateId = null) {
+  const dialog = document.querySelector("#promptTemplateDialog");
+  if (!dialog) return;
+  const template = templateId ? (store.promptTemplates || []).find(item => item.id === templateId) : null;
+  const set = (selector, value) => {
+    const element = document.querySelector(selector);
+    if (element) element.value = value ?? "";
+  };
+  set("#promptTemplateId", template?.id || "");
+  set("#promptTemplateSelectActive", template?.id || "");
+  set("#promptTemplateName", template?.name || "");
+  set("#promptTemplateSystemPrompt", template?.system_prompt || "");
+  const enabled = document.querySelector("#promptTemplateEnabled");
+  if (enabled) enabled.checked = template ? Boolean(template.enabled) : true;
+  const title = document.querySelector("#promptTemplateModalTitle");
+  if (title) title.textContent = template ? `✏️ Chỉnh sửa: ${template.name}` : "✨ Tạo System Prompt";
+  const deleteBtn = document.querySelector("#btnDeletePromptTemplate");
+  if (deleteBtn) deleteBtn.style.display = template ? "inline-flex" : "none";
+  const saveBtn = document.querySelector("#btnSavePromptTemplate");
+  if (saveBtn) saveBtn.textContent = template ? "Cập nhật System Prompt" : "Lưu System Prompt";
+  if (dialog.open) dialog.close();
+  dialog.showModal();
 }
 
 export function openBrandModal(brandId = null) {
@@ -118,6 +175,60 @@ export function openBrandModal(brandId = null) {
 window.openBrandModal = openBrandModal;
 
 export function initAI() {
+  const promptSelect = document.querySelector("#aiPromptTemplate");
+  if (promptSelect) {
+    promptSelect.onchange = () => {
+      if (promptSelect.value) localStorage.setItem(PROMPT_TEMPLATE_SELECTION_KEY, promptSelect.value);
+      updatePromptTemplateEditButton();
+    };
+  }
+  document.querySelector("#btnQuickAddPromptTemplate")?.addEventListener("click", () => openPromptTemplateModal(null));
+  document.querySelector("#btnQuickEditPromptTemplate")?.addEventListener("click", () => {
+    if (promptSelect?.value) openPromptTemplateModal(promptSelect.value);
+  });
+  const promptModalSelect = document.querySelector("#promptTemplateSelectActive");
+  if (promptModalSelect) promptModalSelect.onchange = () => openPromptTemplateModal(promptModalSelect.value || null);
+  document.querySelector("#btnDeletePromptTemplate")?.addEventListener("click", async () => {
+    const templateId = document.querySelector("#promptTemplateId")?.value;
+    if (!templateId) return;
+    const template = (store.promptTemplates || []).find(item => item.id === templateId);
+    if (!confirm(`Bạn có chắc chắn muốn xóa System Prompt “${template?.name || "này"}”?`)) return;
+    try {
+      await api(`/prompt-templates/${templateId}`, {method: "DELETE"});
+      document.querySelector("#promptTemplateDialog")?.close();
+      await refreshPromptTemplates();
+      toast("Đã xóa System Prompt.");
+    } catch (error) {
+      toast(`Lỗi khi xóa System Prompt: ${error.message}`);
+    }
+  });
+  const promptForm = document.querySelector("#promptTemplateForm");
+  if (promptForm) promptForm.onsubmit = async event => {
+    event.preventDefault();
+    const templateId = document.querySelector("#promptTemplateId")?.value;
+    const body = {
+      name: document.querySelector("#promptTemplateName")?.value.trim(),
+      system_prompt: document.querySelector("#promptTemplateSystemPrompt")?.value.trim(),
+      enabled: Boolean(document.querySelector("#promptTemplateEnabled")?.checked),
+    };
+    if (!body.name || !body.system_prompt) return toast("Hãy nhập tên và instruction cho System Prompt.");
+    const saveBtn = document.querySelector("#btnSavePromptTemplate");
+    const oldLabel = saveBtn?.textContent;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Đang lưu…"; }
+    try {
+      const template = await api(templateId ? `/prompt-templates/${templateId}` : "/prompt-templates", {
+        method: templateId ? "PUT" : "POST", body: JSON.stringify(body),
+      });
+      document.querySelector("#promptTemplateDialog")?.close();
+      await refreshPromptTemplates(template.enabled ? template.id : null);
+      toast(`Đã ${templateId ? "cập nhật" : "tạo"} System Prompt: “${template.name}”.`);
+    } catch (error) {
+      toast(`Lỗi khi lưu System Prompt: ${error.message}`);
+    } finally {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = oldLabel || "Lưu System Prompt"; }
+    }
+  };
+
   const aiBrand = document.querySelector("#aiBrand");
   if (aiBrand) {
     aiBrand.onchange = () => {
@@ -295,6 +406,140 @@ export function initAI() {
   let lastCreatedContentId = null;
   let currentImagePrompt = "";
   let lastCreatedAsset = null;
+  let selectedReferenceImages = [];
+  let referenceImageLibraryAssets = [];
+  const REFERENCE_IMAGE_FILE_EXTENSIONS = /\.(?:jpe?g|png|webp|gif|jfif)$/i;
+
+  const referenceImageUrl = asset => `/api/media/${encodeURI(asset.thumbnail_relative_path || asset.relative_path)}`;
+
+  function renderReferenceImages() {
+    const list = document.querySelector("#aiReferenceImageList");
+    const status = document.querySelector("#aiReferenceImageStatus");
+    if (list) {
+      list.innerHTML = selectedReferenceImages.map(asset => `
+        <article class="ai-reference-image-card">
+          <img src="${referenceImageUrl(asset)}" alt="${esc(asset.alt_text || asset.original_name)}">
+          <div><strong title="${esc(asset.original_name)}">${esc(asset.original_name)}</strong><small>${esc(asset.alt_text || "Ảnh tham chiếu")}</small></div>
+          <button type="button" class="danger ai-reference-image-remove" data-reference-image-remove="${esc(asset.id)}" title="Bỏ ảnh">×</button>
+        </article>
+      `).join("");
+      list.querySelectorAll("[data-reference-image-remove]").forEach(button => {
+        button.onclick = () => {
+          selectedReferenceImages = selectedReferenceImages.filter(asset => asset.id !== button.dataset.referenceImageRemove);
+          renderReferenceImages();
+        };
+      });
+    }
+    if (status) status.textContent = selectedReferenceImages.length
+      ? `Đã chọn ${selectedReferenceImages.length}/4 ảnh. Ảnh sẽ được gửi đến AI để phân tích.`
+      : "Kéo thả tối đa 4 ảnh vào đây, hoặc dùng Tải ảnh / Thư viện.";
+  }
+
+  function addReferenceImages(assets) {
+    const known = new Set(selectedReferenceImages.map(asset => asset.id));
+    const additions = assets.filter(asset => asset?.media_type === "image" && asset.id && !known.has(asset.id));
+    if (selectedReferenceImages.length + additions.length > 4) {
+      toast("Mỗi lần tạo nội dung chỉ dùng tối đa 4 ảnh tham chiếu.");
+      return false;
+    }
+    selectedReferenceImages = [...selectedReferenceImages, ...additions];
+    renderReferenceImages();
+    return true;
+  }
+
+  async function openReferenceImageLibrary() {
+    const dialog = document.querySelector("#referenceImageDialog");
+    const library = document.querySelector("#referenceImageLibrary");
+    if (!dialog || !library) return;
+    library.innerHTML = '<p class="muted">Đang tải ảnh…</p>';
+    if (!dialog.open) dialog.showModal();
+    try {
+      referenceImageLibraryAssets = await api("/media-assets?media_type=image&limit=200");
+      const selectedIds = new Set(selectedReferenceImages.map(asset => asset.id));
+      library.innerHTML = referenceImageLibraryAssets.length ? referenceImageLibraryAssets.map(asset => `
+        <label class="reference-image-option" title="${esc(asset.original_name)}">
+          <input type="checkbox" value="${esc(asset.id)}" ${selectedIds.has(asset.id) ? "checked" : ""}>
+          <img src="${referenceImageUrl(asset)}" alt="${esc(asset.alt_text || asset.original_name)}">
+          <span>${esc(asset.original_name)}</span>
+        </label>
+      `).join("") : '<p class="muted">Chưa có ảnh trong Media Library. Hãy tải ảnh lên trước.</p>';
+    } catch (error) {
+      library.innerHTML = `<p class="error">Không tải được Media Library: ${esc(error.message)}</p>`;
+    }
+  }
+
+  document.querySelector("#btnChooseReferenceImages")?.addEventListener("click", openReferenceImageLibrary);
+  document.querySelector("#btnConfirmReferenceImages")?.addEventListener("click", () => {
+    const library = document.querySelector("#referenceImageLibrary");
+    const chosenIds = [...(library?.querySelectorAll("input[type=checkbox]:checked") || [])].map(input => input.value);
+    const chosen = referenceImageLibraryAssets.filter(asset => chosenIds.includes(asset.id));
+    if (chosen.length > 4) return toast("Chỉ được chọn tối đa 4 ảnh tham chiếu.");
+    selectedReferenceImages = chosen;
+    renderReferenceImages();
+    document.querySelector("#referenceImageDialog")?.close();
+  });
+
+  async function uploadReferenceImageFiles(files) {
+    const providedFiles = [...(files || [])];
+    const imageFiles = providedFiles.filter(file => REFERENCE_IMAGE_FILE_EXTENSIONS.test(file?.name || ""));
+    if (!imageFiles.length) {
+      if (providedFiles.length) toast("Ảnh tham chiếu chỉ nhận JPG, PNG, WebP hoặc GIF.");
+      return;
+    }
+    if (imageFiles.length !== providedFiles.length) {
+      toast("Một số tệp không phải ảnh hợp lệ đã được bỏ qua.");
+    }
+    if (selectedReferenceImages.length + imageFiles.length > 4) {
+      toast("Chỉ được chọn tối đa 4 ảnh tham chiếu.");
+      return;
+    }
+    const status = document.querySelector("#aiReferenceImageStatus");
+    if (status) status.textContent = "Đang tải ảnh lên Media Library…";
+    try {
+      const uploads = [];
+      for (const file of imageFiles) {
+        const form = new FormData();
+        form.append("file", file);
+        uploads.push(await api("/media-assets", {method: "POST", body: form}));
+      }
+      addReferenceImages(uploads);
+    } catch (error) {
+      toast(`Không thể tải ảnh: ${error.message}`);
+      renderReferenceImages();
+    }
+  }
+
+  const referenceImageUpload = document.querySelector("#aiReferenceImageUpload");
+  const referenceImageDropzone = document.querySelector("#aiReferenceImageDropzone");
+  document.querySelector("#btnUploadReferenceImages")?.addEventListener("click", () => referenceImageUpload?.click());
+  referenceImageUpload?.addEventListener("change", async event => {
+    await uploadReferenceImageFiles(event.target.files);
+    event.target.value = "";
+  });
+  const isFileDrag = event => [...(event.dataTransfer?.types || [])].includes("Files");
+  referenceImageDropzone?.addEventListener("dragenter", event => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    referenceImageDropzone.classList.add("is-dragging");
+  });
+  referenceImageDropzone?.addEventListener("dragover", event => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    referenceImageDropzone.classList.add("is-dragging");
+  });
+  referenceImageDropzone?.addEventListener("dragleave", event => {
+    if (!referenceImageDropzone.contains(event.relatedTarget)) {
+      referenceImageDropzone.classList.remove("is-dragging");
+    }
+  });
+  referenceImageDropzone?.addEventListener("drop", async event => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    referenceImageDropzone.classList.remove("is-dragging");
+    await uploadReferenceImageFiles(event.dataTransfer.files);
+  });
+  renderReferenceImages();
 
   const btnVisual = document.querySelector("#btnAiViewVisual");
   const btnJson = document.querySelector("#btnAiViewJson");
@@ -321,7 +566,7 @@ export function initAI() {
 
     elHistorySelect.disabled = false;
     elHistorySelect.innerHTML = historyItems.map((item, idx) => {
-      const opName = item.operationLabel || OPERATION_LABELS[item.inputs?.operation] || "Tạo nội dung";
+      const opName = item.promptTemplateName || item.operationLabel || OPERATION_LABELS[item.inputs?.operation] || "Tạo nội dung";
       const snippet = item.briefSnippet || (item.inputs?.brief || "").slice(0, 32).replace(/\n/g, " ");
       const platStr = (item.inputs?.platforms || []).join(", ");
       return `<option value="${idx}">#${idx + 1} · [${item.displayTime}] ${opName}: "${esc(snippet)}" (${esc(platStr)})</option>`;
@@ -370,8 +615,13 @@ export function initAI() {
     const item = historyItems[index];
 
     // 1. Inputs into form
-    const opSelect = document.querySelector("#aiOperation");
-    if (opSelect && item.inputs?.operation) opSelect.value = item.inputs.operation;
+    const promptSelect = document.querySelector("#aiPromptTemplate");
+    const savedTemplateId = item.inputs?.prompt_template_id;
+    if (promptSelect && savedTemplateId && [...promptSelect.options].some(option => option.value === savedTemplateId)) {
+      promptSelect.value = savedTemplateId;
+      localStorage.setItem(PROMPT_TEMPLATE_SELECTION_KEY, savedTemplateId);
+      updatePromptTemplateEditButton();
+    }
 
     const brandSelect = document.querySelector("#aiBrand");
     if (brandSelect) {
@@ -388,6 +638,14 @@ export function initAI() {
       const el = document.querySelector(`#ai${name}`);
       if (el) el.checked = plats.includes(name.toLowerCase());
     });
+    const knownAssets = item.inputs?.reference_images || [];
+    selectedReferenceImages = knownAssets.map(asset => ({
+      ...asset,
+      id: asset.id || asset.asset_id,
+      relative_path: asset.relative_path || "",
+      thumbnail_relative_path: asset.thumbnail_relative_path || asset.relative_path || "",
+    })).filter(asset => asset.id && asset.relative_path);
+    renderReferenceImages();
 
     // 2. Outputs into result panel
     currentRawJson = item.output?.raw_json || JSON.stringify(item.output?.structured_content || {}, null, 2);
@@ -402,7 +660,7 @@ export function initAI() {
 
     const subtitle = document.querySelector("#aiResultSubtitle");
     if (subtitle) {
-      subtitle.textContent = `Bản ghi #${index + 1}/${historyItems.length} (${item.displayTime}) · ${item.operationLabel || "AI Content"}`;
+      subtitle.textContent = `Bản ghi #${index + 1}/${historyItems.length} (${item.displayTime}) · ${item.promptTemplateName || item.operationLabel || "AI Content"}`;
     }
 
     // 3. Image prompt & button
@@ -415,7 +673,7 @@ export function initAI() {
 
     const btnGenImg = document.querySelector("#btnGenerateImage");
     if (btnGenImg) {
-      btnGenImg.disabled = false;
+      btnGenImg.disabled = !imageGenerationAvailable();
       btnGenImg.title = currentImagePrompt
         ? `Tạo ảnh: ${currentImagePrompt.slice(0, 80)}...`
         : "Tạo ảnh minh họa theo nội dung";
@@ -423,19 +681,14 @@ export function initAI() {
 
     // 4. Stored Image result
     if (item.image && item.image.url) {
-      if (aiImageResultBox) aiImageResultBox.style.display = "flex";
-      if (aiGeneratedImg) aiGeneratedImg.src = item.image.url;
-      if (btnDownloadAiImg) {
-        btnDownloadAiImg.href = item.image.url;
-        btnDownloadAiImg.download = `ai-img-${item.id}.png`;
-      }
-      if (aiImagePromptMeta) {
-        aiImagePromptMeta.textContent = `Prompt: ${item.image.prompt || currentImagePrompt}`;
-        aiImagePromptMeta.title = item.image.prompt || currentImagePrompt;
-      }
-      if (aiImageSourceBadge) {
-        aiImageSourceBadge.textContent = item.image.source_model || "AI Image";
-      }
+      const savedImages = Array.isArray(item.image.images) && item.image.images.length
+        ? item.image.images
+        : [{ url: item.image.url, asset: item.image.asset || null, source_model: item.image.source_model }];
+      renderImageResults(savedImages, {
+        prompt: item.image.prompt || currentImagePrompt,
+        source_model: item.image.source_model,
+        attached_content_id: item.image.attached ? (lastCreatedContentId || "attached") : null,
+      });
       if (btnAttachAiImageToDraft) {
         if (item.image.attached) {
           btnAttachAiImageToDraft.textContent = "✓ Đã gắn vào bài viết";
@@ -462,8 +715,8 @@ export function initAI() {
       briefInput.value = "";
       briefInput.focus();
     }
-    const opSelect = document.querySelector("#aiOperation");
-    if (opSelect) opSelect.value = "write";
+    const promptSelect = document.querySelector("#aiPromptTemplate");
+    if (promptSelect?.value) localStorage.setItem(PROMPT_TEMPLATE_SELECTION_KEY, promptSelect.value);
 
     ["Facebook", "Instagram", "Tiktok", "Youtube", "X"].forEach((name, i) => {
       const el = document.querySelector(`#ai${name}`);
@@ -474,6 +727,8 @@ export function initAI() {
     lastCreatedContentId = null;
     currentImagePrompt = "";
     lastCreatedAsset = null;
+    selectedReferenceImages = [];
+    renderReferenceImages();
 
     const customPromptEl = document.querySelector("#aiCustomImagePrompt");
     const customPromptWrap = document.querySelector("#aiImagePromptInputWrap");
@@ -794,6 +1049,9 @@ export function initAI() {
         .map(name => name.toLowerCase());
 
       if (!platforms.length) return toast("Hãy chọn ít nhất một nền tảng");
+      const promptTemplateId = document.querySelector("#aiPromptTemplate")?.value;
+      if (!promptTemplateId) return toast("Hãy chọn một System Prompt đang bật.");
+      const promptTemplate = (store.promptTemplates || []).find(item => item.id === promptTemplateId);
 
       const submitBtn = document.querySelector("#btnGenerateDraft");
       const origBtnText = submitBtn ? submitBtn.innerHTML : "✨ Tạo bản nháp";
@@ -819,9 +1077,10 @@ export function initAI() {
         const result = await api("/ai/generate", {
           method: "POST",
           body: JSON.stringify({
-            operation: document.querySelector("#aiOperation").value,
+            prompt_template_id: promptTemplateId,
             brief: document.querySelector("#aiBrief").value,
             brand_profile_id: document.querySelector("#aiBrand").value || null,
+            media_asset_ids: selectedReferenceImages.map(asset => asset.id),
             platforms,
             save_draft: true,
           }),
@@ -832,19 +1091,28 @@ export function initAI() {
         lastCreatedAsset = null;
         currentImagePrompt = result.structured_content?.image_prompt || "";
 
-        const opVal = document.querySelector("#aiOperation")?.value || "write";
         const briefVal = document.querySelector("#aiBrief")?.value || "";
         const briefSnippet = briefVal.trim().replace(/\s+/g, " ").slice(0, 36) + (briefVal.trim().length > 36 ? "..." : "");
+        const referenceImages = selectedReferenceImages.map(asset => ({
+          id: asset.id,
+          original_name: asset.original_name,
+          alt_text: asset.alt_text,
+          relative_path: asset.relative_path,
+          thumbnail_relative_path: asset.thumbnail_relative_path,
+        }));
 
         const newRecord = {
           id: "ai_hist_" + Date.now(),
           createdAt: new Date().toISOString(),
           displayTime: formatTime(new Date().toISOString()),
-          operation: opVal,
-          operationLabel: OPERATION_LABELS[opVal] || opVal,
+          promptTemplateName: result.prompt_template?.name || promptTemplate?.name || "System Prompt",
+          operation: promptTemplate?.operation || "custom",
+          operationLabel: result.prompt_template?.name || promptTemplate?.name || "System Prompt",
           inputs: {
-            operation: opVal,
+            prompt_template_id: promptTemplateId,
+            operation: promptTemplate?.operation || "custom",
             brand_profile_id: document.querySelector("#aiBrand")?.value || null,
+            reference_images: referenceImages,
             brief: briefVal,
             platforms: [...platforms],
           },
@@ -868,7 +1136,7 @@ export function initAI() {
 
         const btnGenImg = document.querySelector("#btnGenerateImage");
         if (btnGenImg) {
-          btnGenImg.disabled = false;
+          btnGenImg.disabled = !imageGenerationAvailable();
           btnGenImg.title = currentImagePrompt
             ? `Tạo ảnh: ${currentImagePrompt.slice(0, 80)}...`
             : "Tạo ảnh minh họa theo nội dung";
@@ -913,16 +1181,20 @@ export function initAI() {
   const aiImageSourceBadge = document.querySelector("#aiImageSourceBadge");
   const aiImageGallery = document.querySelector("#aiImageGallery");
   const aiImageStatus = document.querySelector("#aiImageJobStatus");
-  const aiImageEngine = document.querySelector("#aiImageEngine");
   const aiImageSource = document.querySelector("#aiImageSource");
   const aiImageAspectRatio = document.querySelector("#aiImageAspectRatio");
   const aiImageCount = document.querySelector("#aiImageCount");
-  const aiImageQuality = document.querySelector("#aiImageQuality");
-  const aiImageFallback = document.querySelector("#aiImageFallback");
+  const aiImageLightboxDialog = document.querySelector("#aiImageLightboxDialog");
+  const aiImageLightboxImg = document.querySelector("#aiImageLightboxImg");
+  const aiImageLightboxTitle = document.querySelector("#aiImageLightboxTitle");
+  const aiImageLightboxIndex = document.querySelector("#aiImageLightboxIndex");
+  const aiImageLightboxPrev = document.querySelector("#aiImageLightboxPrev");
+  const aiImageLightboxNext = document.querySelector("#aiImageLightboxNext");
   let imageOptions = null;
   let activeImageJobId = "";
   let imageJobTimer = null;
   let activeImages = [];
+  let activeImageIndex = 0;
 
   function setImageJobStatus(message) {
     if (aiImageStatus) aiImageStatus.textContent = message || "";
@@ -939,22 +1211,23 @@ export function initAI() {
     aiImageSource.setAttribute("aria-busy", "false");
   }
 
-  function imageSourceLabel(item, engine) {
-    if (engine === "media_creator") return item.label || item.name || item.id || "Provider không xác định";
-    const provider = item.name || item.provider || item.config_id || "Provider không xác định";
-    const model = item.model || item.image_model || "Chưa chọn model";
-    return `${provider} · ${model}`;
+  function imageGenerationAvailable() {
+    return Boolean(imageOptions?.media_creator?.available && aiImageSource?.value);
+  }
+
+  function imageSourceLabel(item) {
+    return item.label || item.name || item.id || "Provider không xác định";
   }
 
   function populateImageSources() {
-    if (!aiImageEngine || !aiImageSource || !imageOptions) return;
-    const engine = aiImageEngine.value;
-    const entries = engine === "media_creator"
-      ? (Array.isArray(imageOptions.media_creator?.providers) ? imageOptions.media_creator.providers : []).map(item => ({ value: item.id, label: imageSourceLabel(item, engine) }))
-      : (Array.isArray(imageOptions.direct_api) ? imageOptions.direct_api : []).map(item => ({ value: item.config_id, label: imageSourceLabel(item, engine) }));
+    if (!aiImageSource || !imageOptions) return;
+    const selectedSource = aiImageSource.value;
+    const entries = Array.isArray(imageOptions.media_creator?.providers)
+      ? imageOptions.media_creator.providers.map(item => ({ value: item.id, label: imageSourceLabel(item) }))
+      : [];
     aiImageSource.innerHTML = "";
     if (!entries.length) {
-      setImageSourcePlaceholder(engine === "media_creator" ? "Media Creator chưa sẵn sàng" : "Chưa có model ảnh đã cấu hình");
+      setImageSourcePlaceholder("Tinix Media Creator chưa có provider ảnh sẵn sàng");
     } else {
       for (const entry of entries) {
         const option = document.createElement("option");
@@ -964,34 +1237,42 @@ export function initAI() {
       }
       aiImageSource.disabled = false;
       aiImageSource.setAttribute("aria-busy", "false");
-      if (engine === "direct_api") {
-        const preferred = imageOptions.defaults?.image_config_id;
-        if (preferred && entries.some(item => item.value === preferred)) aiImageSource.value = preferred;
+      if (entries.some(item => item.value === selectedSource)) {
+        aiImageSource.value = selectedSource;
       }
     }
-    const direct = engine === "direct_api";
-    if (aiImageFallback) aiImageFallback.disabled = !direct;
-    if (aiImageQuality) aiImageQuality.disabled = !direct;
   }
 
   async function loadImageOptions() {
     try {
       imageOptions = await api("/ai/image-options");
       populateImageSources();
-      if (!imageOptions.media_creator?.available && aiImageEngine?.value === "media_creator") {
+      if (!imageOptions.media_creator?.available) {
         setImageJobStatus(imageOptions.media_creator?.message || "Tinix Media Creator chưa sẵn sàng.");
+        if (btnGenerateImage) btnGenerateImage.disabled = true;
+      } else if (!imageGenerationAvailable()) {
+        setImageJobStatus("Tinix Media Creator chưa có provider ảnh sẵn sàng.");
+        if (btnGenerateImage) btnGenerateImage.disabled = true;
+      } else {
+        setImageJobStatus("");
+        if (btnGenerateImage && currentImagePrompt && !activeImageJobId) btnGenerateImage.disabled = !imageGenerationAvailable();
       }
     } catch (error) {
-      setImageSourcePlaceholder("Không tải được provider/model");
+      setImageSourcePlaceholder("Không tải được provider Tinix Media Creator");
       setImageJobStatus(`Không tải được cấu hình tạo ảnh: ${error.message}`);
+      if (btnGenerateImage) btnGenerateImage.disabled = true;
     }
   }
 
   function showSelectedImage(index) {
     const image = activeImages[index];
     if (!image) return;
+    activeImageIndex = index;
     lastCreatedAsset = image.asset || null;
-    if (aiGeneratedImg) aiGeneratedImg.src = image.url;
+    if (aiGeneratedImg) {
+      aiGeneratedImg.src = image.url;
+      aiGeneratedImg.alt = `Ảnh AI ${index + 1} tạo bởi Tinix Media Creator`;
+    }
     if (btnDownloadAiImg) {
       btnDownloadAiImg.href = image.url;
       btnDownloadAiImg.download = `ai-img-${Date.now()}-${index + 1}.png`;
@@ -1001,10 +1282,31 @@ export function initAI() {
     }
   }
 
+  function renderImageLightbox() {
+    const image = activeImages[activeImageIndex];
+    if (!image) return;
+    if (aiImageLightboxImg) {
+      aiImageLightboxImg.src = image.url;
+      aiImageLightboxImg.alt = `Ảnh AI ${activeImageIndex + 1} tạo bởi Tinix Media Creator`;
+    }
+    if (aiImageLightboxTitle) aiImageLightboxTitle.textContent = "Ảnh tạo bởi Tinix Media Creator";
+    if (aiImageLightboxIndex) aiImageLightboxIndex.textContent = `${activeImageIndex + 1} / ${activeImages.length}`;
+    if (aiImageLightboxPrev) aiImageLightboxPrev.disabled = activeImageIndex === 0;
+    if (aiImageLightboxNext) aiImageLightboxNext.disabled = activeImageIndex === activeImages.length - 1;
+  }
+
+  function openImageLightbox(index = activeImageIndex) {
+    if (!aiImageLightboxDialog || !activeImages[index]) return;
+    showSelectedImage(index);
+    renderImageLightbox();
+    if (!aiImageLightboxDialog.open) aiImageLightboxDialog.showModal();
+  }
+
   function renderImageResults(images, metadata = {}) {
     activeImages = Array.isArray(images) ? images : [];
     const first = activeImages[0];
     if (!first) return;
+    activeImageIndex = 0;
     lastCreatedAsset = first.asset || null;
     if (aiImageResultBox) aiImageResultBox.style.display = "flex";
     showSelectedImage(0);
@@ -1014,13 +1316,15 @@ export function initAI() {
         const button = document.createElement("button");
         button.type = "button";
         button.title = `Ảnh ${index + 1}`;
+        button.setAttribute("aria-label", `Mở ảnh ${index + 1} kích thước đầy đủ`);
         const thumbnail = document.createElement("img");
         thumbnail.src = image.url;
         thumbnail.alt = `Ảnh AI ${index + 1}`;
         button.appendChild(thumbnail);
-        button.onclick = () => showSelectedImage(index);
+        button.onclick = () => openImageLightbox(index);
         aiImageGallery.appendChild(button);
       });
+      showSelectedImage(activeImageIndex);
     }
     if (aiImagePromptMeta) {
       aiImagePromptMeta.textContent = `Prompt: ${metadata.prompt || currentImagePrompt || ""}`;
@@ -1039,7 +1343,7 @@ export function initAI() {
     imageJobTimer = null;
     activeImageJobId = "";
     if (btnGenerateImage) {
-      btnGenerateImage.disabled = false;
+      btnGenerateImage.disabled = !imageGenerationAvailable();
       btnGenerateImage.innerHTML = "🎨 Tạo Ảnh";
     }
     if (btnCancelAiImage) btnCancelAiImage.hidden = true;
@@ -1089,20 +1393,15 @@ export function initAI() {
       toast("🎨 AI đang tạo ảnh, vui lòng đợi giây lát…");
 
       try {
-        const engine = aiImageEngine?.value || "direct_api";
         const source = aiImageSource?.value || "";
-        if (!source) throw new Error(engine === "media_creator" ? "Tinix Media Creator chưa có provider ảnh sẵn sàng." : "Hãy chọn model ảnh trong phần Tích hợp & API.");
+        if (!imageGenerationAvailable() || !source) throw new Error("Tinix Media Creator chưa có provider ảnh sẵn sàng.");
         const created = await api("/ai/image-jobs", {
           method: "POST",
           body: JSON.stringify({
             prompt: promptToUse,
-            engine,
-            config_id: engine === "direct_api" && source !== "__default__" ? source : null,
-            provider: engine === "media_creator" ? source : null,
+            provider: source,
             aspect_ratio: aiImageAspectRatio?.value || "auto",
             count: Number(aiImageCount?.value || 1),
-            quality: aiImageQuality?.value || "auto",
-            fallback_policy: aiImageFallback?.checked ? "pollinations" : "disabled",
             content_id: lastCreatedContentId || null,
           }),
         });
@@ -1129,13 +1428,6 @@ export function initAI() {
     }
   };
 
-  if (aiImageEngine) aiImageEngine.onchange = () => {
-    populateImageSources();
-    if (aiImageEngine.value === "media_creator" && !imageOptions?.media_creator?.available) {
-      setImageJobStatus(imageOptions?.media_creator?.message || "Tinix Media Creator chưa chạy.");
-    } else setImageJobStatus("");
-  };
-
   const customPromptEl = document.querySelector("#aiCustomImagePrompt");
   if (customPromptEl) {
     customPromptEl.oninput = () => {
@@ -1144,6 +1436,36 @@ export function initAI() {
       if (promptBoxText) promptBoxText.textContent = currentImagePrompt;
     };
   }
+
+  if (aiGeneratedImg) {
+    aiGeneratedImg.onclick = () => openImageLightbox();
+    aiGeneratedImg.onkeydown = event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openImageLightbox();
+      }
+    };
+  }
+
+  function moveLightboxImage(step) {
+    const nextIndex = activeImageIndex + step;
+    if (nextIndex < 0 || nextIndex >= activeImages.length) return;
+    showSelectedImage(nextIndex);
+    renderImageLightbox();
+  }
+
+  if (aiImageLightboxPrev) aiImageLightboxPrev.onclick = () => moveLightboxImage(-1);
+  if (aiImageLightboxNext) aiImageLightboxNext.onclick = () => moveLightboxImage(1);
+  if (aiImageLightboxDialog) {
+    aiImageLightboxDialog.onclick = event => {
+      if (event.target === aiImageLightboxDialog) aiImageLightboxDialog.close();
+    };
+  }
+  window.addEventListener("keydown", event => {
+    if (!aiImageLightboxDialog?.open) return;
+    if (event.key === "ArrowLeft") moveLightboxImage(-1);
+    if (event.key === "ArrowRight") moveLightboxImage(1);
+  });
 
   if (btnAttachAiImageToDraft) {
     btnAttachAiImageToDraft.onclick = async () => {
@@ -1173,6 +1495,7 @@ export function initAI() {
   }
 
   loadImageOptions();
+  window.addEventListener("tinix:refresh-image-options", () => loadImageOptions());
 
   // Restore history from storage on initialization
   historyItems = loadHistoryFromStorage();

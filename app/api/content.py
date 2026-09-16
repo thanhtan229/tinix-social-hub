@@ -4,7 +4,7 @@ import asyncio
 import csv
 import io
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -63,28 +63,29 @@ class ApprovalDecision(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
 
+class PromptTemplateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    system_prompt: str = Field(min_length=1, max_length=30000)
+    enabled: bool = True
+
+
 class AIGenerateBody(BaseModel):
-    operation: str = Field(default="write", pattern="^(write|rewrite|shorten|expand|hook|cta|hashtags|variants|cross_platform|video_script|connection_test)$")
+    prompt_template_id: str | None = Field(default=None, max_length=100)
+    # Kept temporarily so locally saved clients can submit their prior action value.
+    operation: str | None = Field(default=None, pattern="^(write|rewrite|shorten|expand|hook|cta|hashtags|variants|cross_platform|video_script|connection_test)$")
     brief: str = Field(min_length=1, max_length=12000)
     brand_profile_id: str | None = None
+    media_asset_ids: list[str] = Field(default_factory=list, max_length=4)
     platforms: list[str] = Field(default_factory=lambda: ["facebook"], min_length=1, max_length=5)
     save_draft: bool = True
 
 
-class AIGenerateImageBody(BaseModel):
-    prompt: str = Field(min_length=1, max_length=2000)
-    content_id: str | None = None
-
-
 class ImageJobBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
-    engine: str = Field(default="direct_api", pattern="^(direct_api|media_creator)$")
-    config_id: str | None = Field(default=None, max_length=100)
+    engine: Literal["media_creator"] = "media_creator"
     provider: str | None = Field(default=None, max_length=100)
     aspect_ratio: str = Field(default="auto", pattern="^(auto|1:1|4:3|3:4|16:9|9:16)$")
     count: int = Field(default=1, ge=1, le=4)
-    quality: str = Field(default="auto", pattern="^(auto|low|medium|high|standard|hd)$")
-    fallback_policy: str = Field(default="disabled", pattern="^(disabled|pollinations)$")
     content_id: str | None = None
 
 
@@ -141,6 +142,38 @@ async def delete_brand(profile_id: str, request: Request) -> dict[str, Any]:
     if not deleted:
         raise HTTPException(404, "Không tìm thấy Brand Profile.")
     return {"deleted": True, "profile_id": profile_id}
+
+
+@router.get("/prompt-templates")
+async def list_prompt_templates(request: Request, include_disabled: bool = False) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(services(request).prompts.list, not include_disabled)
+
+
+@router.post("/prompt-templates", status_code=201)
+async def create_prompt_template(body: PromptTemplateBody, request: Request) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(services(request).prompts.create, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.put("/prompt-templates/{template_id}")
+async def update_prompt_template(template_id: str, body: PromptTemplateBody, request: Request) -> dict[str, Any]:
+    try:
+        template = await asyncio.to_thread(services(request).prompts.update, template_id, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not template:
+        raise HTTPException(404, "Không tìm thấy System Prompt.")
+    return template
+
+
+@router.delete("/prompt-templates/{template_id}")
+async def delete_prompt_template(template_id: str, request: Request) -> dict[str, Any]:
+    deleted = await asyncio.to_thread(services(request).prompts.delete, template_id)
+    if not deleted:
+        raise HTTPException(404, "Không tìm thấy System Prompt.")
+    return {"deleted": True, "template_id": template_id}
 
 
 @router.get("/contents")
@@ -396,17 +429,9 @@ async def serve_media(relative_path: str, request: Request) -> FileResponse:
 async def generate_ai_content(body: AIGenerateBody, request: Request) -> dict[str, Any]:
     try:
         return await services(request).ai_studio.generate(
-            body.operation, body.brief, body.brand_profile_id, body.platforms, body.save_draft
+            body.operation, body.brief, body.brand_profile_id, body.platforms, body.save_draft,
+            prompt_template_id=body.prompt_template_id, media_asset_ids=body.media_asset_ids,
         )
-    except AIError as exc:
-        status = 503 if exc.retryable else 422
-        raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc
-
-
-@router.post("/ai/generate-image")
-async def generate_ai_image(body: AIGenerateImageBody, request: Request) -> dict[str, Any]:
-    try:
-        return await services(request).ai_studio.generate_image(body.prompt, body.content_id)
     except AIError as exc:
         status = 503 if exc.retryable else 422
         raise HTTPException(status, {"code": exc.code, "message": str(exc)}) from exc

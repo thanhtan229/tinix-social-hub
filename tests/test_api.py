@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.api.routes import router
 from app.api.content import router as content_router
 from app.db.content_repositories import AIGenerationRepository, BrandProfileRepository, ContentRepository
+from app.db.prompt_repositories import PromptTemplateRepository
 from app.db.calendar_repositories import PostingSlotRepository
 from app.db.database import Database
 from app.db.publication_repositories import PublicationRepository
@@ -22,12 +23,13 @@ from app.db.automation_repositories import APITokenRepository, WebhookRepository
 from app.api.v1 import router as v1_router
 from app.core.secrets import SecretProtector
 from app.runtime import LocalPathStorage
-from app.db.repositories import AppSettingsRepository, AccountRepository, JobRepository, TargetRepository
+from app.db.repositories import AppSettingsRepository, AccountRepository, ArtifactRepository, JobRepository, TargetRepository
 from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
 from app.services.profile_transfer import ChromeProfileTransferService
+from app.services.recovery_bundle import RecoveryBundleService
 from app.services.maintenance import MaintenanceService
 from app.services.integrations import IntegrationService
 from app.db.integration_repositories import AIProviderConfigRepository, PlatformAppRepository
@@ -37,11 +39,21 @@ class WorkerStub:
     state = "idle"
     active_count = 0
 
+    def __init__(self) -> None:
+        self.resume_calls = 0
+
     def notify(self) -> None:
         pass
 
     def cancel(self, job_id: str) -> None:
         pass
+
+    async def pause(self, timeout: float = 30) -> None:
+        self.state = "paused"
+
+    def resume(self) -> None:
+        self.resume_calls += 1
+        self.state = "idle"
 
 
 class ChromeStub:
@@ -60,10 +72,10 @@ class ChromeStub:
 
 class ImageGenerationStub:
     async def options(self):
-        return {"direct_api": [{"config_id": "image-config", "model": "image-model"}], "media_creator": {"available": False, "providers": []}}
+        return {"media_creator": {"available": True, "providers": [{"id": "local-provider", "label": "Local Provider"}]}}
 
     async def create_job(self, body):
-        return {"job_id": "image-job", "status": "queued", "engine": body["engine"], "provider": "stub", "model": "image-model"}
+        return {"job_id": "image-job", "status": "queued", "engine": body["engine"], "provider": body["provider"], "model": body["provider"]}
 
     async def get_job(self, job_id):
         return {"job_id": job_id, "status": "completed", "images": [], "message": "done"} if job_id == "image-job" else None
@@ -83,6 +95,7 @@ class ApiTests(unittest.TestCase):
         targets = TargetRepository(database)
         contents = ContentRepository(database)
         brands = BrandProfileRepository(database)
+        prompts = PromptTemplateRepository(database)
         generations = AIGenerationRepository(database)
         publications = PublicationRepository(database)
         media_assets = MediaAssetRepository(database)
@@ -92,7 +105,7 @@ class ApiTests(unittest.TestCase):
         media_settings = SimpleNamespace(media_dir=root / "media")
         mock_ai = MockAIProvider()
         profile_settings = SimpleNamespace(
-            data_dir=root / "data", max_chrome=2,
+            project_root=root, data_dir=root / "data", media_dir=root / "media", max_chrome=2,
             chrome_profile_dir=root / "profiles", backup_dir=root / "backups", export_dir=root / "exports",
             screenshot_dir=root / "screenshots", maintenance_seconds=21600,
         )
@@ -102,6 +115,7 @@ class ApiTests(unittest.TestCase):
         profile_transfer = ChromeProfileTransferService(
             profile_settings, database, accounts, path_in_use=lambda _: False
         )
+        recovery = RecoveryBundleService(profile_settings, database, profile_transfer)
         maintenance = MaintenanceService(
             profile_settings, profile_transfer, AppSettingsRepository(database)
         )
@@ -131,17 +145,19 @@ class ApiTests(unittest.TestCase):
             targets=targets,
             contents=contents,
             brands=brands,
+            prompts=prompts,
             media=MediaService(media_settings, contents, media_assets),
-            ai_studio=AIContentStudioService(mock_ai, generations, brands, contents),
+            ai_studio=AIContentStudioService(mock_ai, generations, brands, contents, prompts, MediaService(media_settings, contents, media_assets)),
             image_generation=ImageGenerationStub(),
             scheduling=SchedulingService(jobs, accounts, targets, contents, publications=publications),
             chrome=ChromeStub(),
             worker=WorkerStub(),
-            scheduler=SimpleNamespace(state="running"),
+            scheduler=SimpleNamespace(state="running", maintenance_lock=asyncio.Lock()),
             settings=profile_settings,
             ai=SimpleNamespace(configured=False),
             analytics_collector=SimpleNamespace(),
             profile_transfer=profile_transfer,
+            recovery=recovery,
             maintenance=maintenance,
             integrations=integrations,
             application_lock=asyncio.Lock(),
@@ -173,6 +189,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(created.json()["username"], "main-user")
         self.assertEqual(created.json()["email"], "main@example.com")
         account_id = created.json()["id"]
+        with self.services.database.connection() as connection:
+            stored_row = connection.execute(
+                "SELECT password,password_protected FROM accounts WHERE id=?", (account_id,)
+            ).fetchone()
+        self.assertEqual(stored_row["password"], "")
+        self.assertTrue(stored_row["password_protected"].startswith("dpapi:"))
         credentials = self.client.get(f"/api/accounts/{account_id}/credentials")
         self.assertEqual(credentials.status_code, 200)
         self.assertEqual(credentials.headers["cache-control"], "no-store")
@@ -180,6 +202,14 @@ class ApiTests(unittest.TestCase):
             "password": "secret-password", "secret_2fa": "JBSWY3DPEHPK3PXP",
             "email_pass": "mail-secret", "cookie": "cookie-secret", "recovery_codes": "",
         })
+        partial = self.client.put(f"/api/accounts/{account_id}", json={
+            "name": "Renamed without credentials", "platform": "facebook",
+        })
+        self.assertEqual(partial.status_code, 200)
+        preserved = self.services.accounts.get(account_id)
+        self.assertEqual(preserved["password"], "secret-password")
+        self.assertEqual(preserved["email_pass"], "mail-secret")
+        self.assertEqual(preserved["cookie"], "cookie-secret")
         updated = self.client.put(f"/api/accounts/{account_id}", json={
             "name": "Renamed", "platform": "facebook", "username": "renamed-user",
             "email": "renamed@example.com", "password": "", "secret_2fa": "", "email_pass": "", "cookie": "",
@@ -205,13 +235,39 @@ class ApiTests(unittest.TestCase):
     def test_image_job_routes_return_async_contract(self) -> None:
         options = self.client.get("/api/ai/image-options")
         self.assertEqual(options.status_code, 200)
-        self.assertEqual(options.json()["direct_api"][0]["config_id"], "image-config")
-        created = self.client.post("/api/ai/image-jobs", json={"prompt": "A product photo", "engine": "direct_api"})
+        self.assertEqual(options.json()["media_creator"]["providers"][0]["id"], "local-provider")
+        self.assertNotIn("direct_api", options.json())
+        created = self.client.post("/api/ai/image-jobs", json={"prompt": "A product photo", "provider": "local-provider"})
         self.assertEqual(created.status_code, 202)
         self.assertEqual(created.json()["job_id"], "image-job")
+        self.assertEqual(created.json()["engine"], "media_creator")
+        rejected = self.client.post("/api/ai/image-jobs", json={"prompt": "A product photo", "provider": "local-provider", "engine": "direct_api"})
+        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(self.client.post("/api/ai/generate-image", json={"prompt": "A product photo"}).status_code, 404)
         status = self.client.get("/api/ai/image-jobs/image-job")
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["status"], "completed")
+
+    def test_prompt_template_crud_and_generation_selection(self) -> None:
+        seeded = self.client.get("/api/prompt-templates")
+        self.assertEqual(seeded.status_code, 200)
+        self.assertTrue(any(item["id"] == "system-write" for item in seeded.json()))
+        created = self.client.post("/api/prompt-templates", json={
+            "name": "API Prompt", "system_prompt": "Viết theo cách thân thiện.", "enabled": True,
+        })
+        self.assertEqual(created.status_code, 201)
+        prompt = created.json()
+        updated = self.client.put(f"/api/prompt-templates/{prompt['id']}", json={
+            "name": "API Prompt Updated", "system_prompt": "Viết ngắn gọn.", "enabled": True,
+        })
+        self.assertEqual(updated.status_code, 200)
+        generated = self.client.post("/api/ai/generate", json={
+            "prompt_template_id": prompt["id"], "brief": "Giới thiệu sản phẩm", "platforms": ["facebook"],
+        })
+        self.assertEqual(generated.status_code, 200)
+        self.assertEqual(generated.json()["prompt_template"]["id"], prompt["id"])
+        deleted = self.client.delete(f"/api/prompt-templates/{prompt['id']}")
+        self.assertEqual(deleted.status_code, 200)
         cancelled = self.client.post("/api/ai/image-jobs/image-job/cancel", json={})
         self.assertEqual(cancelled.status_code, 200)
         self.assertTrue(cancelled.json()["cancelled"])
@@ -284,6 +340,83 @@ class ApiTests(unittest.TestCase):
             json={"backup_name": backup.json()["backup_name"]},
         )
         self.assertEqual(restored.status_code, 200)
+
+    def test_single_profile_export_uses_password_encryption(self) -> None:
+        account = self.client.post("/api/accounts", json={"name": "Encrypted", "platform": "facebook"}).json()
+        profile = self.services.settings.chrome_profile_dir / account["profile_key"]
+        (profile / "Default").mkdir(parents=True)
+        (profile / "Local State").write_text("{}", encoding="utf-8")
+        (profile / "Default" / "Preferences").write_text("{}", encoding="utf-8")
+        (profile / "Default" / "Cookies").write_text("session", encoding="utf-8")
+
+        exported = self.client.post(
+            f"/api/accounts/{account['id']}/profile/export", json={"password": "correct horse battery staple"}
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertTrue(exported.json()["package_encrypted"])
+        self.assertEqual(Path(exported.json()["bundle_path"]).suffix, ".enc")
+        imported = self.client.post("/api/profiles/import", json={
+            "bundle_path": exported.json()["bundle_path"], "password": "correct horse battery staple",
+        })
+        self.assertEqual(imported.status_code, 200)
+        self.assertEqual(imported.json()["accounts_imported"], 1)
+
+    def test_recovery_bundle_export_api_requires_password_and_encrypts_output(self) -> None:
+        rejected = self.client.post("/api/recovery/export", json={"password": "short"})
+        self.assertEqual(rejected.status_code, 422)
+        exported = self.client.post("/api/recovery/export", json={
+            "password": "correct horse battery staple", "include_environment": False,
+        })
+        self.assertEqual(exported.status_code, 200)
+        bundle = Path(exported.json()["bundle_path"])
+        self.assertTrue(bundle.is_file())
+        self.assertFalse(bundle.read_bytes().startswith(b"PK"))
+
+    def test_recovery_bundle_restore_api_replaces_current_database_safely(self) -> None:
+        before = self.client.post("/api/accounts", json={"name": "Before recovery", "platform": "facebook"}).json()
+        exported = self.client.post("/api/recovery/export", json={
+            "password": "correct horse battery staple", "include_environment": False,
+        })
+        self.assertEqual(exported.status_code, 200)
+        after = self.client.post("/api/accounts", json={"name": "After recovery", "platform": "youtube"}).json()
+
+        restored = self.client.post("/api/recovery/restore", json={
+            "bundle_path": exported.json()["bundle_path"], "password": "correct horse battery staple",
+        })
+
+        self.assertEqual(restored.status_code, 200)
+        self.assertIsNotNone(self.services.accounts.get(before["id"]))
+        self.assertIsNone(self.services.accounts.get(after["id"]))
+        self.assertTrue(restored.json()["safety_paths"])
+
+    def test_readiness_diagnostics_reports_local_prerequisites(self) -> None:
+        result = self.client.get("/api/diagnostics/readiness")
+        self.assertEqual(result.status_code, 200)
+        checks = {item["id"]: item for item in result.json()["checks"]}
+        self.assertEqual(checks["database"]["state"], "ready")
+        self.assertIn("chrome", checks)
+        self.assertIn("youtube_api", checks)
+
+    def test_database_restore_rolls_back_when_credential_migration_fails(self) -> None:
+        legacy = self.services.accounts.create("Legacy", "facebook")
+        with self.services.database.connection() as connection:
+            connection.execute(
+                "UPDATE accounts SET password='legacy-password', secret_2fa_protected='malformed-protection' WHERE id=?",
+                (legacy["id"],),
+            )
+        restore_source = self.services.database.create_backup()
+        with self.services.database.connection() as connection:
+            connection.execute(
+                "UPDATE accounts SET password='', secret_2fa_protected='' WHERE id=?", (legacy["id"],)
+            )
+        current = self.services.accounts.create("Current", "facebook")
+
+        restored = self.client.post("/api/database/restore", json={"name": restore_source.name})
+
+        self.assertEqual(restored.status_code, 500)
+        self.assertIn("hoàn nguyên", restored.json()["detail"])
+        self.assertIsNotNone(self.services.accounts.get(current["id"]))
+        self.assertEqual(self.services.worker.resume_calls, 1)
 
     def test_account_delete_can_keep_or_remove_profile_and_backups(self) -> None:
         kept = self.client.post("/api/accounts", json={"name": "Keep", "platform": "facebook"}).json()
@@ -420,6 +553,37 @@ class ApiTests(unittest.TestCase):
         events = self.client.get(f"/api/jobs/{job['id']}/events")
         self.assertEqual(events.status_code, 200)
         self.assertEqual(events.json()[0]["event_type"], "created")
+
+    def test_direct_real_publish_job_is_rejected(self) -> None:
+        account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
+        response = self.client.post(
+            "/api/jobs",
+            json={"kind": "publish", "account_id": account["id"], "payload": {"text": "Hello"}, "dry_run": False},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("safety gate", response.json()["detail"])
+
+    def test_job_artifact_file_is_available_only_within_screenshot_directory(self) -> None:
+        job = self.services.jobs.create("publish", {}, None, None)
+        relative_path = f"{job['id']}/publisher-error.png"
+        screenshot = self.services.settings.screenshot_dir / relative_path
+        screenshot.parent.mkdir(parents=True)
+        screenshot.write_bytes(b"evidence")
+        artifact = ArtifactRepository(self.services.database).record(
+            job["id"], "screenshot", relative_path, {"step": "publisher-error"},
+        )
+
+        response = self.client.get(f"/api/jobs/{job['id']}/artifacts/{artifact['id']}/file")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"evidence")
+        self.assertEqual(self.client.get(f"/api/jobs/{job['id']}/artifacts/not-found/file").status_code, 404)
+
+        outside = self.services.settings.project_root / "outside-screenshot.png"
+        outside.write_bytes(b"outside")
+        unsafe = ArtifactRepository(self.services.database).record(job["id"], "screenshot", "../outside-screenshot.png")
+        self.assertEqual(
+            self.client.get(f"/api/jobs/{job['id']}/artifacts/{unsafe['id']}/file").status_code, 404
+        )
 
     def test_health_uses_lightweight_ping(self) -> None:
         response = self.client.get("/api/health")

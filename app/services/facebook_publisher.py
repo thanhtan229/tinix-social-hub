@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class FacebookPublisher(Publisher):
     selector_version = "facebook-web-v1"
+    supported_formats = frozenset({"post"})
     def __init__(
         self,
         settings: Settings,

@@ -65,28 +65,33 @@ class AccountAndTargetRepositoryTests(unittest.TestCase):
 
     def test_invalid_facebook_discovery_targets_are_removed(self) -> None:
         account = self.accounts.create("Page admin", "facebook")
-        self.targets.sync(account["id"], "facebook", [
+        synced = self.targets.sync(account["id"], "facebook", [
             {"external_id": "url:latest", "name": "Meta Business Suite", "url": "https://facebook.com/latest"},
             {"external_id": "url:ad_center", "name": "Quảng cáo", "url": "https://facebook.com/ad_center"},
         ])
+        self.assertEqual(synced, [])
         result = self.targets.remove_invalid_discovery_targets(
             account["id"], "facebook", frozenset({"url:latest", "url:ad_center"})
         )
-        self.assertEqual(result, {"removed": 2, "preserved": 0})
+        self.assertEqual(result, {"removed": 0, "preserved": 0})
         self.assertEqual(self.targets.list(account_id=account["id"]), [])
 
     def test_referenced_invalid_target_is_hidden_but_history_is_preserved(self) -> None:
         account = self.accounts.create("Page admin", "facebook")
-        target = self.targets.sync(account["id"], "facebook", [
-            {"external_id": "url:latest", "name": "Meta Business Suite", "url": "https://facebook.com/latest"},
-        ])[0]
-        self.jobs.create("publish", {}, account["id"], None, target_id=target["id"])
+        target_id = "legacy-navigation-target"
+        with self.database.connection() as connection:
+            connection.execute(
+                "INSERT INTO publishing_targets(id,account_id,platform,target_type,external_id,name,url,enabled,access_status,created_at,updated_at) "
+                "VALUES(?,?, 'facebook','page','url:latest','Meta Business Suite','https://facebook.com/latest',1,'accessible',datetime('now'),datetime('now'))",
+                (target_id, account["id"]),
+            )
+        self.jobs.create("publish", {}, account["id"], None, target_id=target_id)
         result = self.targets.remove_invalid_discovery_targets(
             account["id"], "facebook", frozenset({"url:latest"})
         )
         self.assertEqual(result, {"removed": 0, "preserved": 1})
         self.assertEqual(self.targets.list(account_id=account["id"]), [])
-        self.assertEqual(self.targets.get(target["id"])["access_status"], "invalid_discovery")
+        self.assertEqual(self.targets.get(target_id)["access_status"], "invalid_discovery")
 
     def test_target_groups_have_unique_members(self) -> None:
         account = self.accounts.create("Admin", "facebook")
