@@ -68,6 +68,25 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(self.client.get("/api/accounts/1/credentials", headers=headers).status_code, 403)
         self.assertEqual(self.calls, 0)
 
+    def test_instagram_oauth_redirect_is_exempt_only_on_its_callback_path(self):
+        app = FastAPI()
+
+        @app.get("/api/oauth/instagram/callback")
+        async def callback():
+            return {"ok": True}
+
+        @app.get("/api/health")
+        async def health():
+            return {"status": "ok"}
+
+        install_local_boundary(app, "127.0.0.1")
+        client = TestClient(app, base_url="http://127.0.0.1:8765")
+        self.addCleanup(client.close)
+        cross_site = {"Sec-Fetch-Site": "cross-site"}
+        self.assertEqual(client.get("/api/oauth/instagram/callback?code=c&state=s", headers=cross_site).status_code, 200)
+        self.assertEqual(client.get("/api/health", headers=cross_site).status_code, 403)
+        self.assertEqual(client.post("/api/oauth/instagram/callback", headers=cross_site).status_code, 403)
+
     def test_local_ui_header_required_and_allowed(self):
         self.assertEqual(self.client.post("/api/database/backups").status_code, 403)
         self.assertEqual(self.client.get("/api/accounts/1/credentials").status_code, 403)

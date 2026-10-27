@@ -195,7 +195,7 @@ async function saveDialog(event) {
   const button = form.querySelector("button[type=submit]");
   const isAi = editing?.type === "ai";
   const item = editing?.item;
-  const payload = isAi ? {provider: formValue(form, "provider"), name: formValue(form, "name"), text_model: selectedModel(form, "text"), enabled: form.querySelector("[name=enabled]").checked} : {provider: formValue(form, "provider"), name: formValue(form, "name"), client_id: formValue(form, "client_id"), redirect_uri: formValue(form, "redirect_uri"), api_version: formValue(form, "api_version"), scopes: formValue(form, "scopes").split(",").map(value => value.trim()).filter(Boolean), enabled: form.querySelector("[name=enabled]").checked};
+  const payload = isAi ? {provider: formValue(form, "provider"), name: formValue(form, "name"), text_model: selectedModel(form, "text"), enabled: form.querySelector("[name=enabled]").checked} : {provider: item ? item.provider : formValue(form, "provider"), name: formValue(form, "name"), client_id: formValue(form, "client_id"), redirect_uri: formValue(form, "redirect_uri"), api_version: formValue(form, "api_version"), scopes: formValue(form, "scopes").split(",").map(value => value.trim()).filter(Boolean), enabled: form.querySelector("[name=enabled]").checked};
   if (isAi && form.querySelector("[name=base_url]")) payload.base_url = formValue(form, "base_url");
   const secretName = isAi ? "api_key" : "client_secret";
   const secret = formValue(form, secretName);

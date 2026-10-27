@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,7 +15,7 @@ from app.core.logging import secret_registry
 from app.db.provider_repositories import OAuthStateRepository, ProviderConnectionRepository
 from app.db.repositories import AccountRepository
 
-
+logger = logging.getLogger(__name__)
 INSTAGRAM_SCOPES = ("instagram_business_basic", "instagram_business_content_publish")
 INSTAGRAM_USERNAME = re.compile(r"[A-Za-z0-9._]{1,30}\Z")
 
@@ -132,6 +133,14 @@ class InstagramAccountService:
         except ValueError as exc:
             raise RuntimeError("Instagram trả phản hồi không hợp lệ.") from exc
         if response.status_code >= 400 or not isinstance(result, dict) or result.get("error"):
+            # Log only Meta's error code/type (never token or secret) so the cause is diagnosable.
+            meta_error = result.get("error") if isinstance(result, dict) else None
+            meta_error = meta_error if isinstance(meta_error, dict) else {}
+            logger.warning(
+                "Instagram Graph %s failed: HTTP %s code=%s type=%s subcode=%s message=%s",
+                path, response.status_code, meta_error.get("code"), meta_error.get("type"),
+                meta_error.get("error_subcode"), str(meta_error.get("message") or "")[:160],
+            )
             raise RuntimeError("Instagram từ chối yêu cầu OAuth hoặc Graph API.")
         return result
 
