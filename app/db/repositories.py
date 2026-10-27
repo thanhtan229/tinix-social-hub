@@ -640,6 +640,16 @@ class JobRepository:
             if not cursor.rowcount:
                 raise KeyError(job_id)
 
+    def latest_provider_request(self, job_id: str) -> dict[str, Any] | None:
+        """Return the last persisted provider session marker for safe restart recovery."""
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT provider_request_id,commit_possible FROM publish_attempts "
+                "WHERE job_id=? AND provider_request_id IS NOT NULL "
+                "ORDER BY attempt_number DESC LIMIT 1", (job_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def health_counts(self, stuck_minutes: int = 15) -> dict[str, int]:
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=stuck_minutes)).isoformat()
         with self.db.connection() as connection:
@@ -777,15 +787,20 @@ class JobRepository:
                     )
                 if row["publication_release_id"]:
                     post_url = result.get("post_url") if result else None
+                    external_release_id = (
+                        ((result or {}).get("metadata") or {}).get("external_id")
+                        if isinstance((result or {}).get("metadata"), dict) else None
+                    )
                     connection.execute(
                         "UPDATE publication_releases SET status=?,external_url=COALESCE(?,external_url),"
+                        "external_release_id=COALESCE(?,external_release_id),"
                         "published_at=CASE WHEN ?='succeeded' THEN COALESCE(published_at,?) ELSE published_at END,"
                         "verification_status=COALESCE(?,verification_status),"
                         "verification_method=COALESCE(?,verification_method),"
                         "verified_at=CASE WHEN ?='verified' THEN COALESCE(verified_at,?) ELSE verified_at END,"
                         "verification_note=COALESCE(?,verification_note),updated_at=? WHERE id=?",
                         (
-                            validated_target.value, post_url, validated_target.value,
+                            validated_target.value, post_url, external_release_id, validated_target.value,
                             finished_at, verification_status, verification_method,
                             verification_status, now, verification_note[:2000] if verification_note else None,
                             now, row["publication_release_id"],
@@ -880,6 +895,35 @@ class JobRepository:
                 connection.execute("ROLLBACK")
                 raise
         return released
+
+    def quarantine_restored_publications(self) -> int:
+        """A snapshot cannot prove whether a later external publish already happened."""
+        now = utc_now()
+        message = "Job đăng thật được cách ly sau restore. Kiểm tra nền tảng và xác minh kết quả trước khi tạo lần đăng mới."
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    "SELECT id,status,publication_release_id FROM jobs WHERE kind='publish' AND dry_run=0 "
+                    "AND status NOT IN ('succeeded','dry_run_ready','permanent_failure','cancelled')"
+                ).fetchall()
+                for row in rows:
+                    connection.execute(
+                        "UPDATE jobs SET status='unknown_result',error=?,failure_code='restore_reconciliation_required',"
+                        "commit_reached_at=COALESCE(commit_reached_at,?),updated_at=?,locked_at=NULL,lease_expires_at=NULL WHERE id=?",
+                        (message, now, now, row["id"]),
+                    )
+                    connection.execute(
+                        "UPDATE publication_releases SET status='unknown_result',updated_at=? WHERE id=?",
+                        (now, row["publication_release_id"]),
+                    )
+                    self._sync_plan_status(connection, row["publication_release_id"])
+                    self._event(connection, row["id"], row["status"], "unknown_result", "restore_quarantine", message)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return len(rows)
 
     def recover_interrupted(self) -> int:
         recoverable = {"opening_browser", "checking_login", "uploading"}
@@ -1154,13 +1198,46 @@ class TargetRepository:
                 (message[:1000], utc_now(), account_id),
             )
 
-    def create_group(self, name: str, description: str | None = None) -> dict[str, Any]:
+    def create_group(self, name: str, description: str | None = None, defaults: dict[str, Any] | None = None) -> dict[str, Any]:
         group_id, now = str(uuid.uuid4()), utc_now()
         with self.db.connection() as connection:
             connection.execute(
-                "INSERT INTO target_groups(id,name,description,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (group_id, name.strip(), description, now, now),
+                "INSERT INTO target_groups(id,name,description,created_at,updated_at,defaults_json) VALUES(?,?,?,?,?,?)",
+                (group_id, name.strip(), description, now, now, _json(defaults or {})),
             )
+        return self.get_group(group_id)
+
+    def update_group(
+        self, group_id: str, name: str, description: str | None, defaults: dict[str, Any],
+        target_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not connection.execute("SELECT 1 FROM target_groups WHERE id=?", (group_id,)).fetchone():
+                    connection.execute("ROLLBACK")
+                    return None
+                unique_ids = list(dict.fromkeys(target_ids or []))
+                if target_ids is not None:
+                    missing = [target_id for target_id in unique_ids if not connection.execute(
+                        "SELECT 1 FROM publishing_targets WHERE id=?", (target_id,)
+                    ).fetchone()]
+                    if missing:
+                        raise ValueError("Một hoặc nhiều Page/kênh không tồn tại.")
+                connection.execute(
+                    "UPDATE target_groups SET name=?,description=?,defaults_json=?,updated_at=? WHERE id=?",
+                    (name.strip(), description, _json(defaults), utc_now(), group_id),
+                )
+                if target_ids is not None:
+                    connection.execute("DELETE FROM target_group_members WHERE group_id=?", (group_id,))
+                    connection.executemany(
+                        "INSERT INTO target_group_members(group_id,target_id,created_at) VALUES(?,?,?)",
+                        [(group_id, target_id, utc_now()) for target_id in unique_ids],
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
         return self.get_group(group_id)
 
     def get_group(self, group_id: str) -> dict[str, Any] | None:
@@ -1169,6 +1246,7 @@ class TargetRepository:
             if not row:
                 return None
             result = dict(row)
+            result["defaults"] = json.loads(result.pop("defaults_json", "{}"))
             result["target_ids"] = [
                 item[0] for item in connection.execute("SELECT target_id FROM target_group_members WHERE group_id=?", (group_id,))
             ]
@@ -1183,8 +1261,17 @@ class TargetRepository:
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                if not connection.execute("SELECT 1 FROM target_groups WHERE id=?", (group_id,)).fetchone():
+                    connection.execute("ROLLBACK")
+                    return None
+                unique_ids = list(dict.fromkeys(target_ids))
+                missing = [target_id for target_id in unique_ids if not connection.execute(
+                    "SELECT 1 FROM publishing_targets WHERE id=?", (target_id,)
+                ).fetchone()]
+                if missing:
+                    raise ValueError("Một hoặc nhiều Page/kênh không tồn tại.")
                 connection.execute("DELETE FROM target_group_members WHERE group_id=?", (group_id,))
-                for target_id in dict.fromkeys(target_ids):
+                for target_id in unique_ids:
                     connection.execute(
                         "INSERT INTO target_group_members(group_id,target_id,created_at) VALUES(?,?,?)",
                         (group_id, target_id, utc_now()),
@@ -1194,3 +1281,7 @@ class TargetRepository:
                 connection.execute("ROLLBACK")
                 raise
         return self.get_group(group_id)
+
+    def delete_group(self, group_id: str) -> bool:
+        with self.db.connection() as connection:
+            return connection.execute("DELETE FROM target_groups WHERE id=?", (group_id,)).rowcount > 0

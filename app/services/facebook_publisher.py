@@ -119,7 +119,8 @@ class FacebookPublisher(Publisher):
                 if media_records:
                     await context.transition("uploading", "upload_started", False)
                     for item in media_records:
-                        media_paths.append(await asyncio.to_thread(self.media.resolve_existing, item["relative_path"]))
+                        from app.services.media import resolve_publish_media
+                        media_paths.append(await asyncio.to_thread(resolve_publish_media, self.media, item))
                     await self._check_cancel(context)
                     await composer.upload_media(media_paths)
                 await context.transition("publishing", "composer_ready", False)

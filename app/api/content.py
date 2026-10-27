@@ -10,9 +10,10 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from app.services.ai import AIError, PlatformVariant
+from app.services.ai import AIError, ContentComposition, PlatformVariant
 from app.db.content_repositories import ContentInUseError
 from app.db.media_repositories import MediaAssetInUseError
+from app.db.repositories import AppSettingsRepository
 from app.platforms import PLATFORM_CATALOG
 from app.services.media import MediaValidationError
 from app.services.scheduling import SchedulingError
@@ -50,6 +51,7 @@ class ContentBody(BaseModel):
     hashtags: list[str] = Field(default_factory=list, max_length=100)
     cta: str | None = None
     platform_variants: dict[str, PlatformVariant] = Field(default_factory=dict)
+    composition: ContentComposition | None = None
 
 
 class BulkDeleteBody(BaseModel):
@@ -84,6 +86,7 @@ class ImageJobBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
     engine: Literal["media_creator"] = "media_creator"
     provider: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=160)
     aspect_ratio: str = Field(default="auto", pattern="^(auto|1:1|4:3|3:4|16:9|9:16)$")
     count: int = Field(default=1, ge=1, le=4)
     content_id: str | None = None
@@ -106,6 +109,26 @@ class ScheduleBody(BaseModel):
     )
 
 
+class BatchScheduleBody(BaseModel):
+    content_id: str
+    target_ids: list[str] = Field(min_length=1, max_length=100)
+    scheduled_at: datetime
+    target_scheduled_at: dict[str, datetime] = Field(default_factory=dict, max_length=100)
+    delay_seconds: int = Field(default=0, ge=0, le=86400)
+    random_delay_seconds: int = Field(default=0, ge=0, le=3600)
+    dry_run: bool = True
+    missed_policy: str = Field(default="confirm", pattern="^(publish|skip|confirm)$")
+    content_format: str = Field(default="post", min_length=1, max_length=50)
+    platform_settings: dict[str, Any] = Field(default_factory=dict)
+    target_content_formats: dict[str, str] = Field(default_factory=dict, max_length=100)
+    target_platform_settings: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=100)
+    request_key: str = Field(min_length=16, max_length=160)
+    routing_preference: str | None = Field(
+        default=None,
+        pattern="^(official_api_preferred|chrome_preferred|official_api_only|chrome_only)$",
+    )
+
+
 class MediaAssetUpdate(BaseModel):
     alt_text: str | None = Field(default=None, max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=100)
@@ -118,9 +141,48 @@ class MediaAttachBody(BaseModel):
     alt_text: str | None = Field(default=None, max_length=2000)
 
 
+class TargetMediaOverrideBody(BaseModel):
+    asset_ids: list[str] = Field(default_factory=list, max_length=10)
+    alt_texts: dict[str, str] = Field(default_factory=dict, max_length=10)
+    inherit: bool = False
+
+
+class ContentSignature(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=100)
+    text: str = Field(default="", max_length=2000)
+    hashtags: list[str] = Field(default_factory=list, max_length=50)
+
+
+class ContentSignaturesBody(BaseModel):
+    signatures: list[ContentSignature] = Field(default_factory=list, max_length=100)
+
+
 @router.get("/brand-profiles")
 async def list_brands(request: Request) -> list[dict[str, Any]]:
     return await asyncio.to_thread(services(request).brands.list)
+
+
+@router.get("/content-signatures")
+async def list_content_signatures(request: Request) -> list[dict[str, Any]]:
+    svc = services(request)
+    repository = getattr(svc, "app_settings", None) or AppSettingsRepository(svc.database)
+    return await asyncio.to_thread(repository.get, "content_signatures_v1", [])
+
+
+@router.put("/content-signatures")
+async def save_content_signatures(body: ContentSignaturesBody, request: Request) -> list[dict[str, Any]]:
+    signatures = [item.model_dump() for item in body.signatures]
+    ids = [item["id"] for item in signatures]
+    names = [item["name"].strip().casefold() for item in signatures]
+    if len(ids) != len(set(ids)) or len(names) != len(set(names)):
+        raise HTTPException(422, "ID và tên chữ ký phải duy nhất.")
+    for item in signatures:
+        item["name"] = item["name"].strip()
+        item["hashtags"] = list(dict.fromkeys(tag.strip() for tag in item["hashtags"] if tag.strip()))
+    svc = services(request)
+    repository = getattr(svc, "app_settings", None) or AppSettingsRepository(svc.database)
+    return await asyncio.to_thread(repository.set, "content_signatures_v1", signatures)
 
 
 @router.post("/brand-profiles", status_code=201)
@@ -390,6 +452,21 @@ async def detach_media_asset(asset_id: str, content_id: str, request: Request) -
     return {"detached": True}
 
 
+@router.put("/contents/{content_id}/media-targets/{target_id}")
+async def set_target_media_override(
+    content_id: str, target_id: str, body: TargetMediaOverrideBody, request: Request,
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            services(request).media_assets.set_target_override,
+            content_id, target_id, body.asset_ids, alt_texts=body.alt_texts, inherit=body.inherit,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy content, target hoặc asset.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.get("/media-assets/{asset_id}/compatibility")
 async def media_asset_compatibility(asset_id: str, request: Request) -> dict[str, Any]:
     asset = await asyncio.to_thread(services(request).media_assets.get, asset_id)
@@ -482,5 +559,43 @@ async def create_schedule(body: ScheduleBody, request: Request) -> list[dict[str
         )
         services(request).worker.notify()
         return jobs
+    except SchedulingError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/schedules/batch", status_code=201)
+async def create_schedule_batch(body: BatchScheduleBody, request: Request) -> list[dict[str, Any]]:
+    svc = services(request)
+    try:
+        jobs = await asyncio.to_thread(
+            svc.scheduling.schedule_batch,
+            content_id=body.content_id, target_ids=body.target_ids, scheduled_at=body.scheduled_at,
+            dry_run=body.dry_run, missed_policy=body.missed_policy, content_format=body.content_format,
+            platform_settings=body.platform_settings, request_key=body.request_key,
+            routing_preference=body.routing_preference, target_scheduled_at=body.target_scheduled_at,
+            delay_seconds=body.delay_seconds, random_delay_seconds=body.random_delay_seconds,
+            target_content_formats=body.target_content_formats,
+            target_platform_settings=body.target_platform_settings,
+        )
+        svc.worker.notify()
+        return jobs
+    except SchedulingError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/schedules/batch/preflight")
+async def preflight_schedule_batch(body: BatchScheduleBody, request: Request) -> dict[str, Any]:
+    svc = services(request)
+    try:
+        return await asyncio.to_thread(
+            svc.scheduling.schedule_batch,
+            content_id=body.content_id, target_ids=body.target_ids, scheduled_at=body.scheduled_at,
+            dry_run=body.dry_run, missed_policy=body.missed_policy, content_format=body.content_format,
+            platform_settings=body.platform_settings, request_key=body.request_key,
+            routing_preference=body.routing_preference, target_scheduled_at=body.target_scheduled_at,
+            delay_seconds=body.delay_seconds, random_delay_seconds=body.random_delay_seconds, preflight_only=True,
+            target_content_formats=body.target_content_formats,
+            target_platform_settings=body.target_platform_settings,
+        )
     except SchedulingError as exc:
         raise HTTPException(422, str(exc)) from exc

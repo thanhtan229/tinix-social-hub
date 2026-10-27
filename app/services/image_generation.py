@@ -25,6 +25,28 @@ class ImageGenerationService:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._external_runs: dict[str, str] = {}
 
+    async def start(self) -> None:
+        for item in await asyncio.to_thread(self.generations.pending_image_jobs):
+            job_id = item["id"]
+            if job_id in self._tasks:
+                continue
+            run_id = (item.get("response") or {}).get("external_run_id")
+            if not run_id:
+                await asyncio.to_thread(
+                    self.generations.update_image_job, job_id, status="failed", finished=True,
+                    error_code="image_generation_interrupted",
+                    error_message="Tác vụ bị gián đoạn trước khi lưu run ID; kiểm tra Media Creator trước khi thử lại.",
+                    response={"message": "Tác vụ bị gián đoạn; chưa tự tạo run mới.", "progress": 100},
+                )
+                continue
+            self._external_runs[job_id] = run_id
+            self._schedule(job_id, item["request"], resume_run_id=run_id)
+
+    def _schedule(self, job_id: str, request: dict[str, Any], resume_run_id: str | None = None) -> None:
+        task = asyncio.create_task(self._run(job_id, request, resume_run_id), name=f"image-{job_id}")
+        self._tasks[job_id] = task
+        task.add_done_callback(lambda _: self._tasks.pop(job_id, None))
+
     async def options(self) -> dict[str, Any]:
         try:
             providers = await self.media_creator.providers()
@@ -53,15 +75,28 @@ class ImageGenerationService:
         provider = str(request.get("provider") or "").strip()
         if not provider:
             raise AIError("invalid_media_creator_provider", "Hãy chọn provider của Tinix Media Creator.")
-        model = provider
+        selected_model = str(request.get("model") or "").strip()
+        providers = await self.media_creator.providers()
+        provider_info = next((item for item in providers if item.get("id") == provider), None)
+        if not provider_info or "image" not in (provider_info.get("capabilities") or {}).get("outputTypes", []):
+            raise AIError("invalid_media_creator_provider", "Provider đã chọn không hỗ trợ tạo ảnh.")
+        image_models = (provider_info.get("capabilities") or {}).get("imageModels") or []
+        model_ids = {
+            str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+            if isinstance(item, dict) else str(item).strip()
+            for item in image_models
+        }
+        model_ids.discard("")
+        if selected_model and selected_model not in model_ids:
+            raise AIError("invalid_image_model", "Model đã chọn không thuộc provider ảnh này.")
+        model = selected_model or "auto"
+        request = {**request, "model": selected_model}
 
         generation_id = await asyncio.to_thread(
             self.generations.start, provider, model, "image", {**request, "engine": engine}, None, None,
         )
         await asyncio.to_thread(self.generations.update_image_job, generation_id, status="queued")
-        task = asyncio.create_task(self._run(generation_id, {**request, "engine": engine}))
-        self._tasks[generation_id] = task
-        task.add_done_callback(lambda _: self._tasks.pop(generation_id, None))
+        self._schedule(generation_id, {**request, "engine": engine})
         return {"job_id": generation_id, "status": "queued", "engine": engine, "provider": provider, "model": model}
 
     async def get_job(self, job_id: str) -> dict[str, Any] | None:
@@ -88,6 +123,7 @@ class ImageGenerationService:
         task = self._tasks.get(job_id)
         if task:
             task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         await asyncio.to_thread(
             self.generations.update_image_job, job_id, status="cancelled",
             response={"message": "Đã hủy tác vụ tạo ảnh.", "progress": 0, "external_run_id": external_run_id}, finished=True,
@@ -95,42 +131,52 @@ class ImageGenerationService:
         return True
 
     async def close(self) -> None:
-        for task in self._tasks.values():
+        tasks = list(self._tasks.values())
+        for task in tasks:
             task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
 
-    async def _run(self, job_id: str, request: dict[str, Any]) -> None:
+    async def _run(self, job_id: str, request: dict[str, Any], resume_run_id: str | None = None) -> None:
         started = time.perf_counter()
         try:
-            await asyncio.to_thread(self.generations.update_image_job, job_id, status="running", response={"message": "Đang tạo ảnh…", "progress": 10})
-            payload = await self._run_media_creator(job_id, request)
+            # Persist the client-assigned ID before dispatch, including an interrupted create request.
+            run_id = resume_run_id or job_id
+            self._external_runs[job_id] = run_id
+            await asyncio.to_thread(self.generations.update_image_job, job_id, status="running", response={
+                "message": "Đang tạo ảnh…", "progress": 10, "external_run_id": run_id,
+            })
+            payload = await self._run_media_creator(job_id, request, resume_run_id)
             await asyncio.to_thread(self.generations.update_image_job, job_id, status="completed", response=payload, finished=True)
         except asyncio.CancelledError:
             raise
         except AIError as exc:
             await asyncio.to_thread(
                 self.generations.update_image_job, job_id, status="failed",
-                response={"message": str(exc), "progress": 100}, error_code=exc.code, error_message=str(exc), finished=True,
+                response={"message": str(exc), "progress": 100, "external_run_id": self._external_runs.get(job_id)}, error_code=exc.code, error_message=str(exc), finished=True,
             )
         except Exception as exc:
             await asyncio.to_thread(
                 self.generations.update_image_job, job_id, status="failed",
-                response={"message": "Tạo ảnh thất bại.", "progress": 100}, error_code="image_generation_failed", error_message=str(exc), finished=True,
+                response={"message": "Tạo ảnh thất bại.", "progress": 100, "external_run_id": self._external_runs.get(job_id)}, error_code="image_generation_failed", error_message=str(exc), finished=True,
             )
         finally:
             _ = started
 
-    async def _run_media_creator(self, job_id: str, request: dict[str, Any]) -> dict[str, Any]:
-        run_id = await self.media_creator.create_run(
+    async def _run_media_creator(self, job_id: str, request: dict[str, Any], resume_run_id: str | None = None) -> dict[str, Any]:
+        run_id = resume_run_id or await self.media_creator.create_run(
             run_id=job_id, provider=str(request["provider"]), prompt=request["prompt"],
             aspect_ratio=str(request.get("aspect_ratio") or "auto"), count=int(request.get("count") or 1),
+            model=str(request.get("model") or ""),
         )
         self._external_runs[job_id] = run_id
         await asyncio.to_thread(self.generations.update_image_job, job_id, status="running", response={"message": "Tinix Media Creator đang tạo ảnh…", "progress": 20, "external_run_id": run_id})
         deadline = time.monotonic() + self.timeout_seconds
         while time.monotonic() < deadline:
             status = await self.media_creator.run_status(run_id)
+            if resume_run_id and status.get("status") == "unknown":
+                raise AIError("image_generation_interrupted", "Run đã lưu không còn ở Media Creator; kiểm tra kết quả trước khi thử lại.")
             if status.get("terminal"):
                 if status.get("status") in {"failed", "cancelled", "needs_review"}:
                     raise AIError("media_creator_generation_failed", status.get("message") or "Tinix Media Creator không tạo được ảnh.")

@@ -32,6 +32,7 @@ class PublishContext:
     is_cancelled: Callable[[], Awaitable[bool]]
     transition: Callable[[str, str, bool], Awaitable[None]]
     record_provider_request: Callable[[str, bool], Awaitable[None]] | None = None
+    connection_id: str | None = None
 
 
 class Publisher(ABC):

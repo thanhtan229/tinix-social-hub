@@ -1,13 +1,13 @@
-import {api,toast} from "./api.js?v=1.0.24";
-import {refreshOverview} from "./overview.js?v=1.0.24";
-import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.24";
-import {initPosts,refreshPosts} from "./posts.js?v=1.0.24";
-import {initAnalytics,refreshAnalytics} from "./analytics.js?v=1.0.24";
-import {initAI,refreshBrands,refreshPromptTemplates} from "./ai.js?v=1.0.24";
-import {initCompose,refreshComposer} from "./compose.js?v=1.0.24";
-import {initJobs,refreshJobs} from "./jobs.js?v=1.0.24";
-import {initSettings,refreshProfileCleanupSettings} from "./settings.js?v=1.0.24";
-import {initIntegrations,refreshIntegrations} from "./integrations.js?v=1.0.24";
+import {api,toast} from "./api.js?v=1.0.44";
+import {refreshOverview} from "./overview.js?v=1.0.44";
+import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.44";
+import {initPosts,refreshPosts} from "./posts.js?v=1.0.44";
+import {initAnalytics,refreshAnalytics} from "./analytics.js?v=1.0.44";
+import {initAI,refreshBrands,refreshPromptTemplates} from "./ai.js?v=1.0.44";
+import {initCompose,refreshComposer} from "./compose.js?v=1.0.44";
+import {initJobs,refreshJobs} from "./jobs.js?v=1.0.44";
+import {initSettings,refreshProfileCleanupSettings} from "./settings.js?v=1.0.44";
+import {initIntegrations,refreshIntegrations} from "./integrations.js?v=1.0.44";
 
 const refreshers={overview:refreshOverview,ai:async()=>{window.dispatchEvent(new Event("tinix:refresh-image-options"));await Promise.all([refreshBrands(),refreshPromptTemplates()]);},posts:refreshPosts,content:refreshPosts,compose:refreshComposer,jobs:async()=>{await refreshAccounts();await refreshJobs();},analytics:refreshAnalytics,accounts:refreshAccounts,settings:async()=>{await Promise.all([refreshOverview(),refreshProfileCleanupSettings(),refreshIntegrations()]);}};
 async function openTab(name){const targetTab=name==="content"||name==="media"?"posts":name;document.querySelectorAll(".tab").forEach(tab=>tab.classList.toggle("active",tab.id===`tab-${targetTab}`));document.querySelectorAll("#nav button").forEach(button=>button.classList.toggle("active",button.dataset.tab===targetTab));location.hash=targetTab;try{await refreshers[targetTab]?.();}catch(error){toast(error.message);}}

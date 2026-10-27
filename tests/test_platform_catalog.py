@@ -24,7 +24,9 @@ class PlatformCatalogTests(unittest.TestCase):
 
     def test_capability_summary_accounts_for_every_boundary(self) -> None:
         for platform in PLATFORM_CATALOG:
-            self.assertEqual(sum(capability_summary(platform).values()), 6)
+            summary = capability_summary(platform)
+            self.assertEqual(set(summary), {"ready", "review_required", "scaffold", "not_started", "deferred"})
+            self.assertEqual(sum(summary.values()), 7)
 
     def test_x_post_schema_supports_text_and_media(self) -> None:
         platform = get_platform("x")
@@ -56,6 +58,29 @@ class PlatformCatalogTests(unittest.TestCase):
         self.assertEqual(get_platform("instagram").content_formats, ("image", "carousel"))
         self.assertEqual(get_platform("tiktok").content_formats, ("short_video",))
         self.assertEqual(get_platform("youtube").content_formats, ("video", "short"))
+
+    def test_instagram_official_photo_publisher_is_review_gated_until_live_acceptance(self) -> None:
+        transport = get_platform("instagram").transport("official_api")
+        self.assertEqual(transport.content_formats, ("image",))
+        self.assertEqual(transport.authentication, "review_required")
+        self.assertEqual(transport.publishing, "review_required")
+        self.assertEqual(transport.readiness, "review_required")
+        self.assertIn("instagram_business_content_publish", transport.required_scopes)
+
+    def test_facebook_catalog_exposes_separate_api_media_formats(self) -> None:
+        facebook = get_platform("facebook")
+        self.assertEqual(facebook.phase, "Page API text/photo album/video + Reel")
+        self.assertEqual(facebook.content_formats, ("post", "photo", "multi_photo", "video", "reel"))
+        self.assertEqual(facebook.transport("chrome").content_formats, ("post",))
+        self.assertEqual(facebook.transport("official_api").content_formats,
+                         ("post", "photo", "multi_photo", "video", "reel"))
+        photo = next(item for item in facebook.format_schemas if item.id == "photo")
+        self.assertEqual((photo.min_media, photo.max_media, photo.allowed_media_types), (1, 1, ("image",)))
+        album = next(item for item in facebook.format_schemas if item.id == "multi_photo")
+        self.assertEqual((album.min_media, album.max_media, album.allowed_media_types),
+                         (2, 10, ("image",)))
+        video = next(item for item in facebook.format_schemas if item.id == "video")
+        self.assertEqual((video.min_media, video.max_media, video.allowed_media_types), (1, 1, ("video",)))
 
 
 if __name__ == "__main__":

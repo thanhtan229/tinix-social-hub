@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import socket
 import subprocess
@@ -10,6 +12,7 @@ import time
 import unittest
 import urllib.request
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image
@@ -27,6 +30,37 @@ def find_chrome() -> Path | None:
 
 
 class FrontendPlaywrightSmokeTests(unittest.TestCase):
+    def test_cross_origin_browser_form_cannot_create_backup(self) -> None:
+        target = f"http://127.0.0.1:{self.port}"
+        with urllib.request.urlopen(target + "/api/database/backups") as response:
+            before = json.load(response)
+        class AttackPage(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(f'<form method="post" action="{target}/api/database/backups"><button>Submit</button></form>'.encode())
+            def log_message(self, *args):
+                pass
+        attacker = ThreadingHTTPServer(("127.0.0.1", 0), AttackPage)
+        thread = threading.Thread(target=attacker.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+                page = browser.new_page()
+                page.goto(f"http://127.0.0.1:{attacker.server_port}/")
+                with page.expect_response(target + "/api/database/backups") as attempted:
+                    page.locator("button").click()
+                self.assertEqual(attempted.value.status, 403)
+                browser.close()
+            with urllib.request.urlopen(target + "/api/database/backups") as response:
+                self.assertEqual(json.load(response), before)
+        finally:
+            attacker.shutdown()
+            attacker.server_close()
+            thread.join(timeout=3)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.chrome = find_chrome()
@@ -126,21 +160,114 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.fill("#postCaption", "Playwright Caption Content")
             page.fill("#postHashtags", "#tinix #playwright")
             page.fill("#postCta", "Order now")
+            page.locator("#managePostSignatures").click()
+            page.locator("#postSignatureDialog").wait_for(state="visible")
+            page.locator("#newPostSignature").click()
+            page.fill("#postSignatureName", "Playwright Signature")
+            page.fill("#postSignatureText", "Visit Tinix")
+            page.fill("#postSignatureHashtags", "#campaign #tinix")
+            page.locator("#savePostSignature").click()
+            page.wait_for_function("() => [...document.querySelectorAll('#postSignatureSelect option')].some(option => option.value && option.textContent === 'Playwright Signature')")
+            page.locator("#postSignatureDialog [data-close]").first.click()
+            page.locator("#postSignatureSelect").select_option(label="Playwright Signature")
+            page.locator("#insertPostSignature").click()
+            self.assertIn("Visit Tinix", page.input_value("#postCaption"))
+            self.assertIn("#campaign", page.input_value("#postHashtags"))
             page.locator("#btnSavePostRecord").click()
             page.wait_for_timeout(800)
             self.assertFalse(page.locator("#postDialog").is_visible())
             card = page.locator('.post-card', has_text="Playwright Post Title")
             self.assertTrue(card.is_visible())
             self.assertEqual(card.locator(".post-thumb-wrap").count(), 1)
+            page.route("**/api/accounts", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([
+                    {"id": "account-a", "name": "Brand A", "platform": "facebook", "enabled": True},
+                    {"id": "account-b", "name": "Brand B", "platform": "facebook", "enabled": True},
+                    {"id": "account-x", "name": "Other Platform", "platform": "x", "enabled": True},
+                ]),
+            ))
+            page.route("**/api/targets?enabled=true", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([
+                    {"id": "page-1", "account_id": "account-a", "platform": "facebook", "name": "Page 1", "target_type": "page", "enabled": True, "access_status": "accessible"},
+                    {"id": "page-2", "account_id": "account-a", "platform": "facebook", "name": "Page 2", "target_type": "page", "enabled": True, "access_status": "unknown"},
+                    {"id": "page-3", "account_id": "account-b", "platform": "facebook", "name": "Page 1", "target_type": "page", "enabled": True, "access_status": "accessible"},
+                    {"id": "target-x", "account_id": "account-x", "platform": "x", "name": "X", "target_type": "profile", "enabled": True, "access_status": "accessible"},
+                ]),
+            ))
+            page.route("**/api/target-groups", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([{
+                    "id": "group-pages", "name": "Campaign Pages", "target_ids": ["page-1", "page-2"],
+                }]),
+            ))
+            preview_targets = [
+                {"target_id": "page-1", "name": "Page 1", "account_name": "Brand A", "status": "ready", "caption": "Copy A", "hashtags": ["#one"], "transport": "chrome"},
+                {"target_id": "page-2", "name": "Page 2", "account_name": "Brand A", "status": "ready", "caption": "Copy B", "hashtags": [], "transport": "chrome"},
+                {"target_id": "page-3", "name": "Page 1", "account_name": "Brand B", "status": "ready", "caption": "Copy C", "hashtags": [], "transport": "chrome"},
+                {"target_id": "target-x", "name": "X", "account_name": "Other Platform", "status": "ready", "caption": "Copy X", "hashtags": [], "transport": "chrome"},
+            ]
+            page.route("**/api/schedules/batch/preflight", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps({"ready": True, "targets": preview_targets}),
+            ))
+            page.route("**/api/schedules/batch", lambda route: route.fulfill(
+                status=201, content_type="application/json", body="[]",
+            ))
+            card.locator('[data-post-action="schedule"]').click()
+            page.locator("#quickScheduleDialog").wait_for(state="visible", timeout=5000)
+            self.assertEqual(page.locator("#quickScheduleTargets option").count(), 4)
+            self.assertEqual(page.locator("#quickScheduleTargets option:checked").count(), 4)
+            self.assertIn("Brand A", page.locator("#quickScheduleTargets").inner_text())
+            self.assertIn("Brand B", page.locator("#quickScheduleTargets").inner_text())
+            self.assertEqual(page.locator("#quickScheduleAccount").count(), 0)
+            page.locator("#quickScheduleTargets").evaluate("element => Array.from(element.options).forEach(option => option.selected = false)")
+            page.locator("#quickScheduleTargetGroup").select_option("group-pages")
+            page.locator("#applyTargetGroupMerge").click()
+            self.assertEqual(page.locator("#quickScheduleTargets option:checked").count(), 2)
+            page.locator("#quickScheduleTargets").evaluate("element => Array.from(element.options).forEach(option => option.selected = true)")
+            page.locator("#quickScheduleTargets").dispatch_event("change")
+            page.locator('[data-target-time="page-2"]').fill("2030-01-01T10:00")
+            expected_target_time = page.locator('[data-target-time="page-2"]').evaluate("input => new Date(input.value).toISOString()")
+            page.locator('#quickScheduleForm button[type="submit"]').click()
+            page.get_by_text("Kết quả kiểm tra từng Page", exact=True).wait_for(timeout=5000)
+            self.assertIn("Kết quả kiểm tra từng Page", page.locator("#quickSchedulePreview").inner_text())
+            self.assertIn("#one", page.locator("#quickSchedulePreview").inner_text())
+            self.assertIn("Tạo lịch cho 4 đích", page.locator('#quickScheduleForm button[type="submit"]').inner_text())
+            with page.expect_request("**/api/schedules/batch") as schedule_request:
+                page.locator('#quickScheduleForm button[type="submit"]').click()
+            schedule_body = schedule_request.value.post_data_json
+            self.assertEqual(set(schedule_body["target_ids"]), {"page-1", "page-2", "page-3", "target-x"})
+            self.assertEqual(schedule_body["target_content_formats"]["target-x"], "post")
+            self.assertEqual(schedule_body["target_scheduled_at"]["page-2"], expected_target_time)
+            self.assertGreaterEqual(len(schedule_body["request_key"]), 16)
+            page.locator("#quickScheduleDialog").wait_for(state="hidden")
+            page.unroute("**/api/schedules/batch/preflight")
+            page.unroute("**/api/schedules/batch")
             # Test Edit post and media persistence
             card.locator('button', has_text="Sửa").click()
             page.wait_for_timeout(300)
             self.assertTrue(page.locator("#postDialog").is_visible())
             self.assertEqual(page.input_value("#postTitle"), "Playwright Post Title")
             self.assertEqual(page.locator("#postMediaList .existing-media").count(), 1)
-            page.locator("#postDialog [data-close]").first.click()
-            page.wait_for_timeout(200)
+            page.locator("#postTargetMediaSelect").select_option("page-1")
+            page.route("**/media-targets/page-1", lambda route: route.fulfill(
+                status=200, content_type="application/json", body="{}",
+            ))
+            page.locator("#btnAttachTargetMedia").click()
+            page.locator("#mediaManagerDialog").wait_for(state="visible")
+            page.locator("[data-select-asset]").first.check()
+            self.assertEqual(page.locator("#mediaManagerSelectionCount").inner_text(), "1 đã chọn")
+            page.locator("#applySelectedMediaAssets").click()
+            self.assertEqual(page.locator("#postTargetMediaList .target-media-item").count(), 1)
+            self.assertFalse(page.locator("#mediaManagerDialog").is_visible())
+            with page.expect_request("**/media-targets/page-1") as override_request:
+                page.locator("#btnSavePostRecord").click()
+            override_body = override_request.value.post_data_json
+            self.assertEqual(len(override_body["asset_ids"]), 1)
+            page.locator("#postDialog").wait_for(state="hidden", timeout=5000)
+            page.unroute("**/media-targets/page-1")
             self.assertFalse(page.locator("#postDialog").is_visible())
+            page.unroute("**/api/accounts")
+            page.unroute("**/api/targets?enabled=true")
+            page.unroute("**/api/target-groups")
             self.assertEqual(page.locator('#accountPlatform option[value="x"]').count(), 1)
             self.assertEqual(page.locator('#calendarPlatform option[value="x"]').count(), 1)
             self.assertEqual(page.locator('#analyticsPlatform option[value="x"]').count(), 1)
@@ -265,9 +392,14 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             self.assertEqual(unknown_badge.count(), 1)
             self.assertEqual(unknown_badge.evaluate("element => getComputedStyle(element).color"), "rgb(95, 99, 104)")
             account_actions = page.locator("#accountList [data-account-action]")
-            self.assertEqual(account_actions.count(), 2)
-            self.assertIn("Mở", account_actions.first.inner_text())
-            self.assertIn("Xóa", account_actions.last.inner_text())
+            self.assertEqual(account_actions.count(), 3)
+            self.assertEqual(
+                account_actions.evaluate_all("elements => elements.map(element => element.dataset.accountAction)"),
+                ["connect-api", "chrome", "delete"],
+            )
+            self.assertEqual(account_actions.nth(0).inner_text(), "Kết nối Meta API")
+            self.assertIn("Mở", page.locator('#accountList [data-account-action="chrome"]').inner_text())
+            self.assertIn("Xóa", page.locator('#accountList [data-account-action="delete"]').inner_text())
             sync_flow: list[str] = []
 
             def fake_target_sync(route):
@@ -335,7 +467,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.wait_for_function("() => document.querySelector('#toast')?.textContent.includes('Đã đăng nhập')")
             self.assertEqual(open_flow, ["open", "check-login"])
             row = page.locator('#accountList [data-account-row]').first
-            self.assertEqual(row.locator('[data-account-action]').evaluate_all("els => els.map(el => el.dataset.accountAction)"), ["chrome", "delete"])
+            self.assertEqual(row.locator('[data-account-action]').evaluate_all("els => els.map(el => el.dataset.accountAction)"), ["connect-api", "chrome", "delete"])
             page.locator('#newAccount').click()
             page.locator('#accountName').fill('Auto open account')
             page.locator('#accountPlatform').select_option('tiktok')
@@ -353,7 +485,7 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             account = page.evaluate("""async () => {
                 const response = await fetch('/api/accounts', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tinix-Request': '1'},
                     body: JSON.stringify({name: 'YouTube routing', platform: 'youtube'}),
                 });
                 return response.json();
@@ -365,13 +497,221 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             routing = page.locator(f'[data-routing-account="{account["id"]}"]')
             routing.wait_for(state="visible")
             self.assertEqual(routing.input_value(), "chrome_preferred")
-            self.assertEqual(page.locator('[data-account-action="connect-api"]').count(), 1)
+            self.assertEqual(row.locator(".api-connection-status").inner_text(), "YouTube API · Chưa kết nối")
+            self.assertEqual(row.locator('[data-account-action="connect-api"]').inner_text(), "Kết nối API")
             with page.expect_response(
                 lambda response: response.url.endswith(f'/api/accounts/{account["id"]}/routing-preference')
                 and response.request.method == "PATCH"
             ) as saved:
                 routing.select_option("official_api_preferred")
             self.assertEqual(saved.value.status, 200)
+            browser.close()
+
+    def test_calendar_release_detail_day_view_and_reschedule_dialog(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900}, timezone_id="America/New_York")
+            now = "2030-01-02T10:00:00+00:00"
+            release = {
+                "id": "release-demo", "job_id": "job-demo", "content_id": "content-demo",
+                "account_id": "account-demo", "target_id": "target-demo", "platform": "facebook",
+                "content_format": "post", "status": "scheduled", "scheduled_at": now,
+                "target_name": "Demo Page", "account_name": "Demo Account",
+            }
+            release2 = {**release, "id": "release-demo-2", "job_id": "job-demo-2", "target_id": "target-demo-2", "target_name": "Second Page"}
+            detail = {
+                **release, "external_url": None, "verification_status": "pending", "verification_method": None,
+                "publication_transport": "chrome", "payload_snapshot": {"title": "Frozen title", "caption": "Frozen snapshot"},
+                "media_snapshot": [], "settings_snapshot": {}, "target": {"name": "Demo Page", "platform": "facebook"},
+                "account": {"name": "Demo Account", "platform": "facebook"}, "events": [], "attempts": [], "artifacts": [],
+            }
+            job = {
+                "id": "job-demo", "status": "scheduled", "dry_run": True, "commit_reached_at": None,
+                "publication_release_id": "release-demo", "attempt_history": [], "events": [], "artifacts": [],
+                "release": release, "result": {},
+            }
+            page.route("**/api/publication-releases?*", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([release, release2]),
+            ))
+            page.route("**/api/publication-releases/release-demo", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(detail),
+            ))
+            page.route("**/api/publication-releases/release-demo/schedule", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps({**release, "scheduled_at": "2030-01-03T11:30:00+00:00"}),
+            ))
+            page.route("**/api/publication-releases/reschedule-bulk", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([release, release2]),
+            ))
+            page.route("**/api/jobs/job-demo", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(job),
+            ))
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            page.locator('#nav button[data-tab="compose"]').click()
+            page.locator("#calendarAnchor").fill("2030-01-02")
+            page.locator("#calendarAnchor").dispatch_event("change")
+            page.locator('[data-release="release-demo"]').wait_for()
+            page.locator('[data-release="release-demo"]').click()
+            page.get_by_text("Frozen snapshot", exact=False).wait_for()
+            self.assertIn("Frozen snapshot", page.locator("#jobReleaseSnapshot").inner_text())
+            page.locator("#jobDialog [data-close]").click()
+            page.locator('[data-calendar-view="day"]').click()
+            page.locator("#calendarGrid.day-view").wait_for()
+            self.assertTrue(page.locator("#calendarGrid.day-view").is_visible())
+            page.locator("[data-select-release]").nth(0).check()
+            page.locator("[data-select-release]").nth(1).check()
+            page.locator("#calendarBulkReschedule").click()
+            self.assertTrue(page.locator("#calendarRescheduleDialog").is_visible())
+            page.locator("#calendarRescheduleAt").fill("2030-11-03T01:30")
+            page.locator("#calendarRescheduleForm [type=submit]").click()
+            self.assertIn("Giờ này bị lặp", page.locator("#calendarRescheduleError").inner_text())
+            page.locator("#calendarRescheduleAt").fill("2030-01-03T11:30")
+            with page.expect_request("**/publication-releases/reschedule-bulk") as reschedule_request:
+                page.locator("#calendarRescheduleForm [type=submit]").click()
+            self.assertEqual(reschedule_request.value.post_data_json["release_ids"], ["release-demo", "release-demo-2"])
+            self.assertTrue(reschedule_request.value.post_data_json["scheduled_at"].endswith("Z"))
+            self.assertTrue(reschedule_request.value.post_data_json["timezone"])
+            browser.close()
+
+    def test_youtube_expired_connection_can_reauthorize_without_disconnect(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            account_ref: dict[str, str] = {}
+            connection_state = {"status": "reauth_required"}
+            connection_requests: list[tuple[str, str]] = []
+            page.add_init_script(
+                "window.__tinixOpenedUrl = null; window.open = url => { window.__tinixOpenedUrl = url; return null; };"
+            )
+
+            def provider_connections(route) -> None:
+                rows = []
+                if account_ref.get("id"):
+                    rows.append({
+                        "id": "reauth-youtube", "account_id": account_ref["id"],
+                        "provider": "youtube", "transport": "official_api", "status": connection_state["status"],
+                    })
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(rows))
+
+            page.route("**/api/connections", provider_connections)
+            page.route("**/api/integrations/platform-apps", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([{
+                    "id": "youtube-app", "provider": "google_youtube", "enabled": True,
+                    "name": "YouTube Test",
+                }]),
+            ))
+
+            def authorize(route) -> None:
+                connection_requests.append((route.request.method, route.request.url))
+                connection_state["status"] = "connected"
+                route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "opened": True, "account_id": account_ref["id"], "provider": "youtube",
+                }))
+
+            page.route("**/api/accounts/*/connections/youtube/authorize/open", authorize)
+            page.on("request", lambda request: connection_requests.append((request.method, request.url))
+                    if "/api/accounts/" in request.url and "/connections/" in request.url else None)
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            account = page.evaluate("""async () => {
+                const response = await fetch('/api/accounts', {
+                    method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tinix-Request': '1'},
+                    body: JSON.stringify({name: 'YouTube reauth', platform: 'youtube'}),
+                });
+                return response.json();
+            }""")
+            account_ref["id"] = account["id"]
+            page.locator('#nav button[data-tab="accounts"]').click()
+            row = page.locator(f'[data-account-row="{account["id"]}"]')
+            row.wait_for(state="visible")
+            reconnect = row.locator('[data-account-action="connect-api"]')
+            self.assertEqual(reconnect.inner_text(), "Kết nối lại API")
+            self.assertEqual(row.locator(".api-connection-status").inner_text(), "YouTube API · Cần kết nối lại")
+            with page.expect_response(
+                lambda response: response.url.endswith(
+                    f'/api/accounts/{account["id"]}/connections/youtube/authorize/open'
+                ) and response.request.method == "POST"
+            ) as authorize_response:
+                reconnect.click()
+            self.assertEqual(authorize_response.value.status, 200)
+            self.assertIsNone(page.evaluate("window.__tinixOpenedUrl"))
+            page.evaluate("window.dispatchEvent(new Event('focus'))")
+            page.wait_for_function(
+                "accountId => document.querySelector(`[data-account-row=\"${accountId}\"] .api-connection-status`)?.textContent.includes('Đã kết nối')",
+                arg=account["id"],
+            )
+            self.assertEqual(row.locator(".api-connection-status").inner_text(), "YouTube API · Đã kết nối")
+            self.assertEqual(row.locator('[data-account-action="connect-api"]').count(), 0)
+            self.assertFalse(any(
+                method == "DELETE" and "/connections/reauth-youtube" in url
+                for method, url in connection_requests
+            ))
+            browser.close()
+
+    def test_instagram_login_connect_and_expiry_refresh_controls(self) -> None:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            page = browser.new_page(viewport={"width": 1365, "height": 900})
+            account_ref: dict[str, str] = {}
+            connections: list[dict] = []
+            refresh_requests: list[str] = []
+            page.route("**/api/connections", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(connections),
+            ))
+            page.route("**/api/integrations/platform-apps", lambda route: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps([{
+                    "id": "instagram-app", "provider": "instagram", "enabled": True,
+                    "name": "Instagram Login Test",
+                }]),
+            ))
+
+            def authorize(route) -> None:
+                connections[:] = [{
+                    "id": "instagram-connection", "account_id": account_ref["id"],
+                    "provider": "instagram", "transport": "official_api", "status": "connected",
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
+                    "refresh_metadata": {"username": "tinix.studio"},
+                }]
+                route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "opened": True, "account_id": account_ref["id"], "provider": "instagram",
+                }))
+
+            def refresh(route) -> None:
+                refresh_requests.append(route.request.url)
+                connections[0]["expires_at"] = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(connections[0]))
+
+            page.route("**/api/accounts/*/connections/instagram/authorize/open", authorize)
+            page.route("**/api/accounts/*/connections/*/instagram/refresh", refresh)
+            page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+            account = page.evaluate("""async () => {
+                const response = await fetch('/api/accounts', {
+                    method: 'POST', headers: {'Content-Type': 'application/json', 'X-Tinix-Request': '1'},
+                    body: JSON.stringify({name: 'Instagram Login test', platform: 'instagram'}),
+                });
+                return response.json();
+            }""")
+            account_ref["id"] = account["id"]
+            page.locator('#nav button[data-tab="accounts"]').click()
+            row = page.locator(f'[data-account-row="{account["id"]}"]')
+            row.wait_for(state="visible")
+            connect = row.locator('[data-account-action="connect-api"]')
+            self.assertEqual(connect.inner_text(), "Kết nối Instagram Login")
+            with page.expect_response(lambda response: "/connections/instagram/authorize/open" in response.url):
+                connect.click()
+            page.evaluate("window.dispatchEvent(new Event('focus'))")
+            page.wait_for_function(
+                "accountId => document.querySelector(`[data-account-row=\\\"${accountId}\\\"] .api-connection-status`)?.textContent.includes('@tinix.studio')",
+                arg=account["id"],
+            )
+            self.assertEqual(row.locator(".api-connection-status").inner_text(), "Instagram Login · Đã kết nối · @tinix.studio")
+            refresh_button = row.locator('[data-account-action="refresh-instagram-api"]')
+            self.assertEqual(refresh_button.inner_text(), "Gia hạn token")
+            with page.expect_response(lambda response: "/instagram/refresh" in response.url):
+                refresh_button.click()
+            page.wait_for_function(
+                "accountId => !document.querySelector(`[data-account-row=\\\"${accountId}\\\"] [data-account-action=\\\"refresh-instagram-api\\\"]`)",
+                arg=account["id"],
+            )
+            self.assertEqual(len(refresh_requests), 1)
             browser.close()
 
     def test_settings_show_readiness_and_recovery_bundle_controls(self) -> None:
@@ -453,7 +793,10 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
             page = browser.new_page(viewport={"width": 1365, "height": 900})
-            provider = {"id": "local-sdxl", "label": "SDXL Local"}
+            provider = {
+                "id": "local-sdxl", "label": "SDXL Local",
+                "capabilities": {"imageModels": ["SDXL Base", "SDXL Turbo"]},
+            }
             page.route("**/api/ai/image-options", lambda route: route.fulfill(
                 status=200, content_type="application/json", body=json.dumps({
                     "media_creator": {"available": True, "providers": [provider]},
@@ -463,11 +806,19 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.locator('#nav button[data-tab="ai"]').click()
             self.assertEqual(page.locator("#aiImageSource option").all_text_contents(), ["SDXL Local"])
             self.assertEqual(page.locator("#aiImageSource").input_value(), "local-sdxl")
-            provider.update(id="local-sd3", label="SD 3 Local")
+            self.assertEqual(page.locator("#aiImageModel option").all_text_contents(), ["SDXL Base", "SDXL Turbo"])
+            self.assertEqual(page.locator("#aiImageModel").input_value(), "SDXL Base")
+            page.locator("#aiImageModel").select_option("SDXL Turbo")
+            provider.update(
+                id="local-sd3", label="SD 3 Local",
+                capabilities={"imageModels": ["SD 3.5 Large"]},
+            )
             page.locator('#nav button[data-tab="settings"]').click()
             page.locator('#nav button[data-tab="ai"]').click()
             page.wait_for_function("() => document.querySelector('#aiImageSource option')?.textContent === 'SD 3 Local'")
             self.assertEqual(page.locator("#aiImageSource").input_value(), "local-sd3")
+            self.assertEqual(page.locator("#aiImageModel option").all_text_contents(), ["SD 3.5 Large"])
+            self.assertEqual(page.locator("#aiImageModel").input_value(), "SD 3.5 Large")
             browser.close()
 
     def test_settings_only_shows_default_text_provider(self) -> None:
@@ -534,6 +885,10 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 1365, "height": 900})
             errors: list[str] = []
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+            # Isolate from the developer's .env legacy AI key: the real provider rejects it and would add a console 422.
+            page.route("**/api/integrations/ai/legacy-models", lambda route: route.fulfill(
+                status=200, content_type="application/json", body="[]",
+            ))
             page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
             page.locator('#nav button[data-tab="settings"]').click()
             page.locator("#addAiProvider").click()
@@ -561,7 +916,10 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
             page.locator("#addPlatformApp").click()
             page.wait_for_timeout(100)
             self.assertTrue(page.locator("#integrationDialog").is_visible(), errors)
-            self.assertEqual(page.locator('#integrationDialog select[name="provider"] option').count(), 4)
+            self.assertCountEqual(
+                page.locator('#integrationDialog select[name="provider"] option').evaluate_all("items => items.map(item => item.value)"),
+                ["meta", "instagram", "tiktok", "google_youtube", "x"],
+            )
             self.assertEqual(errors, [])
             browser.close()
 

@@ -98,9 +98,17 @@ class AccountAndTargetRepositoryTests(unittest.TestCase):
         target = self.targets.sync(
             account["id"], "facebook", [{"external_id": "1", "name": "Page", "url": None}]
         )[0]
-        group = self.targets.create_group("Main")
+        defaults = {
+            "target_content_formats": {target["id"]: "post"},
+            "target_platform_settings": {target["id"]: {"allow_comments": True}},
+        }
+        group = self.targets.create_group("Main", defaults=defaults)
         updated = self.targets.set_group_members(group["id"], [target["id"], target["id"]])
         self.assertEqual(updated["target_ids"], [target["id"]])
+        self.assertEqual(updated["defaults"], defaults)
+        changed = self.targets.update_group(group["id"], "Main Updated", "Reusable defaults", defaults)
+        self.assertEqual(changed["name"], "Main Updated")
+        self.assertEqual(changed["description"], "Reusable defaults")
 
 
 if __name__ == "__main__":

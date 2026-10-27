@@ -62,16 +62,187 @@ function readinessSummary(account) {
   return items.map(item => `${item.content_format}/${item.transport || "chrome"}: ${READINESS_LABELS[item.state] || item.state}`).join(" · ");
 }
 
+function youtubeApiState(account) {
+  if (account.platform !== "youtube") return null;
+  const connection = providerConnections.find(item =>
+    item.account_id === account.id && item.transport === "official_api"
+  );
+  if (!connection || connection.status === "disconnected") {
+    return {state:"disconnected", label:"Chưa kết nối", action:"Kết nối API"};
+  }
+  if (connection.status === "connected") {
+    return {state:"connected", label:"Đã kết nối", action:""};
+  }
+  return {state:"reauth", label:"Cần kết nối lại", action:"Kết nối lại API"};
+}
+
+function metaApiState(account) {
+  if (account.platform !== "facebook") return null;
+  const connection = providerConnections.find(item =>
+    item.account_id === account.id && item.transport === "official_api" && item.provider === "meta"
+  );
+  if (!connection || connection.status === "disconnected") return {state:"disconnected", label:"Chưa kết nối", action:"Kết nối Meta API"};
+  if (connection.status === "connected") {
+    const method = connection.refresh_metadata?.auth_method === "system_user" ? "System User" : "OAuth";
+    const rawCount = connection.refresh_metadata?.connected_page_count;
+    const countLabel = rawCount === undefined ? "" : ` · ${Number(rawCount) || 0} Page`;
+    return {state:"connected", label:`Đã kết nối · ${method}${countLabel}`, action:""};
+  }
+  return {state:"reauth", label:"Cần kết nối lại", action:"Kết nối lại API"};
+}
+
+function instagramApiState(account) {
+  if (account.platform !== "instagram") return null;
+  const connection = providerConnections.find(item =>
+    item.account_id === account.id && item.transport === "official_api" && item.provider === "instagram"
+  );
+  if (!connection || connection.status === "disconnected") return {state:"disconnected", label:"Chưa kết nối", action:"Kết nối Instagram Login"};
+  if (connection.status === "connected") {
+    const username = connection.refresh_metadata?.username;
+    const expiresAt = Date.parse(connection.expires_at || "");
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      return {state:"reauth", label:"Token đã hết hạn", action:"Kết nối lại Instagram", connectionId:connection.id};
+    }
+    const refreshAvailable = Number.isFinite(expiresAt) && expiresAt - Date.now() <= 7 * 24 * 60 * 60 * 1000;
+    return {state:"connected", label:`Đã kết nối${username ? ` · @${username}` : ""}`, action:"",
+      connectionId:connection.id, refreshAvailable};
+  }
+  return {state:"reauth", label:"Cần kết nối lại", action:"Kết nối lại Instagram"};
+}
+
 function routingControl(account) {
   const preference = account.routing_preference || "chrome_preferred";
-  const connection = providerConnections.find(item => item.account_id === account.id && item.transport === "official_api");
+  const apiState = youtubeApiState(account) || metaApiState(account) || instagramApiState(account);
   const options = Object.entries(ROUTING_LABELS).map(([value,label]) =>
     `<option value="${value}"${value === preference ? " selected" : ""}>${label}</option>`
   ).join("");
-  const apiButton = account.platform === "youtube"
-    ? `<button data-account-action="${connection ? "disconnect-api" : "connect-api"}" data-id="${account.id}" data-connection-id="${connection?.id || ""}">${connection ? "Ngắt API" : "Kết nối API"}</button>`
-    : "";
-  return `<div class="account-routing"><select data-routing-account="${account.id}" aria-label="Cách đăng của ${esc(account.name)}">${options}</select>${apiButton}</div>`;
+  const provider = account.platform === "facebook" ? "meta" : account.platform === "instagram" ? "instagram" : "google_youtube";
+  const connection = providerConnections.find(item => item.account_id === account.id && item.transport === "official_api" && item.provider === provider);
+  const connected = apiState?.state === "connected";
+  const apiButton = account.platform === "facebook"
+    ? connected
+      ? `<button data-account-action="manage-meta-api" data-id="${account.id}">Cập nhật Meta API</button><button data-account-action="disconnect-api" data-id="${account.id}" data-connection-id="${connection?.id || ""}">Ngắt API</button>`
+      : `<button data-account-action="connect-api" data-id="${account.id}">${apiState?.action || "Kết nối Meta API"}</button>`
+    : account.platform === "youtube"
+      ? `<button data-account-action="${connected ? "disconnect-api" : "connect-api"}" data-id="${account.id}" data-connection-id="${connection?.id || ""}">${connected ? "Ngắt API" : apiState?.action || "Kết nối API"}</button>`
+      : account.platform === "instagram"
+      ? `<button data-account-action="${connected ? "disconnect-api" : "connect-api"}" data-id="${account.id}" data-connection-id="${connection?.id || ""}">${connected ? "Ngắt Instagram Login" : apiState?.action || "Kết nối Instagram Login"}</button>`
+      : "";
+  const refreshButton = account.platform === "instagram" && connected && apiState?.refreshAvailable
+    ? `<button data-account-action="refresh-instagram-api" data-id="${account.id}" data-connection-id="${apiState.connectionId}">Gia hạn Instagram token</button>` : "";
+  const syncButton = account.platform === "facebook" && connected
+    ? `<button data-account-action="sync-meta-api" data-id="${account.id}">Đồng bộ Page API</button>` : "";
+  return `<div class="account-routing"><select data-routing-account="${account.id}" aria-label="Cách đăng của ${esc(account.name)}">${options}</select>${apiButton}${refreshButton}${syncButton}</div>`;
+}
+
+function refreshConnectionsWhenAppReturns() {
+  let timeoutId;
+  const cleanup = () => {
+    window.removeEventListener("focus", onReturn);
+    document.removeEventListener("visibilitychange", onReturn);
+    clearTimeout(timeoutId);
+  };
+  const onReturn = () => {
+    if (document.visibilityState === "hidden") return;
+    cleanup();
+    window.setTimeout(() => refreshAccounts(), 300);
+  };
+  window.addEventListener("focus", onReturn);
+  document.addEventListener("visibilitychange", onReturn);
+  timeoutId = window.setTimeout(cleanup, 120000);
+}
+
+async function openMetaConnectionDialog(account) {
+  const apps = (await api("/integrations/platform-apps"))
+    .filter(item => item.provider === "meta" && item.enabled);
+  if (!apps.length) {
+    toast("Hãy thêm và bật Meta App ID cùng Graph API version trong Cài đặt → Tích hợp. Secret và Redirect URI chỉ cần nếu chọn OAuth.");
+    return;
+  }
+  let bindings = [];
+  try { bindings = await api(`/accounts/${account.id}/connections/meta/targets`); } catch (_) {}
+  const dialog = document.querySelector("#metaSystemUserDialog");
+  const form = document.querySelector("#metaSystemUserForm");
+  const appSelect = document.querySelector("#metaSystemUserApp");
+  appSelect.innerHTML = apps.map(item => `<option value="${esc(item.id)}">${esc(item.name)} · ${esc(item.api_version || "chưa có Graph API version")}</option>`).join("");
+  form.dataset.connectedPageIds = JSON.stringify(bindings.filter(item => item.status === "connected")
+    .map(item => String(item.external_target_id || "")).filter(value => /^\d+$/.test(value)));
+  document.querySelector("#metaSystemUserDiscoveryStatus").textContent = "";
+  document.querySelector("#metaSystemUserManualPageIds").value = "";
+  const choices = bindings.map(item => ({
+    id:String(item.external_target_id || ""), name:item.target_name || item.external_target_id,
+    tasks:item.tasks || [], status:item.status, binding_id:item.id,
+    can_publish:Boolean(item.can_publish), permissions_verified:Boolean(item.permissions_verified),
+    source:"binding",
+  })).filter(item => item.id);
+  form.dataset.pageChoices = JSON.stringify(choices);
+  renderMetaPageChoices(choices);
+  document.querySelector("#metaSystemUserAccountName").textContent = account.name;
+  document.querySelector("#metaSystemUserStatus").textContent = "";
+  document.querySelector("#metaSystemUserToken").value = "";
+  dialog.dataset.accountId = account.id;
+  dialog.showModal();
+  form.dataset.accountId = account.id;
+}
+
+function renderMetaPageChoices(pages) {
+  const holder = document.querySelector("#metaSystemUserPageList");
+  const form = document.querySelector("#metaSystemUserForm");
+  const connectedIds = new Set(JSON.parse(form.dataset.connectedPageIds || "[]"));
+  const unique = new Map();
+  for (const page of pages || []) {
+    const id = String(page.id || "");
+    if (!/^\d+$/.test(id)) continue;
+    const prior = unique.get(id);
+    const hasFreshTasks = Array.isArray(page.tasks);
+    const tasks = hasFreshTasks ? page.tasks : prior?.tasks || [];
+    const canPublish = page.can_publish ?? (hasFreshTasks ? tasks.some(task =>
+      ["CREATE_CONTENT", "PROFILE_PLUS_CREATE_CONTENT", "FULL_CONTROL", "PROFILE_PLUS_FULL_CONTROL"].includes(task)
+    ) : Boolean(prior?.can_publish));
+    unique.set(id, {...prior, ...page, tasks, can_publish:Boolean(canPublish), id, bound:Boolean(prior?.bound || page.source === "binding"),
+      status:prior?.status === "connected" ? "connected" : page.status || prior?.status || "candidate"});
+  }
+  form.dataset.pageChoices = JSON.stringify([...unique.values()]);
+  if (!unique.size) {
+    holder.innerHTML = `<p class="muted">Chưa có Page để hiển thị. Hãy tìm Page bằng token hoặc nhập ID thủ công.</p>`;
+    return;
+  }
+  holder.innerHTML = [...unique.values()].map(page => {
+    const active = page.bound && page.status === "connected";
+    const disconnected = page.bound && page.status === "disconnected";
+    const taskLabel = page.permissions_verified === false
+      ? "quyền Page chưa xác minh"
+      : page.can_publish ? "có quyền đăng" : "chỉ đọc/thiếu quyền đăng";
+    return `<div class="meta-page-choice ${disconnected ? "is-disconnected" : ""}">
+      <label><input type="checkbox" data-meta-page-choice value="${esc(page.id)}" ${active || connectedIds.has(page.id) ? "checked" : ""} ${disconnected ? "disabled" : ""}>
+        <span><strong>${esc(page.name || page.id)}</strong><small>Page ID ${esc(page.id)} · ${disconnected ? "đã ngắt" : taskLabel}</small></span>
+      </label>
+      ${active ? `<button type="button" data-meta-disconnect="${esc(page.binding_id || "")}" data-page-name="${esc(page.name || page.id)}">Ngắt Page</button>` : ""}
+    </div>`;
+  }).join("");
+  holder.querySelectorAll("[data-meta-disconnect]").forEach(button => {
+    button.onclick = async () => {
+      const bindingId = button.dataset.metaDisconnect;
+      if (!bindingId || !confirm(`Ngắt API cho Page ${button.dataset.pageName}? Target và dữ liệu lịch sử vẫn được giữ.`)) return;
+      button.disabled = true;
+      try {
+        await api(`/accounts/${form.dataset.accountId}/connections/meta/targets/${bindingId}`, {method:"DELETE"});
+        document.querySelector("#metaSystemUserDialog").close();
+        await refreshAccounts();
+        await openMetaConnectionDialog(store.accounts.find(item => item.id === form.dataset.accountId));
+        toast("Đã ngắt Page API.");
+      } catch (error) { toast(error.message); }
+      finally { button.disabled = false; }
+    };
+  });
+}
+
+async function openMetaOAuth(accountId, platformAppId) {
+  await api(`/accounts/${accountId}/connections/meta/authorize/open`, {
+    method:"POST", body:JSON.stringify({platform_app_id:platformAppId}),
+  });
+  refreshConnectionsWhenAppReturns();
+  toast("Đã mở Meta OAuth trong Chrome profile của account. Hoàn tất consent rồi quay lại Tinix.");
 }
 
 function setAccountLoginStatus(accountId, loginStatus) {
@@ -360,6 +531,53 @@ function bindDetailEvents(account) {
     };
   });
 
+  const systemUserTokenInput = document.querySelector("#detailSystemUserToken");
+  const systemUserTokenStatus = document.querySelector("#detailSystemUserTokenStatus");
+  const revealSystemUserToken = async () => {
+    const response = await api(`/accounts/${accountId}/connections/meta/system-user/token`);
+    return response.access_token || "";
+  };
+  const revealSystemUserTokenButton = document.querySelector("#detailSystemUserTokenToggle");
+  if (systemUserTokenInput && revealSystemUserTokenButton) {
+    revealSystemUserTokenButton.onclick = async () => {
+      if (systemUserTokenInput.type === "text") {
+        systemUserTokenInput.type = "password";
+        systemUserTokenInput.value = "";
+        revealSystemUserTokenButton.textContent = "Show";
+        if (systemUserTokenStatus) systemUserTokenStatus.textContent = "";
+        return;
+      }
+      revealSystemUserTokenButton.disabled = true;
+      if (systemUserTokenStatus) systemUserTokenStatus.textContent = "Đang tải token…";
+      try {
+        systemUserTokenInput.value = await revealSystemUserToken();
+        systemUserTokenInput.type = "text";
+        revealSystemUserTokenButton.textContent = "Hide";
+        if (systemUserTokenStatus) systemUserTokenStatus.textContent = "";
+      } catch (error) {
+        if (systemUserTokenStatus) systemUserTokenStatus.textContent = error.message;
+        toast(error.message);
+      } finally {
+        revealSystemUserTokenButton.disabled = false;
+      }
+    };
+    document.querySelector("#detailSystemUserTokenCopy").onclick = async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      if (systemUserTokenStatus) systemUserTokenStatus.textContent = "Đang tải token…";
+      try {
+        const token = await revealSystemUserToken();
+        await navigator.clipboard.writeText(token);
+        if (systemUserTokenStatus) systemUserTokenStatus.textContent = "Đã sao chép token.";
+      } catch (error) {
+        if (systemUserTokenStatus) systemUserTokenStatus.textContent = error.message;
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    };
+  }
+
   const enabledToggle = document.querySelector("#detailEnabled");
   if (enabledToggle) {
     enabledToggle.onchange = async () => {
@@ -451,14 +669,24 @@ async function renderAccountDetail(account) {
   const currentAccountId = account.id;
   let credentials = {password: "", secret_2fa: "", recovery_codes: "", email_pass: "", cookie: ""};
   let credentialsLoaded = false;
+  let metaBindings = [];
   try {
     credentials = await api(`/accounts/${account.id}/credentials`);
     credentialsLoaded = true;
   } catch (_) {}
+  if (account.platform === "facebook" && metaApiState(account)?.state === "connected") {
+    try { metaBindings = await api(`/accounts/${account.id}/connections/meta/targets`); } catch (_) {}
+  }
 
   if (accountFilters.selectedAccountId !== currentAccountId) return;
 
   const workerSubtitle = `tinix-03 · http://127.0.0.1:${account.chrome_port || 9324}`;
+  const metaConnection = providerConnections.find(item =>
+    item.account_id === account.id && item.transport === "official_api" && item.provider === "meta"
+  );
+  const hasSystemUserToken = account.platform === "facebook"
+    && metaConnection?.status === "connected"
+    && metaConnection.refresh_metadata?.auth_method === "system_user";
   const lastCheck = account.last_login_check_at ? "đã kiểm tra" : "chưa có maintenance activity";
   const statusBanner = `${account.chrome_state || "stopped"} · health:${account.login_status || "unknown"} · ${lastCheck}`;
 
@@ -481,6 +709,7 @@ async function renderAccountDetail(account) {
     </div>
     <p class="muted" title="Kết quả được đối chiếu theo account, kênh, định dạng và phiên bản adapter hiện tại.">${esc(readinessSummary(account))}</p>
     ${routingControl(account)}
+    ${account.platform === "facebook" ? `<p class="muted">Page API đang kết nối: ${metaBindings.filter(item => item.status === "connected").length}${metaBindings.length ? ` · ${metaBindings.map(item => `${esc(item.target_name || item.external_target_id)} · ${item.status === "connected" ? (item.permissions_verified ? (item.can_publish ? "có quyền đăng" : "chỉ đọc") : "chưa xác minh quyền") : "đã ngắt"}`).join("; ")}` : " · chưa có Page binding"}</p>` : ""}
 
     <form id="detailAccountForm" data-credentials-loaded="${credentialsLoaded}" onsubmit="return false;">
       <div class="detail-form-grid">
@@ -515,6 +744,15 @@ async function renderAccountDetail(account) {
           <label class="detail-field-label" for="detailWorker">Chrome worker</label>
           <input id="detailWorker" readonly value="tinix-03 · CDP ${account.chrome_port || 9324}">
         </div>
+
+        ${account.platform === "facebook" ? `<div class="detail-field span-3">
+          <label class="detail-field-label" for="detailSystemUserToken">System User access token</label>
+          <div class="input-with-button">
+            <input id="detailSystemUserToken" type="password" readonly ${hasSystemUserToken ? "placeholder=\"Bấm Show để tải token đã lưu\"" : "placeholder=\"Chỉ khả dụng khi account kết nối bằng System User\" disabled"} autocomplete="off" spellcheck="false">
+            ${hasSystemUserToken ? `<button type="button" class="btn-inline-toggle" id="detailSystemUserTokenToggle">Show</button>` : ""}
+          </div>
+          ${hasSystemUserToken ? `<div class="detail-token-actions"><button type="button" id="detailSystemUserTokenCopy">Copy token</button><span id="detailSystemUserTokenStatus" class="muted" role="status" aria-live="polite"></span></div>` : `<small class="muted">Account chưa kết nối Meta bằng System User.</small>`}
+        </div>` : ""}
 
         <div class="detail-field span-3">
           <label class="detail-field-label" for="detailRecoveryCodes">Recovery codes (mỗi mã một dòng)</label>
@@ -556,7 +794,9 @@ function renderAccountList() {
         </tr>
       </thead>
       <tbody>
-        ${accounts.map((account, index) => `
+        ${accounts.map((account, index) => {
+          const apiState = youtubeApiState(account) || metaApiState(account) || instagramApiState(account);
+          return `
           <tr data-account-row="${account.id}" class="${account.id === accountFilters.selectedAccountId ? "selected" : ""}" tabindex="0" aria-selected="${account.id === accountFilters.selectedAccountId}">
             <td class="account-index-cell" data-label="STT">
               <div class="account-meta-col">
@@ -580,8 +820,11 @@ function renderAccountList() {
               ${badge(account.login_status)}
               ${account.profile_operation_locked ? '<small class="profile-maintenance">Đang bảo trì</small>' : ""}
               <small class="muted">${esc(readinessSummary(account))}</small>
+              ${apiState ? `<small class="api-connection-status api-connection-${apiState.state}">${account.platform === "facebook" ? "Meta Page API" : account.platform === "instagram" ? "Instagram Login" : "YouTube API"} · ${apiState.label}</small>` : ""}
             </td>
             <td data-label="Thao tác" class="account-cell-actions">
+              ${apiState && apiState.state !== "connected" ? `<button data-account-action="connect-api" class="btn-card-api-reconnect" data-id="${account.id}">${apiState.action}</button>` : ""}
+              ${apiState?.refreshAvailable ? `<button data-account-action="refresh-instagram-api" class="btn-card-api-reconnect" data-id="${account.id}" data-connection-id="${apiState.connectionId}">Gia hạn token</button>` : ""}
               <button data-account-action="chrome" class="btn-card-chrome" data-id="${account.id}" title="Mở Chrome">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                 Mở
@@ -592,7 +835,8 @@ function renderAccountList() {
               </button>
             </td>
           </tr>
-        `).join("")}
+          `;
+        }).join("")}
       </tbody>
     </table>
   ` : `<p class="muted account-empty">${store.accounts.length ? "Không có account phù hợp bộ lọc." : "Chưa có account. Bạn có thể Import một gói profile hoặc tạo account thủ công."}</p>`;
@@ -783,23 +1027,46 @@ function bindActions() {
       }
       if (action === "close") { stopLoginPolling(account.id); const result = await api(`/accounts/${account.id}/chrome/close`, {method:"POST"}); toast(result.closed ? `Đã đóng Chrome của ${account.name}` : `Chrome của ${account.name} chưa chạy`); }
       if (action === "connect-api") {
-        const apps = (await api("/integrations/platform-apps")).filter(item => item.provider === "google_youtube" && item.enabled);
+        if (account.platform === "facebook") {
+          await openMetaConnectionDialog(account);
+          return;
+        }
+        const appProvider = account.platform === "instagram" ? "instagram" : "google_youtube";
+        const authorizationProvider = account.platform === "instagram" ? "instagram" : "youtube";
+        const apps = (await api("/integrations/platform-apps")).filter(item => item.provider === appProvider && item.enabled);
         let platformAppId = null;
         if (apps.length > 1) {
-          const answer = prompt(`Chọn Platform App YouTube:\n${apps.map((item, index) => `${index + 1}. ${item.name}`).join("\n")}`, "1");
+          const appLabel = appProvider === "instagram" ? "Instagram" : "YouTube";
+          const answer = prompt(`Chọn Platform App ${appLabel}:\n${apps.map((item, index) => `${index + 1}. ${item.name}`).join("\n")}`, "1");
           const selected = apps[Number(answer) - 1];
           if (!selected) return toast("Chưa chọn Platform App hợp lệ.");
           platformAppId = selected.id;
         } else if (apps.length === 1) platformAppId = apps[0].id;
-        const result = await api(`/accounts/${account.id}/connections/youtube/authorize`, {method:"POST",body:JSON.stringify({platform_app_id:platformAppId})});
-        window.open(result.authorization_url, "_blank", "noopener,noreferrer");
-        toast("Hãy cấp quyền YouTube trong tab mới, sau đó quay lại và tải lại danh sách account.");
+        await api(`/accounts/${account.id}/connections/${authorizationProvider}/authorize/open`, {method:"POST",body:JSON.stringify({platform_app_id:platformAppId})});
+        refreshConnectionsWhenAppReturns();
+        const providerLabel = appProvider === "instagram" ? "Instagram Login" : "YouTube";
+        toast(`Đã mở OAuth ${providerLabel} trong Chrome profile của account. Hãy cấp quyền rồi quay lại Tinix.`);
         return;
       }
+      if (action === "manage-meta-api") {
+        await openMetaConnectionDialog(account);
+        return;
+      }
+      if (action === "refresh-instagram-api") {
+        await api(`/accounts/${account.id}/connections/${button.dataset.connectionId}/instagram/refresh`, {method:"POST"});
+        toast("Đã gia hạn Instagram token và xác minh lại profile.");
+      }
       if (action === "disconnect-api") {
-        if (!confirm(`Ngắt kết nối YouTube API của ${account.name}?`)) return;
+        const providerLabel = account.platform === "facebook" ? "Meta Page" : account.platform === "instagram" ? "Instagram Login" : "YouTube";
+        if (!confirm(`Ngắt kết nối ${providerLabel} API của ${account.name}?`)) return;
         await api(`/accounts/${account.id}/connections/${button.dataset.connectionId}`, {method:"DELETE"});
-        toast("Đã ngắt kết nối YouTube API.");
+        toast("Đã ngắt kết nối API.");
+      }
+      if (action === "sync-meta-api") {
+        button.disabled = true;
+        button.textContent = "Đang đồng bộ…";
+        const targets = await api(`/accounts/${account.id}/connections/meta/sync-targets`, {method:"POST"});
+        toast(`Meta API đã đồng bộ ${targets.length} Page.`);
       }
       if (action === "edit") { await openAccountDialog(account); return; }
       if (action === "delete") { openDeleteAccountDialog(account); return; }
@@ -818,6 +1085,110 @@ function bindActions() {
 
 export function initAccounts() {
   const dialog = document.querySelector("#accountDialog");
+  const metaSystemUserDialog = document.querySelector("#metaSystemUserDialog");
+  document.querySelector("#metaSystemUserDiscover").onclick = async event => {
+    const button = event.currentTarget;
+    const token = document.querySelector("#metaSystemUserToken").value.trim();
+    const status = document.querySelector("#metaSystemUserDiscoveryStatus");
+    if (!token) {
+      status.className = "operation-status error";
+      status.textContent = "Nhập System User token để tìm danh sách Page.";
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Đang tìm…";
+    status.className = "operation-status";
+    status.textContent = "Đang hỏi Meta về các Page token này có thể truy cập…";
+    try {
+      const result = await api(`/accounts/${document.querySelector("#metaSystemUserForm").dataset.accountId}/connections/meta/system-user/discover`, {
+        method:"POST", body:JSON.stringify({
+          platform_app_id:document.querySelector("#metaSystemUserApp").value,
+          access_token:token,
+        }),
+      });
+      const bindings = JSON.parse(document.querySelector("#metaSystemUserForm").dataset.pageChoices || "[]");
+      renderMetaPageChoices([...bindings, ...(result.pages || []).map(page => ({...page, status:"candidate", source:"discovery"}))]);
+      status.className = result.status === "available" ? "operation-status success" : "operation-status";
+      status.textContent = result.message || "Hoàn tất tìm Page.";
+    } catch (error) {
+      status.className = "operation-status error";
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+      button.textContent = "Tìm Page bằng token";
+    }
+  };
+  document.querySelector("#metaSystemUserForm").onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const accountId = form.dataset.accountId;
+    const status = document.querySelector("#metaSystemUserStatus");
+    const submit = document.querySelector("#saveMetaSystemUser");
+    const accessToken = document.querySelector("#metaSystemUserToken").value.trim();
+    const existingPageIds = JSON.parse(form.dataset.connectedPageIds || "[]");
+    const pageIds = [...new Set([
+      ...[...document.querySelectorAll("#metaSystemUserPageList [data-meta-page-choice]:checked")].map(input => input.value),
+      ...document.querySelector("#metaSystemUserManualPageIds").value.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
+    ])];
+    if (!pageIds.length) {
+      status.className = "operation-status error";
+      status.textContent = "Chọn ít nhất một Page hoặc nhập Page ID dạng số.";
+      return;
+    }
+    const disconnectPageIds = accessToken
+      ? existingPageIds.filter(pageId => !pageIds.includes(pageId)) : [];
+    if (disconnectPageIds.length && !confirm(
+      `Token mới sẽ thay token hiện tại. Các Page sau sẽ bị ngắt: ${disconnectPageIds.join(", ")}. Target và lịch sử vẫn được giữ. Tiếp tục?`,
+    )) return;
+    status.className = "operation-status";
+    status.textContent = "Đang xác minh token, các Page đã chọn và quyền được cấp…";
+    submit.disabled = true;
+    try {
+      const result = await api(`/accounts/${accountId}/connections/meta/system-user`, {
+        method:"POST",
+        body:JSON.stringify({
+          platform_app_id:document.querySelector("#metaSystemUserApp").value,
+          access_token:accessToken,
+          page_ids:pageIds,
+          disconnect_page_ids:disconnectPageIds,
+        }),
+      });
+      document.querySelector("#metaSystemUserToken").value = "";
+      document.querySelector("#metaSystemUserManualPageIds").value = "";
+      status.className = "operation-status success";
+      const publishable = result.pages.filter(page => page.can_publish).length;
+      status.textContent = `Đã kết nối ${result.pages.length} Page; ${publishable} Page có quyền đăng đã xác minh, ${result.pages.length - publishable} Page chỉ đọc hoặc chưa xác minh quyền.`;
+      await refreshAccounts();
+      setTimeout(() => metaSystemUserDialog.close(), 900);
+      toast(`Đã kết nối ${result.connected_page_count} Facebook Page qua System User.`);
+    } catch (error) {
+      status.className = "operation-status error";
+      status.textContent = error.message;
+      document.querySelector("#metaSystemUserToken").value = "";
+    } finally {
+      submit.disabled = false;
+    }
+  };
+  metaSystemUserDialog.addEventListener("close", () => {
+    document.querySelector("#metaSystemUserToken").value = "";
+    document.querySelector("#metaSystemUserManualPageIds").value = "";
+  });
+  document.querySelector("#metaSystemUserOAuth").onclick = async event => {
+    const button = event.currentTarget;
+    const accountId = document.querySelector("#metaSystemUserForm").dataset.accountId;
+    const appId = document.querySelector("#metaSystemUserApp").value;
+    button.disabled = true;
+    try {
+      await openMetaOAuth(accountId, appId);
+      metaSystemUserDialog.close();
+    } catch (error) {
+      const status = document.querySelector("#metaSystemUserStatus");
+      status.className = "operation-status error";
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
   document.querySelector("#newAccount").onclick = () => openAccountDialog();
   document.querySelector("#accountForm").onsubmit = async event => {
     event.preventDefault();

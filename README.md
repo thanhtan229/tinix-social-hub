@@ -6,7 +6,7 @@ Tinix Social Hub là ứng dụng Windows **PC-first** để xây dựng, duyệ
 
 > App cho phép Export/Import toàn bộ account và Chrome profile bằng một file ZIP dùng chung giữa các ứng dụng Tinix. Facebook, Instagram image/carousel, TikTok short video, YouTube video/Short và X post đã có Chrome adapter; selector vẫn phải qua dry-run trên từng account thực trước lần đăng thật đầu tiên.
 
-Official API hiện đã có vertical slice hoàn chỉnh cho YouTube video/Short: OAuth, làm mới token, resumable upload và xác minh video. Meta, TikTok và X mới có contract/catalog để bổ sung adapter ở các giai đoạn tiếp theo.
+Official API có publisher YouTube video/Short cùng analytics theo video/kênh. Facebook Page API có bài chữ, một ảnh, album 2–3 ảnh, video Page thường và Reel; các định dạng này đã đăng thật và xác minh trên Page Tinix, album 4–10 ảnh chưa live-acceptance. Instagram publishing đã có code và fixture test nhưng chưa live (chờ R2 và OAuth). TikTok và X vẫn scaffold. Mọi API publish cần connection, Page/channel binding và quyền phù hợp; fixture pass không thay cho nghiệm thu account thật.
 
 ## Cài đặt và Khởi động
 
@@ -63,7 +63,9 @@ TINIX_YOUTUBE_CLIENT_SECRET=...
 TINIX_YOUTUBE_REDIRECT_URI=http://127.0.0.1:8765/api/oauth/youtube/callback
 ```
 
-Khởi động lại app, vào **Tài khoản & Page**, bấm **Kết nối API** trên account YouTube và cấp quyền. Chọn **Ưu tiên API** để dùng API khi kết nối còn hiệu lực và tự dùng Chrome trước commit nếu API không đủ điều kiện; chọn **Chỉ API** để tuyệt đối không chuyển sang Chrome. Token OAuth được lưu bằng DPAPI trên Windows và không được trả về frontend.
+Khởi động lại app, vào **Tài khoản & Page**, bấm **Kết nối API** trên account YouTube và cấp quyền upload/read. Chọn **Ưu tiên API** để dùng API khi kết nối còn hiệu lực và đúng channel target; chọn **Chỉ API** để tuyệt đối không chuyển sang Chrome. Mỗi release đóng băng connection và fingerprint quyền, vì vậy đổi connection/quyền cần dry-run mới. Token OAuth được lưu bằng DPAPI trên Windows và không được trả về frontend.
+
+Trong tab **Analytics**, dùng nút cập nhật để đọc snapshot và báo cáo theo ngày cho bài/kênh YouTube đã liên kết đúng. Analytics theo ngày có thể trễ, nên API lùi ngày kết thúc để tránh hiện ngày chưa hoàn tất như số 0. Cập nhật tự động mặc định tắt; nếu bật, cấu hình số bài/kênh tối đa mỗi lượt và chu kỳ từ 6 đến 48 giờ. Cần bật YouTube Analytics API trong Google Cloud cho Platform App đang dùng. Khi chưa cấp quyền hoặc API bị giới hạn, giao diện sẽ hiện trạng thái cần xử lý thay vì số 0.
 
 ## Quy trình Chrome publishing
 
@@ -187,6 +189,7 @@ Mỗi push và pull request trên GitHub chạy cùng bộ kiểm tra trên Wind
 ## Phạm vi release candidate
 
 - Facebook Page: post ảnh/nhiều ảnh/video qua composer Web.
+- Facebook Page API: bài chữ, một ảnh, video MP4 và Reel; ảnh/video được fixture-test, cần dry-run và quyền Page phù hợp trước khi live.
 - Instagram Web: image và carousel; Reel/Story vẫn khóa.
 - TikTok Studio Web: một short video; photo post vẫn khóa.
 - YouTube Studio Web: video và Short; community post vẫn khóa.

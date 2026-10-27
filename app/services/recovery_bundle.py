@@ -235,6 +235,8 @@ class RecoveryBundleService:
         applied: list[tuple[Path, Path | None]] = []
         nearby_paths: list[Path] = []
         try:
+            # Prepare before replacing live data; even a crash after replacement cannot replay jobs.
+            Database.prepare_restored_snapshot(extracted / "data" / "tinix_social.db", workspace / "migration-backups")
             components = ((manifest.get("components") or {}).get("environment") or {})
             targets = (
                 ("data", self.settings.data_dir),

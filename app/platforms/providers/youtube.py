@@ -41,7 +41,15 @@ class YouTubeOfficialPublisher(Publisher):
         self.provider_accounts = provider_accounts
         self.media = media
 
-    def _connection(self, account_id: str) -> dict[str, Any] | None:
+    def _connection(self, account_id: str, connection_id: str | None = None) -> dict[str, Any] | None:
+        if connection_id:
+            connection = self.connections.get(connection_id)
+            if (
+                connection and connection.get("account_id") == account_id
+                and connection.get("provider") == "youtube" and connection.get("status") == "connected"
+            ):
+                return connection
+            return None
         return next((item for item in self.connections.list(account_id=account_id, transport="official_api")
                      if item.get("provider") == "youtube" and item.get("status") == "connected"), None)
 
@@ -88,11 +96,30 @@ class YouTubeOfficialPublisher(Publisher):
         relative, errors = self._validate(context.payload)
         if errors:
             return PublishResult(PublishOutcome.UNSUPPORTED, " ".join(errors))
-        connection = await asyncio.to_thread(self._connection, str(context.account["id"]))
+        connection = await asyncio.to_thread(
+            self._connection, str(context.account["id"]), context.connection_id,
+        )
         if not connection:
             return PublishResult(PublishOutcome.LOGIN_REQUIRED, "Account chưa kết nối YouTube API.")
+        scopes = set(connection.get("scopes") or [])
+        required_scopes = {
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.readonly",
+        }
+        if not required_scopes.issubset(scopes):
+            return PublishResult(
+                PublishOutcome.LOGIN_REQUIRED,
+                "Kết nối YouTube API thiếu quyền upload hoặc đọc để xác minh bài đăng; hãy cấp quyền lại.",
+            )
+        target_external_id = str(context.payload.get("target_external_id") or "").strip()
+        if target_external_id and connection.get("external_account_id") != target_external_id:
+            return PublishResult(
+                PublishOutcome.UNSUPPORTED,
+                "Kết nối YouTube API không khớp channel đích đã chọn.",
+            )
         try:
-            path = await asyncio.to_thread(self.media.resolve_existing, str(relative))
+            from app.services.media import resolve_publish_media
+            path = await asyncio.to_thread(resolve_publish_media, self.media, context.payload["media"][0])
         except MediaValidationError as exc:
             return PublishResult(PublishOutcome.UNSUPPORTED, str(exc))
 
@@ -210,6 +237,7 @@ class YouTubeOfficialPublisher(Publisher):
             post_url=f"https://www.youtube.com/watch?v={video_id}",
             metadata={
                 "external_id": video_id,
+                "external_account_id": connection.get("external_account_id"),
                 "provider_request_id": request_id,
                 "provider_version": self.provider_version,
             },

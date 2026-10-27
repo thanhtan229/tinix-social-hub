@@ -19,6 +19,27 @@ class MediaValidationError(ValueError):
     pass
 
 
+def resolve_publish_media(media: MediaService, snapshot: dict[str, Any]) -> Path:
+    """Verify approved bytes before any browser upload or provider request."""
+    try:
+        path = media.resolve_existing(str(snapshot.get("relative_path") or ""))
+        size = int(snapshot.get("size_bytes") or 0)
+        expected = str(snapshot.get("sha256") or "").lower()
+        if size <= 0 or len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+            raise MediaValidationError("Media thiếu size/hash của snapshot đã duyệt; hãy tạo lại lịch đăng.")
+        digest = hashlib.sha256()
+        actual_size = 0
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                actual_size += len(chunk)
+                digest.update(chunk)
+        if actual_size != size or digest.hexdigest() != expected:
+            raise MediaValidationError("Media đã thay đổi sau khi duyệt snapshot; dừng đăng và kiểm tra lại file.")
+        return path
+    except (OSError, ValueError) as exc:
+        raise MediaValidationError(str(exc)) from exc
+
+
 class MediaService:
     IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".jfif"}
     VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v"}

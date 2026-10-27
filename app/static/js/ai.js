@@ -1182,6 +1182,7 @@ export function initAI() {
   const aiImageGallery = document.querySelector("#aiImageGallery");
   const aiImageStatus = document.querySelector("#aiImageJobStatus");
   const aiImageSource = document.querySelector("#aiImageSource");
+  const aiImageModel = document.querySelector("#aiImageModel");
   const aiImageAspectRatio = document.querySelector("#aiImageAspectRatio");
   const aiImageCount = document.querySelector("#aiImageCount");
   const aiImageLightboxDialog = document.querySelector("#aiImageLightboxDialog");
@@ -1191,6 +1192,7 @@ export function initAI() {
   const aiImageLightboxPrev = document.querySelector("#aiImageLightboxPrev");
   const aiImageLightboxNext = document.querySelector("#aiImageLightboxNext");
   let imageOptions = null;
+  const selectedImageModels = new Map();
   let activeImageJobId = "";
   let imageJobTimer = null;
   let activeImages = [];
@@ -1219,6 +1221,39 @@ export function initAI() {
     return item.label || item.name || item.id || "Provider không xác định";
   }
 
+  function imageModelLabel(model) {
+    return model === "auto" || !model ? "Model mặc định" : model;
+  }
+
+  function populateImageModels() {
+    if (!aiImageModel) return;
+    const provider = imageOptions?.media_creator?.providers?.find(item => item.id === aiImageSource?.value);
+    const values = Array.isArray(provider?.capabilities?.imageModels) ? provider.capabilities.imageModels : [];
+    const models = values.map(item => typeof item === "string"
+      ? { value: item, label: item }
+      : { value: item?.id || item?.model || item?.name || "", label: item?.label || item?.displayName || item?.name || item?.model || item?.id || "" })
+      .filter(item => item.value);
+    const remembered = selectedImageModels.get(aiImageSource?.value);
+    aiImageModel.innerHTML = "";
+    for (const model of models) {
+      const option = document.createElement("option");
+      option.value = model.value;
+      option.textContent = model.label || model.value;
+      aiImageModel.appendChild(option);
+    }
+    aiImageModel.disabled = models.length === 0;
+    if (!models.length) {
+      const unavailable = document.createElement("option");
+      unavailable.value = "";
+      unavailable.textContent = "Provider không công bố danh sách model";
+      aiImageModel.appendChild(unavailable);
+      return;
+    }
+    const selected = models.some(item => item.value === remembered) ? remembered : models[0].value;
+    aiImageModel.value = selected;
+    selectedImageModels.set(aiImageSource?.value, selected);
+  }
+
   function populateImageSources() {
     if (!aiImageSource || !imageOptions) return;
     const selectedSource = aiImageSource.value;
@@ -1241,7 +1276,13 @@ export function initAI() {
         aiImageSource.value = selectedSource;
       }
     }
+    populateImageModels();
   }
+
+  if (aiImageSource) aiImageSource.addEventListener("change", populateImageModels);
+  if (aiImageModel) aiImageModel.addEventListener("change", () => {
+    if (aiImageSource?.value) selectedImageModels.set(aiImageSource.value, aiImageModel.value);
+  });
 
   async function loadImageOptions() {
     try {
@@ -1360,11 +1401,12 @@ export function initAI() {
       }
       finishImageJob();
       if (job.status === "completed" || job.status === "partial") {
-        renderImageResults(job.images, { prompt: job.prompt, source_model: `${job.provider} · ${job.model}`, attached_content_id: job.attached_content_id });
+        const sourceModel = `${job.provider} · ${imageModelLabel(job.model)}`;
+        renderImageResults(job.images, { prompt: job.prompt, source_model: sourceModel, attached_content_id: job.attached_content_id });
         if (currentHistoryIndex >= 0 && currentHistoryIndex < historyItems.length) {
           historyItems[currentHistoryIndex].image = {
             url: job.images[0]?.url, asset: job.images[0]?.asset || null, images: job.images,
-            prompt: job.prompt, source_model: `${job.provider} · ${job.model}`, attached: Boolean(job.attached_content_id),
+            prompt: job.prompt, source_model: sourceModel, attached: Boolean(job.attached_content_id),
           };
           saveHistoryToStorage(historyItems);
         }
@@ -1400,6 +1442,7 @@ export function initAI() {
           body: JSON.stringify({
             prompt: promptToUse,
             provider: source,
+            model: aiImageModel?.value || null,
             aspect_ratio: aiImageAspectRatio?.value || "auto",
             count: Number(aiImageCount?.value || 1),
             content_id: lastCreatedContentId || null,

@@ -21,11 +21,12 @@ def svc(request:Request)->Any:return request.app.state.services
 
 
 def public_account(account:dict[str,Any])->dict[str,Any]:
-    hidden={"password","secret_2fa","email_pass","cookie"}
+    hidden={"password","secret_2fa","email_pass","cookie","recovery_codes"}
     result={key:value for key,value in account.items() if key not in hidden}
     result.update({
         "has_password":bool(account.get("password")),"has_2fa":bool(account.get("secret_2fa")),
         "has_email_password":bool(account.get("email_pass")),"has_cookie":bool(account.get("cookie")),
+        "has_recovery_codes":bool(account.get("recovery_codes")),
     })
     return result
 

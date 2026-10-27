@@ -1,6 +1,6 @@
 # Local automation API v1
 
-Tinix exposes a stable loopback API at `/api/v1`. This API controls Tinix itself; social publishing still runs exclusively through managed Chrome profiles.
+Tinix exposes a stable loopback API at `/api/v1`. This API controls Tinix itself; Chrome-based publishing still runs through managed Chrome profiles; official API publishers (YouTube, Facebook Page) are separate routes selected per target and approved configuration.
 
 ## Authentication and scopes
 

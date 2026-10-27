@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.db.database import Database
-from app.db.repositories import AccountRepository
+from app.db.repositories import AccountRepository, JobRepository
 from app.services.profile_transfer import ChromeProfileTransferService
 from app.services.recovery_bundle import RecoveryBundleError, RecoveryBundleService
 
@@ -19,6 +19,18 @@ def make_profile(path: Path, cookie: str) -> None:
 
 
 class RecoveryBundleTests(unittest.TestCase):
+    def test_bundle_quarantines_real_jobs_before_worker_can_claim(self):
+        jobs = JobRepository(self.database)
+        real = jobs.create("publish", {}, self.account["id"], None, dry_run=False)
+        exported = self.service.create_bundle("correct horse battery staple", include_environment=False)
+        self.service.restore_bundle(exported["bundle_path"], "correct horse battery staple")
+        restored = jobs.get(real["id"])
+        self.assertEqual(restored["status"], "unknown_result")
+        self.assertTrue(restored["commit_reached_at"])
+        jobs.recover_interrupted()
+        jobs.release_due()
+        self.assertIsNone(jobs.claim_next())
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

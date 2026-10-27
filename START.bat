@@ -32,7 +32,7 @@ if "!NEED_DEPS!"=="0" (
   if errorlevel 1 set "NEED_DEPS=1"
 )
 if "!NEED_DEPS!"=="0" (
-  "%VENV_PY%" -c "import cryptography, fastapi, httpx, multipart, PIL, playwright, psutil, tzdata, uvicorn" >nul 2>nul
+  "%VENV_PY%" -c "import boto3, cryptography, fastapi, httpx, multipart, PIL, playwright, psutil, tzdata, uvicorn" >nul 2>nul
   if errorlevel 1 set "NEED_DEPS=1"
 )
 if "!NEED_DEPS!"=="1" (

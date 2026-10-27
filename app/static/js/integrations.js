@@ -37,8 +37,14 @@ function aiCard(item) {
 
 function platformCard(item) {
   const definitionItem = definition("platform_apps", item.provider) || {};
-  const readiness = definitionItem.official_publisher === "available" ? "Official API sẵn sàng" : "Credential đã lưu; Tinix chưa hỗ trợ đăng official API cho nền tảng này.";
-  return `<article class="integration-card"><div class="integration-card-head"><strong>${esc(definitionItem.name || item.provider)}</strong><span class="badge">${esc(item.enabled ? "Đang bật" : "Đã tắt")}</span></div><h4>${esc(item.name)}</h4><p class="muted">${esc(definitionItem.client_label || "Client ID")}: ${esc(item.client_id)} · Secret: ${esc(item.secret_hint || "Chưa có")}</p><p class="muted">Callback: ${esc(item.redirect_uri)}</p><p class="muted">${esc(readiness)} · Test: ${esc(item.last_test_status)} · ${esc(stamp(item.last_test_at))}</p><div class="actions"><button data-app-action="test" data-id="${esc(item.id)}">Kiểm tra App</button><button data-app-action="edit" data-id="${esc(item.id)}">Sửa</button><button data-app-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Tắt" : "Bật"}</button><button data-app-action="delete" data-id="${esc(item.id)}" class="danger">Xóa</button></div></article>`;
+  const readiness = definitionItem.official_publisher === "available"
+    ? "Official API sẵn sàng"
+    : definitionItem.official_publisher === "review_required"
+      ? "Adapter đã có; cần cấu hình App, quyền và nghiệm thu thật"
+      : "Credential đã lưu; Tinix chưa hỗ trợ đăng official API cho nền tảng này.";
+  const tested = item.last_test_status === "manual_ready" ? "Sẵn sàng nhập System User token" : item.last_test_status;
+  const callback = item.redirect_uri || (item.provider === "meta" ? "Chưa cấu hình · chỉ cần cho OAuth" : "Chưa cấu hình");
+  return `<article class="integration-card"><div class="integration-card-head"><strong>${esc(definitionItem.name || item.provider)}</strong><span class="badge">${esc(item.enabled ? "Đang bật" : "Đã tắt")}</span></div><h4>${esc(item.name)}</h4><p class="muted">${esc(definitionItem.client_label || "Client ID")}: ${esc(item.client_id)} · Secret: ${esc(item.secret_hint || "Chưa có")}</p><p class="muted">Callback: ${esc(callback)}</p><p class="muted">${esc(readiness)} · Test: ${esc(tested)} · ${esc(stamp(item.last_test_at))}</p><div class="actions"><button data-app-action="test" data-id="${esc(item.id)}">Kiểm tra App</button><button data-app-action="edit" data-id="${esc(item.id)}">Sửa</button><button data-app-action="toggle" data-id="${esc(item.id)}">${item.enabled ? "Tắt" : "Bật"}</button><button data-app-action="delete" data-id="${esc(item.id)}" class="danger">Xóa</button></div></article>`;
 }
 
 function render() {
@@ -152,7 +158,31 @@ async function openAppDialog(item = null) {
   const provider = item?.provider || "meta";
   const definitionItem = definition("platform_apps", provider) || {};
   title.textContent = item ? "Sửa Platform Developer App" : "Thêm Platform Developer App";
-  holder.innerHTML = field("Nền tảng", `<select name="provider" ${item ? "disabled" : ""}>${catalog.platform_apps.map(entry => option(entry.id, entry.name, entry.id === provider)).join("")}</select>`) + field("Tên app / môi trường", `<input name="name" required maxlength="100" value="${esc(item?.name || "")}" placeholder="Ví dụ: Production">`) + field(definitionItem.client_label || "Client ID", `<input name="client_id" required maxlength="1000" value="${esc(item?.client_id || "")}">`) + field(item ? `${definitionItem.secret_label || "Client Secret"} mới (bỏ trống để giữ nguyên)` : definitionItem.secret_label || "Client Secret", `<input name="client_secret" type="password" ${item ? "" : "required"} maxlength="2000" autocomplete="off">`) + field("Redirect URI", `<input name="redirect_uri" required type="url" maxlength="2000" value="${esc(item?.redirect_uri || `${location.origin}${definitionItem.default_redirect_path || ""}`)}">`) + field("API version (nếu có)", `<input name="api_version" maxlength="100" value="${esc(item?.api_version || "")}">`) + field("Scopes (cách nhau bởi dấu phẩy)", `<input name="scopes" maxlength="2000" value="${esc((item?.scopes || definitionItem.scopes || []).join(", "))}">`) + `<label class="check full"><input name="enabled" type="checkbox" ${item?.enabled === false ? "" : "checked"}><span>Kích hoạt Platform App</span></label>`;
+  const redirectDefault = provider === "meta" ? "" : `${location.origin}${definitionItem.default_redirect_path || ""}`;
+  holder.innerHTML = field("Nền tảng", `<select name="provider" ${item ? "disabled" : ""}>${catalog.platform_apps.map(entry => option(entry.id, entry.name, entry.id === provider)).join("")}</select>`) + field("Tên app / môi trường", `<input name="name" required maxlength="100" value="${esc(item?.name || "")}" placeholder="Ví dụ: Production">`) + field(definitionItem.client_label || "Client ID", `<input name="client_id" required maxlength="1000" value="${esc(item?.client_id || "")}">`) + field("App Secret", `<input name="client_secret" type="password" data-app-secret maxlength="2000" autocomplete="off">`) + field("Redirect URI", `<input name="redirect_uri" type="url" data-app-redirect maxlength="2000" value="${esc(item ? item.redirect_uri || "" : redirectDefault)}">`) + field("API version (nếu có)", `<input name="api_version" maxlength="100" value="${esc(item?.api_version || "")}">`) + field("Scopes (cách nhau bởi dấu phẩy)", `<input name="scopes" maxlength="2000" value="${esc((item?.scopes || definitionItem.scopes || []).join(", "))}">`) + `<p class="muted full" data-meta-manual-help>Meta System User token chỉ cần App ID và Graph API version. App Secret và Redirect URI chỉ cần cho OAuth.</p>` + `<label class="check full"><input name="enabled" type="checkbox" ${item?.enabled === false ? "" : "checked"}><span>Kích hoạt Platform App</span></label>`;
+  let selectedProvider = provider;
+  const updateOAuthRequirements = () => {
+    const providerId = holder.querySelector("[name=provider]").value;
+    const meta = providerId === "meta";
+    const selectedDefinition = definition("platform_apps", providerId) || {};
+    if (!item && providerId !== selectedProvider) {
+      holder.querySelector("[data-app-redirect]").value = `${location.origin}${selectedDefinition.default_redirect_path || ""}`;
+      selectedProvider = providerId;
+    }
+    const secret = holder.querySelector("[data-app-secret]");
+    const redirect = holder.querySelector("[data-app-redirect]");
+    secret.required = !meta && !item;
+    redirect.required = !meta;
+    const clientIdLabel = holder.querySelector("[name=client_id]").closest("label");
+    clientIdLabel.firstChild.nodeValue = selectedDefinition.client_label || "Client ID";
+    secret.closest("label").firstChild.nodeValue = meta
+      ? (item ? "App Secret mới (OAuth, bỏ trống để giữ nguyên)" : "App Secret (chỉ cần cho OAuth)")
+      : (item ? `${definition("platform_apps", holder.querySelector("[name=provider]").value)?.secret_label || "Client Secret"} mới (bỏ trống để giữ nguyên)` : definition("platform_apps", holder.querySelector("[name=provider]").value)?.secret_label || "Client Secret");
+    redirect.closest("label").firstChild.nodeValue = meta ? "Redirect URI (chỉ cần cho OAuth)" : "Redirect URI";
+    holder.querySelector("[data-meta-manual-help]").classList.toggle("hidden", !meta);
+  };
+  updateOAuthRequirements();
+  holder.querySelector("[name=provider]").onchange = updateOAuthRequirements;
   dialog.showModal();
 }
 

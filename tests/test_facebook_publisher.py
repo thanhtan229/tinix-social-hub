@@ -60,6 +60,22 @@ class FakeComposer:
 
 
 class FacebookPublisherTests(unittest.TestCase):
+    @patch("app.services.facebook_publisher.BrowserSession", FakeSession)
+    @patch("app.services.facebook_publisher.FacebookComposerPage", FakeComposer)
+    def test_changed_media_never_reaches_submit(self):
+        import hashlib
+        from app.services.media import MediaValidationError
+        path = Path(self.temp.name) / "photo.jpg"
+        path.write_bytes(b"changed")
+        self.media.resolve_existing = lambda _: path
+        transitions = []
+        context = self.context(False, transitions)
+        context.payload["media"] = [{"relative_path": "photo.jpg", "size_bytes": 7, "sha256": hashlib.sha256(b"approve").hexdigest()}]
+        with self.assertRaises(MediaValidationError):
+            asyncio.run(self.publisher.publish(context))
+        self.assertFalse(FakeComposer.submitted)
+        self.assertFalse(any(item[2] for item in transitions))
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.settings = SimpleNamespace(

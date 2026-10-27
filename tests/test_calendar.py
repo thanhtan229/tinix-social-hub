@@ -78,6 +78,38 @@ class CalendarAndSlotTests(unittest.TestCase):
         self.assertEqual(self.jobs.get(job["id"])["scheduled_at"], second_due.isoformat())
         self.assertEqual(self.publications.release_events(release["id"])[0]["event_type"], "rescheduled")
 
+    def test_bulk_reschedule_is_atomic_across_releases(self) -> None:
+        content = self.contents.create({
+            "title": "Batch post", "caption": "Hello", "hashtags": [],
+            "platform_variants": {"facebook": {"caption": "Hello", "hashtags": []}},
+        })
+        scheduling = SchedulingService(
+            self.jobs, self.accounts, self.targets, self.contents, random.Random(1), self.publications
+        )
+        first = scheduling.schedule(
+            content["id"], self.account["id"], [self.target["id"]],
+            datetime.now(timezone.utc) + timedelta(hours=2), True, 0, 0, "confirm"
+        )[0]
+        second = scheduling.schedule(
+            content["id"], self.account["id"], [self.target["id"]],
+            datetime.now(timezone.utc) + timedelta(hours=3), True, 0, 0, "confirm"
+        )[0]
+        due = datetime.now(timezone.utc) + timedelta(days=2)
+        moved = self.publications.reschedule_releases(
+            [first["publication_release_id"], second["publication_release_id"]], due.isoformat(), "Asia/Bangkok"
+        )
+        self.assertEqual([item["scheduled_at"] for item in moved], [due.isoformat(), due.isoformat()])
+
+        original = self.publications.get_release(first["publication_release_id"])["scheduled_at"]
+        with self.database.connection() as connection:
+            connection.execute("UPDATE jobs SET status='succeeded' WHERE id=?", (second["id"],))
+        with self.assertRaisesRegex(ValueError, "không release nào được đổi lịch"):
+            self.publications.reschedule_releases(
+                [first["publication_release_id"], second["publication_release_id"]],
+                (due + timedelta(days=1)).isoformat(), "Asia/Bangkok",
+            )
+        self.assertEqual(self.publications.get_release(first["publication_release_id"])["scheduled_at"], original)
+
     def test_platform_format_validation_is_schema_driven(self) -> None:
         schema = validate_publication(
             "tiktok", "short_video", "Caption", [{"type": "video", "size_bytes": 10}],

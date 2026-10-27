@@ -75,6 +75,11 @@ class Settings:
     youtube_client_id: str
     youtube_client_secret: str
     youtube_redirect_uri: str
+    instagram_r2_account_id: str
+    instagram_r2_bucket: str
+    instagram_r2_access_key_id: str
+    instagram_r2_secret_access_key: str
+    instagram_r2_url_ttl_seconds: int
     provider_timeout_seconds: int
 
     @property
@@ -139,6 +144,11 @@ def get_settings() -> Settings:
             "TINIX_YOUTUBE_REDIRECT_URI",
             f"http://127.0.0.1:{_int('TINIX_PORT', 8765, 1024, 65535)}/api/oauth/youtube/callback",
         ).strip(),
+        instagram_r2_account_id=os.getenv("TINIX_INSTAGRAM_R2_ACCOUNT_ID", "").strip(),
+        instagram_r2_bucket=os.getenv("TINIX_INSTAGRAM_R2_BUCKET", "").strip(),
+        instagram_r2_access_key_id=os.getenv("TINIX_INSTAGRAM_R2_ACCESS_KEY_ID", "").strip(),
+        instagram_r2_secret_access_key=os.getenv("TINIX_INSTAGRAM_R2_SECRET_ACCESS_KEY", "").strip(),
+        instagram_r2_url_ttl_seconds=_int("TINIX_INSTAGRAM_R2_URL_TTL_SECONDS", 3600, 300, 86400),
         provider_timeout_seconds=_int("TINIX_PROVIDER_TIMEOUT_SECONDS", 120, 10, 900),
     )
     settings.ensure_directories()

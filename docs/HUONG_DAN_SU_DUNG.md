@@ -1,8 +1,8 @@
 # Hướng dẫn sử dụng Tinix Social Studio
 
-Phiên bản áp dụng: `1.0.24`
+Phiên bản áp dụng: `1.0.44`
 
-Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media và lập lịch đăng bài. Chrome automation vẫn là cách đăng mặc định; account YouTube có thể tùy chọn kết nối YouTube Data API chính thức. Mỗi tài khoản vẫn có Chrome profile riêng để dùng khi chọn hoặc fallback về Chrome.
+Tinix Social Studio là ứng dụng chạy trên máy cá nhân để xây dựng nội dung, quản lý media và lập lịch đăng bài. Chrome automation vẫn là cách đăng mặc định; Facebook Page và YouTube có thể tùy chọn dùng API chính thức. Mỗi tài khoản vẫn có Chrome profile riêng để dùng khi chọn hoặc fallback về Chrome.
 
 ## 1. Khởi động và dừng ứng dụng
  
@@ -47,7 +47,7 @@ Không nên tắt máy hoặc kết thúc cưỡng bức tiến trình khi một
 | Media Library | Upload, tái sử dụng, gắn tag và quản lý media theo SHA-256 |
 | Calendar | Xem lịch, cấu hình posting slots và tạo publication plan |
 | Hàng đợi & Lịch sử | Theo dõi job, attempt, artifact, retry và finalize |
-| Analytics | Kết nối bài đã đăng và đọc metric hiển thị trên giao diện Chrome |
+| Analytics | Kết nối bài đã đăng, xem snapshot từ API hoặc đọc metric hiển thị trong Chrome |
 | Tài khoản & Page | Quản lý account, Chrome profile và Page/profile/channel |
 | Cài đặt | Kiểm tra database, backup, restore và maintenance |
 
@@ -63,6 +63,18 @@ Không nên tắt máy hoặc kết thúc cưỡng bức tiến trình khi một
 8. Khi phiên đăng nhập hợp lệ, chọn **Đồng bộ Page/kênh**.
 
 Mỗi account có một profile tại `chrome_profiles/<UUID>`. Không đăng nhập account khác vào cùng Chrome profile nếu muốn dữ liệu và target được tách biệt rõ ràng.
+
+### Kết nối Facebook Page API bằng System User token
+
+1. Trong **Cài đặt → Tích hợp**, thêm Meta Developer App, nhập App ID và Graph API version rồi bật app. Với kết nối thủ công, App Secret và Redirect URI có thể để trống.
+2. Trong Meta Business Settings, gán Meta App và đúng Facebook Page cho System User; tạo token có quyền Page cần dùng. Thường cần `pages_manage_posts` để đăng, `pages_read_engagement` để đọc tương tác, `read_insights` để đọc Page Insights và `pages_show_list` nếu Meta cho phép liệt kê Page.
+3. Mở **Tài khoản & Page**, chọn account Facebook rồi bấm **Kết nối Meta API** hoặc **Cập nhật Meta API**. Chọn Meta App, nhập System User token và chọn **Tìm Page bằng token** để xem danh sách Meta trả về. Đánh dấu các Page muốn kết nối.
+4. Nếu Meta không trả danh sách Page, nhập một hoặc nhiều Page ID dạng số, phân cách bằng dấu phẩy hoặc xuống dòng. Bấm **Lưu Page đã chọn**; Tinix xác minh riêng từng Page trước khi lưu.
+5. Một account Tinix có thể giữ nhiều Page. Để thêm Page bằng token hiện tại, để trống ô token, nhập/chọn Page cần thêm rồi lưu. Có thể ngắt từng Page trong danh sách; target, lịch sử và analytics vẫn được giữ.
+
+Token được lưu mã hóa cục bộ bằng Windows DPAPI. Trong chi tiết account, nút **Show** có thể hiện lại System User token đã lưu; chỉ dùng trên máy Tinix đang chạy. Nếu Meta không trả Page task, quyền của Page được ghi là chưa xác minh và Tinix không bật đăng API. Khi đổi token, các Page đang giữ phải được chọn xác minh lại; Page bị bỏ chọn chỉ bị ngắt sau khi xác nhận. Token hoặc quyền Page thay đổi sẽ yêu cầu dry-run và duyệt lại release API liên quan.
+
+Chế độ System User không cần tunnel, App Secret hay Redirect URI. Nút **Dùng OAuth** vẫn có sẵn; OAuth cần App Secret và Redirect URI HTTPS Meta truy cập được.
 
 ### Dùng phiên đăng nhập từ dự án khác
 
@@ -196,6 +208,8 @@ Chọn **Dùng slot kế tiếp** để Tinix tìm slot trống gần nhất. Sl
 
 Mỗi target tạo một release riêng. Caption, settings, media và revision được đóng băng tại thời điểm lập lịch, nên việc sửa content sau đó không làm thay đổi release đã tạo.
 
+Với Facebook Page API, có thể chọn một ảnh, album 2–10 ảnh hoặc một video MP4 cho một bài và chọn nhiều Page thuộc cùng account. Tinix gửi file trực tiếp theo API Meta, không cần URL CDN. Video cần `ffprobe` (FFmpeg) sẵn có trong `PATH` để dry-run xác nhận file đọc được; Tinix không tự cài hoặc chuyển mã video. Dry-run kiểm tra binding/quyền đã lưu và file, nhưng không gọi Meta để kiểm tra token còn hiệu lực. Trước khi đăng hãy kiểm tra Page API đã kết nối, dry-run và approval. Nếu job báo `unknown_result`, kiểm tra Page Facebook trước khi tạo job khác vì Tinix không tự gửi lại.
+
 ## 7. Dry-run và đăng thật
 
 ### Dry-run
@@ -228,6 +242,7 @@ Tinix ghi commit point trước khi click nút phát hành. Nếu lỗi xảy ra
 | Nền tảng | Format đang mở | Format còn khóa |
 |---|---|---|
 | Facebook Web | Post ảnh, nhiều ảnh hoặc video | Reel chưa được xác nhận ổn định |
+| Facebook Page API | Bài chữ, một ảnh, album 2–10 ảnh, một video MP4 và Reel qua Meta Graph API | Một ảnh, album hai ảnh, video Page thường và Reel đã thử live trên Page Tinix; album 3–10 ảnh chưa thử live |
 | Instagram Web | Image, carousel | Reel, Story |
 | TikTok Studio Web | Short video | Photo post |
 | YouTube Studio Web | Video, Short | Community post |
@@ -272,13 +287,13 @@ Không tạo job mới hoặc retry `unknown_result` trước khi kiểm tra bà
 
 ## 10. Analytics và reconciliation
 
-Analytics của Tinix chỉ đọc số liệu đang hiển thị trong giao diện Chrome, không gọi API analytics của nền tảng.
+Analytics có thể đọc qua API khi account đã liên kết đúng Page/kênh; nếu chưa có kết nối API phù hợp, có thể dùng **Thu thập UI** trong Chrome.
 
 1. Mở **Analytics**.
 2. Chọn khoảng 7, 30 hoặc 90 ngày và nền tảng.
 3. Nếu release chưa có URL, chọn **Kết nối** và nhập URL bài đăng đúng nền tảng.
 4. Chọn **Thu thập UI**.
-5. Tinix mở Chrome của account và đọc các metric hỗ trợ từ DOM.
+5. Với **Thu thập UI**, Tinix mở Chrome của account và đọc các metric hỗ trợ từ DOM. Với Facebook Page API, số liệu bài viết và Page được đọc bằng Page token đã bind đúng target. Video/Reel có likes, comments và views khi Meta trả; `shares` chỉ được hỏi cho post/ảnh. Giá trị 0 là số Meta trả tại thời điểm thu thập; lịch tự động là tùy chọn và cần bật riêng.
 
 Mỗi metric lưu timezone, source selector và thời điểm fetch. Nếu UI không cung cấp metric, Tinix hiển thị `Không hỗ trợ / chưa có dữ liệu`, không ghi số 0 giả.
 

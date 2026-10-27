@@ -98,16 +98,83 @@ async function openPublishedJob(id){
   catch(error){toast(error.message);}
 }
 
-async function showDetail(id){
-  const job=await api(`/jobs/${id}`);currentJob=job;
-  const release=job.release||{};
-  const verification=release.verification_status==="verified"?"Đã xác minh":release.verification_status==="rejected"?"Không xác minh được":release.verification_status==="pending"?"Chưa đối soát":"—";
-  document.querySelector("#jobSummary").innerHTML=`<div class="release-summary"><div>${badge(job.status)} ${job.dry_run?'<span class="badge good">Dry-run</span>':'<span class="badge bad">Đăng thật</span>'}</div><p><strong>Commit point:</strong> ${job.commit_reached_at?new Date(job.commit_reached_at).toLocaleString("vi-VN"):"Chưa tới"}</p><p><strong>Xác minh:</strong> ${verification}${release.verification_method?` (${esc(release.verification_method)})`:""}</p><p><strong>Lỗi:</strong> ${esc(job.error||"—")}</p>${job.result?.post_url?`<p><a href="${esc(job.result.post_url)}" target="_blank" rel="noreferrer">Mở bài đăng</a></p>`:""}</div>`;
-  const attempts=new Map(job.attempt_history.map(item=>[item.attempt_number,item]));
-  document.querySelector("#jobEvents").innerHTML=job.events.map(event=>`<div class="status-row"><span>${esc(event.event_type)}<small class="muted">${new Date(event.created_at).toLocaleString("vi-VN")}</small></span>${badge(event.to_status)}</div>`).join("")+`<p class="muted">${attempts.size} attempt(s)</p>`;
-  document.querySelector("#jobArtifacts").innerHTML=job.artifacts.length?job.artifacts.map(item=>`<div class="status-row"><span>${esc(item.artifact_type)}</span><a href="/api/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(item.id)}/file" target="_blank" rel="noreferrer">${esc(item.relative_path)}</a></div>`).join(""):`<p class="muted">Không có artifact.</p>`;
-  document.querySelector("#jobFinalize").classList.toggle("hidden",!["unknown_result","verifying"].includes(job.status));
+function renderReleaseDetail(job,release){
+  currentJob=job;
+  const status=job?.status||release.status;
+  const result=job?.result||release.job?.result||{};
+  const verification=release.verification_method==="manual_connect"?"Đã xác nhận thủ công"
+    :release.verification_status==="verified"?"Đã xác minh"
+      :release.verification_status==="rejected"?"Không xác minh được"
+        :release.verification_status==="pending"?"Chưa đối soát":"—";
+  const target=release.target||{};
+  const account=release.account||{};
+  document.querySelector("#jobSummary").innerHTML=`<div class="release-summary">
+    <div>${badge(status)} ${job?.dry_run||release.dry_run?'<span class="badge good">Dry-run</span>':'<span class="badge bad">Đăng thật</span>'}</div>
+    <p><strong>Page/kênh:</strong> ${esc(target.name||release.target_id)} · ${esc(account.name||release.account_id)} · ${esc(release.platform||target.platform||"")}</p>
+    <p><strong>Định dạng / route:</strong> ${esc(release.content_format||"")} · ${esc(release.publication_transport||"Chưa đóng băng")} ${release.provider?`· ${esc(release.provider)}`:""}</p>
+    <p><strong>Lịch:</strong> ${release.scheduled_at?new Date(release.scheduled_at).toLocaleString("vi-VN"):"—"} · <strong>Đăng:</strong> ${release.published_at?new Date(release.published_at).toLocaleString("vi-VN"):"—"}</p>
+    <p><strong>Commit point:</strong> ${job?.commit_reached_at?new Date(job.commit_reached_at).toLocaleString("vi-VN"):"Chưa tới"} · <strong>Đối soát:</strong> ${verification}${release.verification_method?` (${esc(release.verification_method)})`:""}</p>
+    <p><strong>Lỗi:</strong> ${esc(job?.error||release.job?.error||"—")}</p>
+    ${release.external_url||result.post_url?`<p><a href="${esc(release.external_url||result.post_url)}" target="_blank" rel="noopener noreferrer">Mở bài đăng</a></p>`:""}
+  </div>`;
+  const payload=release.payload_snapshot||{};
+  const media=release.media_snapshot||[];
+  document.querySelector("#jobReleaseSnapshot").innerHTML=`<div class="release-snapshot-copy"><strong>${esc(payload.title||"(Không có tiêu đề)")}</strong><p>${esc(payload.caption||"(Caption trống)")}</p>${payload.hashtags?.length?`<p>${esc(payload.hashtags.join(" "))}</p>`:""}${payload.cta?`<p><strong>CTA:</strong> ${esc(payload.cta)}</p>`:""}</div>
+    ${media.length?`<ul class="release-snapshot-media">${media.map(item=>`<li>${esc(item.original_name||item.relative_path||"Media")} · ${esc(item.type||item.media_type||"")}${item.sort_order!==undefined?` · #${Number(item.sort_order)+1}`:""}</li>`).join("")}</ul>`:'<p class="muted">Release này không có media.</p>'}
+    <details><summary>Settings và phiên bản route</summary><pre>${esc(JSON.stringify({settings:release.settings_snapshot||{},revision_id:release.content_revision_id,selector_version:release.selector_version,provider_version:release.provider_version},null,2))}</pre></details>`;
+  const events=[...(release.events||[]).map(event=>({...event,source:"Release"})),...(job?.events||[]).map(event=>({...event,source:"Job"}))]
+    .sort((a,b)=>String(a.created_at||"").localeCompare(String(b.created_at||"")));
+  const attempts=release.attempts||job?.attempt_history||[];
+  document.querySelector("#jobEvents").innerHTML=`${attempts.length?`<h4>${attempts.length} attempt(s)</h4>${attempts.map(item=>`<div class="status-row"><span>Attempt ${item.attempt_number} · ${esc(item.transport||item.outcome||"—")} ${item.provider?`· ${esc(item.provider)}`:""}<small class="muted">${item.started_at?new Date(item.started_at).toLocaleString("vi-VN"):""} ${item.finished_at?`→ ${new Date(item.finished_at).toLocaleString("vi-VN")}`:""}<br>${esc(item.error_message||"")}</small></span>${item.failure_code?badge(item.failure_code):""}</div>`).join("")}`:""}${events.length?events.map(event=>`<div class="status-row"><span>${esc(event.source)} · ${esc(event.event_type||"event")}<small class="muted">${event.created_at?new Date(event.created_at).toLocaleString("vi-VN"):""}${event.message?`<br>${esc(event.message)}`:""}</small></span>${event.to_status?badge(event.to_status):""}</div>`).join(""):'<p class="muted">Chưa có sự kiện.</p>'}`;
+  const artifacts=release.artifacts||job?.artifacts||[];
+  document.querySelector("#jobArtifacts").innerHTML=artifacts.length?artifacts.map(item=>`<div class="status-row"><span>${esc(item.artifact_type)}</span><a href="/api/jobs/${encodeURIComponent(job?.id||release.job_id)}/artifacts/${encodeURIComponent(item.id)}/file" target="_blank" rel="noreferrer">${esc(item.relative_path)}</a></div>`).join(""):`<p class="muted">Không có artifact.</p>`;
+  document.querySelector("#jobFinalize").classList.toggle("hidden",!job||!["unknown_result","verifying"].includes(job.status));
+  document.querySelector("#jobConnect").classList.toggle("hidden",!release.id||!["succeeded","unknown_result"].includes(release.status));
+  const canRetry=Boolean(job&&retryable.has(job.status)&&!job.commit_reached_at);
+  const canCancel=Boolean(job&&["scheduled","queued","opening_browser","checking_login","uploading","publishing"].includes(job.status));
+  document.querySelector("#releaseActions").classList.toggle("hidden",!canRetry&&!canCancel);
+  document.querySelector("#releaseRetry").classList.toggle("hidden",!canRetry);
+  document.querySelector("#releaseCancel").classList.toggle("hidden",!canCancel);
+  document.querySelector("#releaseRetry").onclick=async()=>{
+    try{await api(`/jobs/${job.id}/retry`,{method:"POST"});toast("Đã đưa đúng job vào hàng đợi.");await refreshJobs();if(release.id)await openReleaseDetail(release.id);else await showDetail(job.id);}
+    catch(error){toast(error.message);}
+  };
+  document.querySelector("#releaseCancel").onclick=async()=>{
+    if(!confirm("Hủy job trong Tinix? Thao tác này không xóa bài đã đăng trên mạng xã hội."))return;
+    try{await api(`/jobs/${job.id}/cancel`,{method:"POST"});toast("Đã gửi yêu cầu hủy job cục bộ.");await refreshJobs();if(release.id)await openReleaseDetail(release.id);else await showDetail(job.id);}
+    catch(error){toast(error.message);}
+  };
+  document.querySelector("#connectReleaseUrl").value=release.external_url||result.post_url||"";
+  document.querySelector("#connectReleaseNote").value="Đã kiểm tra Page/kênh và bài đăng trên nền tảng.";
+  document.querySelector("#confirmReleaseTarget").checked=false;
+  document.querySelector("#confirmReleasePost").checked=false;
+  document.querySelector("#connectRelease").onclick=async()=>{
+    try{
+      await api(`/publication-releases/${release.id}/connect`,{method:"PATCH",body:JSON.stringify({
+        external_url:document.querySelector("#connectReleaseUrl").value.trim(),
+        note:document.querySelector("#connectReleaseNote").value.trim(),
+        confirm_target_identity:document.querySelector("#confirmReleaseTarget").checked,
+        confirm_post_identity:document.querySelector("#confirmReleasePost").checked,
+      })});
+      toast("Đã lưu đối soát thủ công; sự kiện được ghi vào release.");
+      await openReleaseDetail(release.id);
+    }catch(error){toast(error.message);}
+  };
   document.querySelector("#jobDialog").showModal();
+}
+
+async function showDetail(id){
+  const job=await api(`/jobs/${id}`);
+  const release=job.publication_release_id
+    ? await api(`/publication-releases/${job.publication_release_id}`)
+    : {...(job.release||{}),job:job.release||{}};
+  renderReleaseDetail(job,release);
+}
+
+export async function openReleaseDetail(releaseId){
+  const release=await api(`/publication-releases/${releaseId}`);
+  const job=release.job_id?await api(`/jobs/${release.job_id}`):null;
+  renderReleaseDetail(job,release);
 }
 
 async function bulkRetry(preview){

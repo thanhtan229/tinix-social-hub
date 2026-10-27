@@ -4,9 +4,9 @@ Tài liệu này mô tả trạng thái release candidate. Các mục `review_re
 
 ## Kiến trúc dual transport
 
-Tinix hỗ trợ hai transport độc lập: `chrome` và `official_api`. Chrome automation tiếp tục là mặc định và giữ nguyên profile riêng. Official API dùng OAuth connection, adapter riêng theo provider và chỉ được router chọn khi account đã kết nối, format được hỗ trợ và adapter đã đăng ký lúc chạy. Hiện YouTube Data API v3 đã hoạt động cho video/Short; các nền tảng khác vẫn dùng Chrome trong giai đoạn này.
+Tinix hỗ trợ hai transport độc lập: `chrome` và `official_api`. Chrome automation tiếp tục là mặc định và giữ nguyên profile riêng. Official API dùng OAuth/System User connection, adapter riêng theo provider và chỉ được router chọn khi account đã kết nối, format được hỗ trợ và adapter đã đăng ký lúc chạy. YouTube Data API v3 hỗ trợ upload video/Short; Facebook Page API hỗ trợ post, một ảnh, album ảnh, video MP4 và Reel. Một ảnh, album hai ảnh, video Page thường và Reel đã được thử live trên Page Tinix. TikTok và X vẫn để `scaffold`.
 
-Mỗi account có một `routing_preference`: `chrome_preferred`, `official_api_preferred`, `chrome_only` hoặc `official_api_only`. Khi job bắt đầu, route được ghi vào release và không đổi ở lần retry. Sau commit point, hệ thống không fallback sang transport khác; lỗi không xác định chuyển thành `unknown_result` để người dùng xác minh, tránh đăng trùng.
+Mỗi account có một `routing_preference`: `chrome_preferred`, `official_api_preferred`, `chrome_only` hoặc `official_api_only`. Khi lập lịch, route được gắn riêng với target, connection ID và fingerprint quyền đã cấp, rồi đóng băng vào release. Dry-run chỉ hợp lệ với đúng target/connection/quyền đó. Worker kiểm tra lại trước khi thực thi. Sau commit point, hệ thống không fallback sang transport khác; lỗi không xác định chuyển thành `unknown_result` để người dùng xác minh, tránh đăng trùng.
 
 ## Nguồn sự thật
 
@@ -27,15 +27,23 @@ Queue, retry, cancellation, approval, idempotency, artifact và browser ownershi
 
 ## Trạng thái hiện tại
 
-| Nền tảng | Nội dung | Session/target | Dry-run | Đăng/xác minh |
+| Nền tảng | Nội dung | Session/target | Đăng/xác minh API | Analytics API |
 |---|---|---|---|---|
-| Facebook | Có | Có | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
+| Facebook | Post, một ảnh, album ảnh, video MP4, Reel | Có, nhiều Page trên một Meta connection | Một ảnh, album hai ảnh, video Page thường và Reel đã thử live trên Page Tinix | Đã code, cần kiểm thử thật |
 | Instagram | Image/carousel | Chrome profile + profile discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
 | TikTok | Short video | Chrome profile + channel discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
-| YouTube | Video/Short | Chrome profile hoặc OAuth 2.0 | Chrome: đã code; API: đã triển khai | Chrome UI verifier hoặc API `videos.list` |
+| YouTube | Video/Short | Chrome profile hoặc OAuth 2.0 | API đã triển khai; cần acceptance trên account test | Snapshot Data API + chuỗi theo ngày Analytics API; cần acceptance thật |
 | X | Post chữ/ảnh/video | Chrome profile + profile discovery | Đã code, cần kiểm thử thật | Đã code, cần kiểm thử thật |
 
 Instagram, TikTok, YouTube và X có Chrome adapters versioned, login detector, target discovery, composer, commit point và UI verifier. Các format đã mở lần lượt là Instagram image/carousel, TikTok short video, YouTube video/Short và X post; Reel, Story, photo post và community post vẫn trả `unsupported`. YouTube còn có official adapter dùng resumable upload. Mọi adapter mặc định dry-run; dry-run API chỉ kiểm tra kết nối, payload và media, không tạo upload session.
+
+## Analytics API
+
+* **Bài YouTube:** snapshot hiện tại gồm lượt xem, thích và bình luận từ Data API; daily report theo video gồm views, likes, comments, shares, watch time và thay đổi subscriber. Bài phải là release đã đăng/đã đối soát, có video ID, thuộc đúng channel.
+* **Kênh YouTube:** snapshot lượt xem, subscriber và video; report theo ngày giữ interval riêng. Snapshot lifetime không bị cộng dồn; interval trùng kỳ chỉ lấy một nguồn ưu tiên.
+* `GET /api/analytics/channels/history` và `.../summary` hỗ trợ history/filter; Analytics UI lọc platform/account/target, bài phân trang mới nhất và thể hiện source/ngày.
+* Cập nhật tự động mặc định tắt. Khi bật, hệ thống quét tối đa số bài/kênh cấu hình mỗi chu kỳ, giới hạn cửa sổ 7/30/90 ngày; lỗi scope/quota/rate-limit được ghi lại và nằm trong cooldown, không chạy dồn khi mở app.
+* Analytics ngoài YouTube: chỉ Meta Graph collector (Page/post/Reel) đã có; provider khác báo scaffold/unsupported. Không đọc metric qua cookie hoặc private endpoint để giả API.
 
 ## Gate vận hành còn lại
 

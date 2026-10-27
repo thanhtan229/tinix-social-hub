@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -28,6 +30,7 @@ from app.services.ai import MockAIProvider
 from app.services.ai_studio import AIContentStudioService
 from app.services.media import MediaService
 from app.services.scheduling import SchedulingService
+from app.services.analytics_scheduler import AnalyticsRefreshScheduler
 from app.services.profile_transfer import ChromeProfileTransferService
 from app.services.recovery_bundle import RecoveryBundleService
 from app.services.maintenance import MaintenanceService
@@ -71,6 +74,12 @@ class ChromeStub:
 
 
 class ImageGenerationStub:
+    async def start(self):
+        pass
+
+    async def close(self):
+        pass
+
     async def options(self):
         return {"media_creator": {"available": True, "providers": [{"id": "local-provider", "label": "Local Provider"}]}}
 
@@ -85,6 +94,17 @@ class ImageGenerationStub:
 
 
 class ApiTests(unittest.TestCase):
+    def test_read_only_v1_token_never_returns_recovery_codes(self):
+        account = self.services.accounts.create("Secret fixture", "facebook", {"recovery_codes": "fake-recovery", "password": "fake-password"})
+        with self.services.database.connection() as connection:
+            connection.execute("UPDATE api_tokens SET scopes_json='[\"read\"]'")
+        response = self.client.get("/api/v1/accounts", headers={"Authorization": f"Bearer {self.local_token}"})
+        self.assertEqual(response.status_code, 200)
+        item = next(item for item in response.json() if item["id"] == account["id"])
+        self.assertNotIn("recovery_codes", item)
+        self.assertNotIn("password", item)
+        self.assertTrue(item["has_recovery_codes"])
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
@@ -100,6 +120,7 @@ class ApiTests(unittest.TestCase):
         publications = PublicationRepository(database)
         media_assets = MediaAssetRepository(database)
         analytics = AnalyticsRepository(database)
+        app_settings = AppSettingsRepository(database)
         api_tokens = APITokenRepository(database, root / "data")
         self.local_token = api_tokens.ensure_default()
         media_settings = SimpleNamespace(media_dir=root / "media")
@@ -117,7 +138,7 @@ class ApiTests(unittest.TestCase):
         )
         recovery = RecoveryBundleService(profile_settings, database, profile_transfer)
         maintenance = MaintenanceService(
-            profile_settings, profile_transfer, AppSettingsRepository(database)
+            profile_settings, profile_transfer, app_settings
         )
         integration_settings = SimpleNamespace(
             ai_api_key="", ai_base_url="", ai_model="", ai_image_model="",
@@ -127,7 +148,7 @@ class ApiTests(unittest.TestCase):
             integration_settings,
             AIProviderConfigRepository(database, SecretProtector()),
             PlatformAppRepository(database, SecretProtector()),
-            AppSettingsRepository(database),
+            app_settings,
         )
         services = SimpleNamespace(
             database=database,
@@ -138,6 +159,7 @@ class ApiTests(unittest.TestCase):
             notifications=NotificationRepository(database),
             media_assets=media_assets,
             analytics=analytics,
+            analytics_scheduler=AnalyticsRefreshScheduler(app_settings, analytics, collector=None),
             api_tokens=api_tokens,
             webhooks=WebhookRepository(database),
             storage=LocalPathStorage(root / "media"),
@@ -163,16 +185,95 @@ class ApiTests(unittest.TestCase):
             application_lock=asyncio.Lock(),
         )
         app = FastAPI()
+        from app.api.local_boundary import install_local_boundary
+        install_local_boundary(app, "127.0.0.1")
         app.state.services = services
         app.include_router(router)
         app.include_router(content_router)
         app.include_router(v1_router)
         self.services = services
-        self.client = TestClient(app)
+        self.client = TestClient(app, base_url="http://127.0.0.1", headers={"X-Tinix-Request": "1"})
 
     def tearDown(self) -> None:
         self.client.close()
         self.temp.cleanup()
+
+    def test_content_signatures_are_persisted_and_reject_duplicate_names(self) -> None:
+        signature = {
+            "id": "store-signature", "name": "Store", "text": "Tinix Social Hub",
+            "hashtags": ["#tinix", "#tinix"],
+        }
+        saved = self.client.put("/api/content-signatures", json={"signatures": [signature]})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()[0]["hashtags"], ["#tinix"])
+        self.assertEqual(self.client.get("/api/content-signatures").json(), saved.json())
+        duplicate = self.client.put("/api/content-signatures", json={"signatures": [
+            signature, {**signature, "id": "other-signature", "name": " store "},
+        ]})
+        self.assertEqual(duplicate.status_code, 422)
+        self.assertEqual(self.client.get("/api/content-signatures").json(), saved.json())
+
+    def test_target_group_api_persists_targets_and_defaults(self) -> None:
+        account = self.services.accounts.create("Group account", "facebook")
+        target = self.services.targets.sync(account["id"], "facebook", [{"external_id": "group-page", "name": "Page"}])[0]
+        defaults = {"target_content_formats": {target["id"]: "post"}, "target_platform_settings": {}}
+        created = self.client.post("/api/target-groups", json={"name": "Campaign", "defaults": defaults})
+        self.assertEqual(created.status_code, 201)
+        group_id = created.json()["id"]
+        members = self.client.put(f"/api/target-groups/{group_id}/members", json={"target_ids": [target["id"], target["id"]]})
+        self.assertEqual(members.status_code, 200)
+        self.assertEqual(members.json()["target_ids"], [target["id"]])
+        self.assertEqual(members.json()["defaults"], defaults)
+        updated = self.client.put(f"/api/target-groups/{group_id}", json={
+            "name": "Campaign v2", "description": "Reusable", "defaults": defaults,
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["name"], "Campaign v2")
+        self.assertEqual(self.client.delete(f"/api/target-groups/{group_id}").status_code, 200)
+
+    def test_release_detail_returns_frozen_snapshot_and_identity(self) -> None:
+        account = self.services.accounts.create("Release account", "facebook")
+        target = self.services.targets.sync(account["id"], "facebook", [{"external_id": "detail-page", "name": "Detail Page"}])[0]
+        content = self.services.contents.create({
+            "title": "Snapshot test", "caption": "Frozen copy", "platform_variants": {"facebook": {"caption": "Frozen copy"}},
+        })
+        job = self.services.scheduling.schedule(
+            content["id"], account["id"], [target["id"]], None, True, 0, 0, "confirm",
+        )[0]
+        response = self.client.get(f"/api/publication-releases/{job['publication_release_id']}")
+        self.assertEqual(response.status_code, 200)
+        detail = response.json()
+        self.assertEqual(detail["target"]["name"], "Detail Page")
+        self.assertEqual(detail["account"]["name"], "Release account")
+        self.assertEqual(detail["payload_snapshot"]["caption"], "Frozen copy")
+        self.assertEqual(detail["job"]["id"], job["id"])
+        self.assertNotIn("payload_json", detail["job"])
+
+    def test_bulk_release_reschedule_api_updates_group_atomically(self) -> None:
+        account = self.services.accounts.create("Bulk schedule account", "facebook")
+        targets = self.services.targets.sync(account["id"], "facebook", [
+            {"external_id": "bulk-page-a", "name": "Page A"},
+            {"external_id": "bulk-page-b", "name": "Page B"},
+        ])
+        content = self.services.contents.create({
+            "title": "Bulk schedule", "caption": "Caption", "hashtags": [],
+            "platform_variants": {"facebook": {"caption": "Caption", "hashtags": []}},
+        })
+        jobs = self.services.scheduling.schedule(
+            content["id"], account["id"], [target["id"] for target in targets],
+            datetime.now(timezone.utc) + timedelta(days=1), True, 0, 0, "confirm",
+        )
+        release_ids = [job["publication_release_id"] for job in jobs]
+        due = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+        response = self.client.post("/api/publication-releases/reschedule-bulk", json={
+            "release_ids": release_ids, "scheduled_at": due, "timezone": "Asia/Bangkok",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["scheduled_at"] for item in response.json()], [due, due])
+        duplicate = self.client.post("/api/publication-releases/reschedule-bulk", json={
+            "release_ids": [release_ids[0], release_ids[0]], "scheduled_at": due, "timezone": "Asia/Bangkok",
+        })
+        self.assertEqual(duplicate.status_code, 422)
 
     def test_account_crud_and_enable(self) -> None:
         created = self.client.post("/api/accounts", json={
@@ -303,6 +404,42 @@ class ApiTests(unittest.TestCase):
         tested = self.client.post(f"/api/integrations/platform-apps/{item['id']}/test")
         self.assertEqual(tested.status_code, 200)
         self.assertEqual(tested.json()["status"], "oauth_required")
+
+    def test_meta_app_can_be_configured_without_oauth_secret_or_redirect(self) -> None:
+        created = self.client.post("/api/integrations/platform-apps", json={
+            "provider": "meta", "name": "Meta manual token", "client_id": "meta-app-id",
+            "api_version": "v23.0", "enabled": True,
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        item = created.json()
+        self.assertFalse(item["has_client_secret"])
+        self.assertEqual(item["redirect_uri"], "")
+        tested = self.client.post(f"/api/integrations/platform-apps/{item['id']}/test")
+        self.assertEqual(tested.status_code, 200, tested.text)
+        self.assertEqual(tested.json()["status"], "manual_ready")
+
+    def test_meta_system_user_connect_route_never_returns_submitted_token(self) -> None:
+        account = self.client.post("/api/accounts", json={"name": "Page", "platform": "facebook"}).json()
+        token = "system-user-secret-value-123456"
+        meta_accounts = SimpleNamespace(connect_system_user=AsyncMock(return_value={
+            "connected": True, "provider": "meta", "account_id": account["id"],
+            "connection_id": "connection-1", "auth_method": "system_user",
+            "page": {"id": "123456789", "name": "Tí Nị Studio", "target_id": "target-1", "binding_id": "binding-1"},
+            "scopes": ["pages_manage_posts"], "can_publish": True,
+        }))
+        self.services.meta_accounts = meta_accounts
+        response = self.client.post(f"/api/accounts/{account['id']}/connections/meta/system-user", json={
+            "platform_app_id": "app-1", "access_token": token, "page_id": "123456789",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn(token, response.text)
+        meta_accounts.connect_system_user.assert_awaited_once_with(
+            account["id"], "app-1", token, ["123456789"], [],
+        )
+        invalid = self.client.post(f"/api/accounts/{account['id']}/connections/meta/system-user", json={
+            "platform_app_id": "app-1", "access_token": token, "page_id": "tiniphotos",
+        })
+        self.assertEqual(invalid.status_code, 422)
 
     def test_profile_import_backup_export_and_restore_api(self) -> None:
         account = self.client.post("/api/accounts", json={"name": "Main", "platform": "facebook"}).json()
@@ -450,6 +587,11 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(platforms["facebook"]["operational"])
         self.assertTrue(platforms["instagram"]["operational"])
         self.assertEqual(platforms["tiktok"]["capabilities"]["publishing"], "review_required")
+        self.assertEqual(platforms["youtube"]["capabilities"]["analytics"], "review_required")
+        self.assertEqual(
+            next(item for item in platforms["tiktok"]["transports"] if item["id"]=="official_api")["readiness"],
+            "scaffold",
+        )
         self.assertEqual(platforms["instagram"]["format_schemas"][1]["id"], "carousel")
         self.assertEqual(platforms["x"]["format_schemas"][0]["max_caption_length"], 280)
 
@@ -517,6 +659,75 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["supported"])
         self.assertEqual(response.json()["metrics"], {})
+
+    def test_analytics_refresh_settings_are_disabled_by_default_and_persisted(self) -> None:
+        initial=self.client.get("/api/analytics/refresh-settings")
+        self.assertEqual(initial.status_code,200)
+        self.assertFalse(initial.json()["enabled"])
+        updated=self.client.put("/api/analytics/refresh-settings",json={
+            "enabled":True,"interval_hours":12,"days":90,"posts_per_run":4,"channels_per_run":2,
+        })
+        self.assertEqual(updated.status_code,200)
+        self.assertTrue(updated.json()["enabled"])
+        self.assertEqual(updated.json()["interval_hours"],12)
+        invalid=self.client.put("/api/analytics/refresh-settings",json={
+            "enabled":True,"interval_hours":8,"days":90,"posts_per_run":4,"channels_per_run":2,
+        })
+        self.assertEqual(invalid.status_code,422)
+        self.assertTrue(self.client.get("/api/analytics/refresh-settings").json()["enabled"])
+
+    def test_release_listing_filters_and_pages_newest_first(self) -> None:
+        account=self.services.accounts.create("Page","facebook")
+        target=self.services.targets.sync(account["id"],"facebook",[
+            {"external_id":"api-page-1","name":"Page","url":"https://facebook.com/api-page-1"},
+        ])[0]
+        content=self.services.contents.create({
+            "title":"Post","caption":"Test","hashtags":[],"platform_variants":{"facebook":{"caption":"Test"}},
+        })
+        earlier=self.services.scheduling.schedule(
+            content["id"],account["id"],[target["id"]],datetime.now(timezone.utc)+timedelta(days=1),
+            True,0,0,"confirm",
+        )[0]
+        later=self.services.scheduling.schedule(
+            content["id"],account["id"],[target["id"]],datetime.now(timezone.utc)+timedelta(days=2),
+            True,0,0,"confirm",
+        )[0]
+        url=(f"/api/publication-releases?order=desc&limit=1&account_id={account['id']}"
+             f"&target_id={target['id']}")
+        page_one=self.client.get(url)
+        page_two=self.client.get(url+"&offset=1")
+        self.assertEqual(page_one.status_code,200)
+        self.assertEqual(page_one.json()[0]["job_id"],later["id"])
+        self.assertEqual(page_two.json()[0]["job_id"],earlier["id"])
+
+    def test_channel_analytics_routes_read_and_refresh_target_metrics(self) -> None:
+        account = self.services.accounts.create("YouTube", "youtube")
+        target = self.services.targets.sync(account["id"], "youtube", [{
+            "external_id": "UC_test123", "name": "Channel", "url": "https://youtube.com/channel/UC_test123",
+        }])[0]
+
+        async def collect(target_id: str, days: int = 30) -> dict[str, object]:
+            return {"status": "succeeded", "source": "api_youtube_data_v3", "metrics": [],
+                    "target_id": target_id, "days": days}
+
+        self.services.api_analytics_collector = SimpleNamespace(collect_channel=collect)
+        listing = self.client.get("/api/analytics/channels?platform=youtube")
+        detail = self.client.get(f"/api/targets/{target['id']}/metrics")
+        refresh = self.client.post(f"/api/targets/{target['id']}/collect-metrics?days=45")
+        history = self.client.get(f"/api/analytics/channels/history?platform=youtube&target_id={target['id']}&days=30")
+        summary = self.client.get(f"/api/analytics/channels/summary?platform=youtube&account_id={account['id']}")
+
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json(), [])
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json(), {"metrics": [], "history": [], "fetch_runs": []})
+        self.assertEqual(refresh.status_code, 200)
+        self.assertEqual(refresh.json()["source"], "api_youtube_data_v3")
+        self.assertEqual(refresh.json()["days"], 45)
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.json(), [])
+        self.assertEqual(summary.status_code, 200)
+        self.assertFalse(summary.json()["supported"])
 
     def test_v1_requires_token_and_enforces_read(self) -> None:
         self.assertEqual(self.client.get("/api/v1/platforms").status_code, 401)
@@ -626,6 +837,44 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(decided.json()["status"], "approved")
         revisions = self.client.get(f"/api/contents/{content_id}/revisions")
         self.assertEqual(len(revisions.json()), 1)
+
+    def test_batch_schedule_api_creates_one_idempotent_plan_for_multiple_accounts(self) -> None:
+        content = self.services.contents.create({"title": "Batch", "caption": "Hello", "hashtags": []})
+        targets = []
+        for name, external_id in (("Brand A", "101"), ("Brand B", "202")):
+            account = self.services.accounts.create(name, "facebook")
+            target = self.services.targets.sync(account["id"], "facebook", [{
+                "external_id": external_id, "name": f"Page {external_id}",
+                "url": f"https://facebook.com/{external_id}",
+            }])[0]
+            targets.append(target["id"])
+        payload = {
+            "content_id": content["id"], "target_ids": targets,
+            "scheduled_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            "target_scheduled_at": {targets[1]: (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()},
+            "dry_run": True, "content_format": "post", "platform_settings": {},
+            "request_key": "api-batch-request-001",
+        }
+        preview = self.client.post("/api/schedules/batch/preflight", json=payload)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertTrue(preview.json()["ready"])
+        self.assertEqual(len(preview.json()["targets"]), 2)
+        self.assertEqual(self.services.publications.list_plans(), [])
+        first = self.client.post("/api/schedules/batch", json=payload)
+        retry = self.client.post("/api/schedules/batch", json=payload)
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(retry.status_code, 201, retry.text)
+        self.assertEqual({job["id"] for job in first.json()}, {job["id"] for job in retry.json()})
+        self.assertEqual({job["target_id"] for job in first.json()}, set(targets))
+        due_by_target = {job["target_id"]: job["scheduled_at"] for job in first.json()}
+        self.assertNotEqual(due_by_target[targets[0]], due_by_target[targets[1]])
+        self.assertEqual(len(self.services.publications.list_plans()), 1)
+        self.assertEqual(len(self.services.publications.list_releases()), 2)
+
+        changed = dict(payload, target_ids=[targets[0]])
+        conflict = self.client.post("/api/schedules/batch", json=changed)
+        self.assertEqual(conflict.status_code, 422)
+        self.assertEqual(len(self.services.publications.list_plans()), 1)
 
     def test_rich_posts_api_and_bulk_delete(self) -> None:
         p1 = self.client.post("/api/contents", json={

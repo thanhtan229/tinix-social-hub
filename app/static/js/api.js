@@ -1,5 +1,5 @@
 export async function api(path, options = {}) {
-  const headers = options.body instanceof FormData ? {} : {"Content-Type": "application/json"};
+  const headers = options.body instanceof FormData ? {"X-Tinix-Request": "1"} : {"Content-Type": "application/json", "X-Tinix-Request": "1"};
   const response = await fetch(`/api${path}`, {...options, headers: {...headers, ...(options.headers || {})}});
   if (!response.ok) {
     let message = response.statusText;

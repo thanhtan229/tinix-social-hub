@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
-import sys
-import time
 from pathlib import Path
 
 import psutil
@@ -61,6 +58,40 @@ def terminate_processes(processes: list[psutil.Process], timeout: float = 3.0) -
     return len(unique_procs)
 
 
+def owns_backend(proc: psutil.Process, project_dir: Path) -> bool:
+    try:
+        args = proc.cmdline()
+        name = proc.name().lower()
+        if "python" not in name or Path(proc.cwd()).resolve() != project_dir.resolve():
+            return False
+        modules = {"app", "app.worker_entry"}
+        return any(args[i] == "-m" and args[i + 1] in modules for i in range(len(args) - 1)) or "app.main:app" in args or any(
+            Path(arg).resolve() == project_dir.resolve() / "app" / "__main__.py" for arg in args[1:] if arg.endswith("__main__.py")
+        )
+    except (psutil.Error, OSError, ValueError):
+        return False
+
+
+def owns_chrome(proc: psutil.Process, profile_root: Path) -> bool:
+    try:
+        if "chrome" not in proc.name().lower():
+            return False
+        args = proc.cmdline()
+        for i, arg in enumerate(args):
+            if arg.startswith("--user-data-dir="):
+                raw = arg.split("=", 1)[1]
+            elif arg == "--user-data-dir" and i + 1 < len(args):
+                raw = args[i + 1]
+            else:
+                continue
+            path = Path(raw.strip('"')).resolve()
+            root = profile_root.resolve()
+            return path == root or root in path.parents
+        return False
+    except (psutil.Error, OSError, ValueError):
+        return False
+
+
 def cleanup_previous_sessions() -> tuple[int, int]:
     """
     Closes any previous Tinix backend instances and Chrome automation profiles.
@@ -70,44 +101,9 @@ def cleanup_previous_sessions() -> tuple[int, int]:
     current_pid = os.getpid()
     project_dir = settings.project_root.resolve()
     chrome_profile_dir = settings.chrome_profile_dir.resolve()
-    target_port = settings.port
 
     backend_procs: list[psutil.Process] = []
     chrome_procs: list[psutil.Process] = []
-
-    # 1. Close processes bound to the backend port
-    try:
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.laddr and conn.laddr.port == target_port and conn.status == psutil.CONN_LISTEN:
-                if conn.pid and conn.pid != current_pid:
-                    try:
-                        p = psutil.Process(conn.pid)
-                        backend_procs.append(p)
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-    except Exception:
-        pass
-
-    # Windows fallback for port lookup if psutil net_connections was restricted
-    if not backend_procs and os.name == "nt":
-        try:
-            cmd = f"(Get-NetTCPConnection -LocalPort {target_port} -State Listen -ErrorAction SilentlyContinue).OwningProcess"
-            output = subprocess.check_output(
-                ["powershell", "-NoProfile", "-Command", cmd],
-                text=True,
-                timeout=3,
-            )
-            for line in output.strip().splitlines():
-                pid_str = line.strip()
-                if pid_str.isdigit():
-                    pid = int(pid_str)
-                    if pid != current_pid:
-                        try:
-                            backend_procs.append(psutil.Process(pid))
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-        except Exception:
-            pass
 
     # 2. Check recorded chrome sessions in data/chrome_sessions.json
     sessions_file = settings.data_dir / "chrome_sessions.json"
@@ -119,7 +115,8 @@ def cleanup_previous_sessions() -> tuple[int, int]:
                 if pid and pid != current_pid:
                     try:
                         p = psutil.Process(pid)
-                        chrome_procs.append(p)
+                        if owns_chrome(p, chrome_profile_dir):
+                            chrome_procs.append(p)
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
         except Exception:
@@ -131,33 +128,10 @@ def cleanup_previous_sessions() -> tuple[int, int]:
             if proc.pid == current_pid:
                 continue
 
-            name = (proc.info.get("name") or "").lower()
-            cmdline = proc.info.get("cmdline") or []
-            cmd_str = " ".join(cmdline).lower()
-
-            # Identify Tinix-owned Chrome (by checking user-data-dir matching chrome_profile_dir)
-            if "chrome" in name:
-                profile_dir_str = str(chrome_profile_dir).lower()
-                if any(profile_dir_str in arg.lower() for arg in cmdline):
-                    chrome_procs.append(proc)
-                elif "--remote-debugging-port=" in cmd_str and profile_dir_str in cmd_str:
-                    chrome_procs.append(proc)
-
-            # Identify old Python backend instances belonging to this project
-            elif "python" in name:
-                proj_str = str(project_dir).lower()
-                is_tinix = False
-                if ("app.main:app" in cmd_str or "-m app" in cmd_str or "app/__main__.py" in cmd_str):
-                    if proj_str in cmd_str:
-                        is_tinix = True
-                    else:
-                        try:
-                            if proj_str in str(proc.cwd()).lower():
-                                is_tinix = True
-                        except Exception:
-                            pass
-                if is_tinix:
-                    backend_procs.append(proc)
+            if owns_chrome(proc, chrome_profile_dir):
+                chrome_procs.append(proc)
+            elif owns_backend(proc, project_dir):
+                backend_procs.append(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
 

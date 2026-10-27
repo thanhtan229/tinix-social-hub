@@ -2,7 +2,7 @@
 
 ## Mục tiêu và quyết định cố định
 
-Tinix là ứng dụng desktop-local, PC-first cho một người dùng: quản lý nội dung, approval, lịch phát hành, Chrome profiles, đối soát và automation nội bộ. Chrome automation là transport mặc định; YouTube video/Short có thể dùng official API qua OAuth. Cookie/session Chrome ở nguyên trong profile, còn token OAuth được bảo vệ bằng DPAPI trên Windows.
+Tinix là ứng dụng desktop-local, PC-first cho một người dùng: quản lý nội dung, approval, lịch phát hành, Chrome profiles, đối soát và automation nội bộ. Chrome automation là transport mặc định; YouTube video/Short và Facebook Page post/ảnh đơn/album ảnh/video MP4/Reel có official API. Một ảnh, album hai ảnh, video Page thường và Reel đã được thử live trên Page Tinix. Cookie/session Chrome ở nguyên trong profile, còn credential API được bảo vệ bằng DPAPI trên Windows.
 
 ## Luồng dữ liệu
 
@@ -11,8 +11,8 @@ WebUI / CLI / local API v1
   -> content revision + approval
   -> publication plan -> frozen release per target
   -> durable job -> scheduler -> worker
-  -> versioned Chrome adapter -> composer -> commit point -> UI verifier
-  -> release metrics (UI Chrome) + notifications + webhook outbox
+  -> versioned Chrome/API adapter -> composer -> commit point -> verifier
+  -> release/channel metrics (UI Chrome hoặc official read API) + notifications + webhook outbox
 ```
 
 ## Khối chức năng
@@ -24,7 +24,7 @@ WebUI / CLI / local API v1
 | Media Library | Streaming upload, SHA-256 dedupe, dimensions, alt/tags, references, orphan safety |
 | Release control | Plans/releases, attempts/events/artifacts, retry preview, commit safety, manual finalize |
 | Chrome providers | Facebook post; Instagram image/carousel; TikTok short video; YouTube video/Short; X post |
-| Analytics | Manual connect, DOM collection, provenance/timezone, idempotent snapshots, 7/30/90 comparison |
+| Analytics | Post + channel snapshots; YouTube daily reports, source/unit/period provenance, manual or opt-in bounded refresh, account/target filters and pagination |
 | Automation | Authenticated `/api/v1`, scoped DPAPI token, CLI, signed durable webhooks |
 | Runtime | SQLite/local storage/DPAPI/managed Chrome behind explicit contracts; standalone worker supported |
 
@@ -35,8 +35,8 @@ WebUI / CLI / local API v1
 - Commit point is recorded before a non-idempotent click.
 - Crash/timeout after commit becomes `unknown_result`; no automatic retry.
 - Media and settings are frozen into each release snapshot.
-- Unsupported analytics is distinct from a numeric zero.
-- Network publishing uses a per-account dual-transport router. YouTube official API is implemented; Facebook, Instagram, TikTok and X currently remain on Chrome publishing.
+- Unsupported analytics is distinct from a numeric zero; lifetime counters and daily intervals are stored and aggregated separately.
+- Network publishing uses a per-target dual-transport router with frozen connection/scope evidence. YouTube official publishing is implemented; Facebook, Instagram, TikTok and X remain on Chrome pending official adapter and provider entitlement work.
 
 ## Operational status
 

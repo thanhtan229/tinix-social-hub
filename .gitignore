@@ -17,5 +17,6 @@ test-results/
 *.log
 *.tmp
 *.part
+.tinix-worker-*.lock
 .tmp-tests/
 .ruff_cache/

@@ -178,20 +178,29 @@ class PlatformAppRepository:
 
     def create(self, *, provider: str, name: str, client_id: str, client_secret: str, redirect_uri: str, api_version: str = "", scopes: list[str] | None = None, enabled: bool = True) -> dict[str, Any]:
         definition = platform_app(provider)
-        if not client_id.strip() or not client_secret.strip():
-            raise ValueError("Client/App ID và Client Secret không được để trống.")
+        clean_client_id = client_id.strip()
+        clean_client_secret = (client_secret or "").strip()
+        clean_redirect_uri = (redirect_uri or "").strip()
+        if not clean_client_id:
+            raise ValueError("Client/App ID không được để trống.")
+        if provider != "meta" and (not clean_client_secret or not clean_redirect_uri):
+            raise ValueError("Client Secret và Redirect URI không được để trống.")
         app_id, now = str(uuid.uuid4()), utc_now()
+        protected_secret_value = clean_client_secret or "meta-manual-only"
         with self.db.connection() as connection:
             connection.execute(
                 "INSERT INTO platform_apps(id,provider,name,client_id,client_secret_protected,secret_hint,redirect_uri,api_version,scopes_json,enabled,last_test_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'untested',?,?)",
-                (app_id, provider, name.strip(), client_id.strip(), self.protector.protect_secret(client_secret.strip()), _hint(client_secret.strip()), redirect_uri.strip(), api_version.strip(), _json(scopes if scopes is not None else definition["scopes"]), int(enabled), now, now),
+                (app_id, provider, name.strip(), clean_client_id, self.protector.protect_secret(protected_secret_value), _hint(clean_client_secret), clean_redirect_uri, api_version.strip(), _json(scopes if scopes is not None else definition["scopes"]), int(enabled), now, now),
             )
         return self.get(app_id)  # type: ignore[return-value]
 
     def update(self, app_id: str, *, name: str | None = None, client_id: str | None = None, client_secret: str | None = None, redirect_uri: str | None = None, api_version: str | None = None, scopes: list[str] | None = None, enabled: bool | None = None) -> dict[str, Any]:
         with self.db.connection() as connection:
-            if not connection.execute("SELECT id FROM platform_apps WHERE id=?", (app_id,)).fetchone():
+            existing = connection.execute("SELECT id,provider FROM platform_apps WHERE id=?", (app_id,)).fetchone()
+            if not existing:
                 raise KeyError(app_id)
+            if redirect_uri is not None and not redirect_uri.strip() and existing["provider"] != "meta":
+                raise ValueError("Redirect URI không được để trống.")
             fields, values = ["updated_at=?"], [utc_now()]
             for field, value in (("name", name), ("client_id", client_id), ("redirect_uri", redirect_uri), ("api_version", api_version)):
                 if value is not None:

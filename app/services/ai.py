@@ -39,6 +39,13 @@ class PlatformVariant(BaseModel):
     video_script: str | None = None
 
 
+class ContentComposition(BaseModel):
+    version: int = Field(default=1, ge=1, le=1)
+    global_content: PlatformVariant = Field(default_factory=PlatformVariant)
+    platform_overrides: dict[str, PlatformVariant] = Field(default_factory=dict)
+    target_overrides: dict[str, PlatformVariant] = Field(default_factory=dict)
+
+
 class StructuredContent(BaseModel):
     topic: str = ""
     summary: str = ""

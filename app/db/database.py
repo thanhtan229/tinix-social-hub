@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import tempfile
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -717,6 +718,98 @@ MIGRATIONS: list[tuple[int, str]] = [
         updated_at=datetime('now')
     WHERE platform='facebook' AND external_id IN ('url:latest','url:ad_center');
     """),
+    (19, """
+    ALTER TABLE release_metrics ADD COLUMN metric_kind TEXT NOT NULL DEFAULT 'snapshot';
+    ALTER TABLE release_metrics ADD COLUMN unit TEXT NOT NULL DEFAULT 'count';
+    ALTER TABLE release_metrics ADD COLUMN period_start TEXT;
+    ALTER TABLE release_metrics ADD COLUMN period_end TEXT;
+    CREATE TABLE channel_metrics (
+        id TEXT PRIMARY KEY,
+        target_id TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        metric_date TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        value REAL NOT NULL,
+        source TEXT NOT NULL,
+        metric_kind TEXT NOT NULL DEFAULT 'snapshot',
+        unit TEXT NOT NULL DEFAULT 'count',
+        period_start TEXT,
+        period_end TEXT,
+        fetched_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE CASCADE,
+        UNIQUE(target_id,metric_key,metric_date,source)
+    );
+    CREATE INDEX idx_channel_metrics_range ON channel_metrics(metric_date,metric_key,target_id);
+    CREATE TABLE channel_analytics_fetch_runs (
+        id TEXT PRIMARY KEY,
+        target_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        metrics_count INTEGER NOT NULL DEFAULT 0,
+        message TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_channel_analytics_runs_target ON channel_analytics_fetch_runs(target_id,started_at DESC);
+    """),
+    (20, """
+    ALTER TABLE publication_releases ADD COLUMN connection_scopes_hash TEXT;
+    ALTER TABLE release_metrics ADD COLUMN provider_metric_name TEXT;
+    ALTER TABLE channel_metrics ADD COLUMN provider_metric_name TEXT;
+    """),
+    (21, """
+    CREATE TABLE provider_target_connections (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        external_target_id TEXT NOT NULL,
+        access_token_protected TEXT NOT NULL,
+        tasks_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'connected',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(connection_id) REFERENCES account_connections(id) ON DELETE CASCADE,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE CASCADE,
+        UNIQUE(connection_id,target_id)
+    );
+    CREATE INDEX idx_provider_target_connections_target ON provider_target_connections(target_id,status);
+    """),
+    (22, """
+    ALTER TABLE content_items ADD COLUMN composition_json TEXT NOT NULL DEFAULT '{}';
+    """),
+    (23, """
+    ALTER TABLE publication_plans ADD COLUMN request_key TEXT;
+    ALTER TABLE publication_plans ADD COLUMN request_hash TEXT;
+    CREATE UNIQUE INDEX idx_publication_plans_request_key ON publication_plans(request_key) WHERE request_key IS NOT NULL;
+    """),
+    (24, """
+    CREATE TABLE content_target_media_overrides (
+        content_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(content_id,target_id),
+        FOREIGN KEY(content_id) REFERENCES content_items(id) ON DELETE CASCADE,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE CASCADE
+    );
+    CREATE TABLE content_media_targets (
+        content_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        asset_id TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        alt_text TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(content_id,target_id,asset_id),
+        FOREIGN KEY(content_id,target_id) REFERENCES content_target_media_overrides(content_id,target_id) ON DELETE CASCADE,
+        FOREIGN KEY(asset_id) REFERENCES media_assets(id) ON DELETE RESTRICT
+    );
+    CREATE INDEX idx_content_media_targets_asset ON content_media_targets(asset_id);
+    """),
+    (25, """
+    ALTER TABLE target_groups ADD COLUMN defaults_json TEXT NOT NULL DEFAULT '{}';
+    """),
 ]
 
 
@@ -799,7 +892,14 @@ class Database:
             for p in sorted(self.backup_dir.glob("tinix-*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
         ]
 
-    def restore_backup(self, name: str) -> Path:
+    @staticmethod
+    def prepare_restored_snapshot(path: Path, backup_dir: Path) -> None:
+        from app.db.repositories import JobRepository
+        staged = Database(path, backup_dir)
+        staged.initialize()
+        JobRepository(staged).quarantine_restored_publications()
+
+    def restore_backup(self, name: str, *, quarantine: bool = True) -> Path:
         source = (self.backup_dir / Path(name).name).resolve()
         if source.parent != self.backup_dir.resolve() or not source.is_file():
             raise FileNotFoundError("Không tìm thấy bản backup hợp lệ.")
@@ -808,8 +908,14 @@ class Database:
                 raise ValueError("Backup bị lỗi integrity check.")
         safety = self.create_backup(reason="before-restore", keep=1000)
         try:
-            with closing(sqlite3.connect(source)) as backup, closing(sqlite3.connect(self.path)) as target:
-                backup.backup(target)
+            with tempfile.TemporaryDirectory(prefix="tinix-restore-") as directory:
+                staged = Path(directory) / "snapshot.db"
+                with closing(sqlite3.connect(source)) as backup, closing(sqlite3.connect(staged)) as target:
+                    backup.backup(target)
+                if quarantine:
+                    self.prepare_restored_snapshot(staged, Path(directory) / "backups")
+                with closing(sqlite3.connect(staged)) as backup, closing(sqlite3.connect(self.path)) as target:
+                    backup.backup(target)
         except Exception:
             with closing(sqlite3.connect(safety)) as backup, closing(sqlite3.connect(self.path)) as target:
                 backup.backup(target)

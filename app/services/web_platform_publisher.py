@@ -241,7 +241,8 @@ class ChromeWebPublisher(Publisher):
         if self.spec.create_selector:
             create = page.locator(self.spec.create_selector).first
             if await create.count(): await create.click(timeout=15_000)
-        paths = [await asyncio.to_thread(self.media.resolve_existing, item["relative_path"]) for item in context.payload.get("media", [])]
+        from app.services.media import resolve_publish_media
+        paths = [await asyncio.to_thread(resolve_publish_media, self.media, item) for item in context.payload.get("media", [])]
         if paths:
             await context.transition("uploading", "upload_started", False)
             await page.locator(self.spec.file_input).last.set_input_files([str(path) for path in paths], timeout=30_000)

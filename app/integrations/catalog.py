@@ -43,8 +43,14 @@ PLATFORM_APPS: dict[str, dict[str, Any]] = {
     "meta": {
         "id": "meta", "name": "Meta (Facebook & Instagram)", "client_label": "App ID",
         "secret_label": "App Secret", "default_redirect_path": "/api/oauth/meta/callback",
-        "scopes": ["pages_show_list", "pages_manage_posts", "instagram_basic"],
-        "official_publisher": "planned",
+        "scopes": ["pages_show_list", "pages_manage_posts", "pages_read_engagement", "read_insights"],
+        "official_publisher": "review_required",
+    },
+    "instagram": {
+        "id": "instagram", "name": "Instagram Login (độc lập)", "client_label": "Instagram App ID",
+        "secret_label": "Instagram App Secret", "default_redirect_path": "/api/oauth/instagram/callback",
+        "scopes": ["instagram_business_basic", "instagram_business_content_publish"],
+        "official_publisher": "review_required",
     },
     "tiktok": {
         "id": "tiktok", "name": "TikTok", "client_label": "Client Key",

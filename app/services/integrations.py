@@ -259,6 +259,12 @@ class IntegrationService:
         item = self.platform_apps.get(app_id)
         if not item:
             raise KeyError(app_id)
+        if item["provider"] == "meta" and (not item.get("has_client_secret") or not item.get("redirect_uri")):
+            self.platform_apps.mark_test(app_id, status="manual_ready")
+            return {
+                "status": "manual_ready", "provider": item["provider"],
+                "message": "App ID sẵn sàng cho kết nối System User token. Secret và Redirect URI chỉ cần khi dùng OAuth.",
+            }
         parsed = urlparse(item["redirect_uri"])
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             self.platform_apps.mark_test(app_id, status="failed", error_code="invalid_redirect_uri", error_message="Redirect URI phải là URL http/https tuyệt đối.")

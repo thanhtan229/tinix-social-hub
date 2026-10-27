@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,7 +19,9 @@ class Connections:
         self.status_updates = []
 
     def list(self, **_kwargs):
-        return [{"id": "connection-1", "provider": "youtube", "status": "connected"}]
+        return [{"id": "connection-1", "provider": "youtube", "status": "connected",
+                 "scopes": ["https://www.googleapis.com/auth/youtube.upload",
+                            "https://www.googleapis.com/auth/youtube.readonly"]}]
 
     def set_status(self, *args, **kwargs):
         self.status_updates.append((args, kwargs))
@@ -66,6 +69,19 @@ class FakeYouTubeClient:
 
 
 class YouTubeOfficialPublisherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_changed_video_is_rejected_before_provider_request(self):
+        with tempfile.TemporaryDirectory() as root:
+            video = Path(root) / "demo.mp4"
+            video.write_bytes(b"other")
+            publisher = YouTubeOfficialPublisher(SimpleNamespace(provider_timeout_seconds=30), Connections(), ProviderAccounts(), Media(video))
+            transitions, requests = [], []
+            with patch("app.platforms.providers.youtube.httpx.AsyncClient") as client:
+                result = await publisher.publish(self._context(dry_run=False, transitions=transitions, requests=requests))
+            self.assertEqual(result.outcome, PublishOutcome.UNSUPPORTED)
+            client.assert_not_called()
+            self.assertEqual(transitions, [])
+            self.assertEqual(requests, [])
+
     def _context(self, *, dry_run: bool, transitions: list, requests: list) -> PublishContext:
         async def transition(*args):
             transitions.append(args)
@@ -78,7 +94,8 @@ class YouTubeOfficialPublisherTests(unittest.IsolatedAsyncioTestCase):
             account={"id": "account-1", "platform": "youtube"},
             payload={
                 "content_format": "video", "title": "Tinix demo", "caption": "Demo",
-                "media": [{"type": "video", "relative_path": "demo.mp4"}],
+                "media": [{"type": "video", "relative_path": "demo.mp4", "size_bytes": 5,
+                           "sha256": hashlib.sha256(b"video").hexdigest()}],
                 "platform_settings": {"privacy": "private"},
             },
             is_cancelled=lambda: asyncio.sleep(0, result=False),

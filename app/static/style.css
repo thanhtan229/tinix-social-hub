@@ -762,6 +762,29 @@ button:disabled {
   font-size: 11.5px;
 }
 
+.quick-schedule-preview li {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.quick-schedule-preview li[data-status="error"] {
+  border-color: #E8A5A5;
+  background: #FFF8F7;
+}
+
+.quick-schedule-preview li[data-status="ready"] {
+  border-color: #A7D8C0;
+  background: #F7FCF9;
+}
+
+.quick-schedule-preview li small {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+}
+
 /* ==========================================================================
    Forms & Controls
    ========================================================================== */
@@ -1046,6 +1069,24 @@ select[multiple] {
   font-size: 15px;
 }
 
+.day-slot-suggestions {
+  margin-bottom: 12px;
+  padding: 12px 16px;
+}
+
+.day-slot-suggestions ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 8px 0;
+}
+
+#calendarRescheduleSummary {
+  white-space: pre-line;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 .calendar-grid {
   display: grid;
   padding: 0;
@@ -1065,6 +1106,10 @@ select[multiple] {
 .calendar-grid.month-view {
   grid-template-columns: repeat(7, minmax(110px, 1fr));
   overflow-x: auto;
+}
+
+.calendar-grid.day-view {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .calendar-day {
@@ -1096,18 +1141,13 @@ select[multiple] {
 }
 
 .release-card {
-  display: grid;
-  width: 100%;
-  gap: 3px;
-  text-align: left;
-  padding: 8px 10px;
+  padding: 5px 8px;
   margin-bottom: 6px;
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border-subtle);
   border-left: 3px solid var(--color-teal-dark);
   border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
-  cursor: pointer;
 }
 
 .release-card:hover {
@@ -1115,6 +1155,40 @@ select[multiple] {
   box-shadow: var(--shadow-raised);
   border-color: var(--color-teal-medium);
   background: #FFFFFF;
+}
+
+.release-card-detail {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 3px 2px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.release-card .release-select {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 2px;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.release-card .release-select input {
+  width: 14px;
+  min-height: 14px;
+  margin: 0;
+}
+
+.release-card-reschedule {
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 10px;
 }
 
 .release-card time {
@@ -1649,6 +1723,30 @@ tr:hover td {
   text-overflow: ellipsis;
 }
 
+.account-cell-status .api-connection-status {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+.api-connection-connected {
+  background: #DCFCE7;
+  color: #166534;
+}
+
+.api-connection-disconnected {
+  background: #F1F5F9;
+  color: #475569;
+}
+
+.api-connection-reauth {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
 .account-cell-actions {
   display: table-cell;
 }
@@ -1695,6 +1793,26 @@ tr:hover td {
 .btn-card-chrome:hover {
   background: #F0F9FF;
   border-color: #0284C7;
+}
+
+.btn-card-api-reconnect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+  padding: 4px 8px;
+  border: 1px solid #FCD34D;
+  border-radius: 5px;
+  background: #FFFBEB;
+  color: #92400E;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-card-api-reconnect:hover {
+  border-color: #F59E0B;
+  background: #FEF3C7;
 }
 
 /* Right Detail View & Form */
@@ -1834,6 +1952,12 @@ tr:hover td {
   display: flex;
   align-items: stretch;
   position: relative;
+}
+
+.detail-token-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .input-with-button input {
@@ -2292,6 +2416,68 @@ dialog::backdrop {
 dialog form {
   display: grid;
   gap: 14px;
+}
+
+#metaSystemUserDialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+#metaSystemUserForm fieldset {
+  min-width: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+#metaSystemUserForm legend {
+  padding: 0 6px;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.meta-page-choice-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.meta-page-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.meta-page-choice label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.meta-page-choice label input {
+  margin-top: 3px;
+  accent-color: var(--color-primary);
+}
+
+.meta-page-choice label span {
+  display: grid;
+  gap: 3px;
+}
+
+.meta-page-choice small {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.meta-page-choice.is-disconnected {
+  opacity: 0.7;
 }
 
 dialog h2 {
@@ -3122,6 +3308,42 @@ dialog h2 {
   background: var(--color-primary-subtle);
 }
 
+.target-media-override-editor {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--color-bg-subtle);
+}
+
+.target-media-override-editor .media-section-head {
+  gap: 10px;
+}
+
+.target-media-override-editor select {
+  max-width: min(360px, 42vw);
+}
+
+.target-media-override-editor > .muted {
+  margin: 4px 0 8px;
+}
+
+@media (max-width: 720px) {
+  .target-media-override-editor .media-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .target-media-override-editor .media-upload-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .target-media-override-editor select {
+    max-width: 100%;
+    width: 100%;
+  }
+}
+
 .media-drop-zone-placeholder {
   grid-column: 1 / -1;
   text-align: center;
@@ -3173,6 +3395,138 @@ dialog h2 {
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
   margin-top: 8px;
+}
+
+.post-release-group-summary {
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.post-release-group-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.post-release-group-summary button {
+  padding: 3px 7px;
+  font-size: 10px;
+}
+
+.quick-schedule-groups {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-schedule-groups label {
+  flex: 1 1 240px;
+}
+
+.quick-schedule-groups select {
+  display: block;
+  width: 100%;
+}
+
+.signature-tools {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.signature-tools label {
+  flex: 1 1 240px;
+}
+
+.signature-tools select {
+  display: block;
+  width: 100%;
+}
+
+.signature-manager-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.signature-manager-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.signature-manager-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.signature-manager-row small {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-manager-selection {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px;
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.release-detail-dialog {
+  width: min(900px, calc(100vw - 32px));
+  max-width: 900px;
+}
+
+.release-detail-content > section {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.release-snapshot-copy {
+  padding: 10px;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-bg-subtle);
+  white-space: pre-wrap;
+}
+
+.release-snapshot-copy p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
+.release-snapshot-media {
+  padding-left: 20px;
+}
+
+.release-detail-content pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 720px) {
+  .signature-tools {
+    flex-wrap: wrap;
+  }
 }
 
 .editor-media-item {

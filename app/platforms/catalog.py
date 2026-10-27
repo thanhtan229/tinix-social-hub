@@ -36,6 +36,7 @@ class PlatformCapabilities:
     dry_run: CapabilityState
     publishing: CapabilityState
     result_verification: CapabilityState
+    analytics: CapabilityState = "scaffold"
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,27 +125,48 @@ def youtube_transports() -> tuple[TransportDefinition, ...]:
 
 PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
     PlatformDefinition(
-        id="facebook", name="Facebook", phase="MVP release candidate",
+        id="facebook", name="Facebook", phase="Page API text/photo album/video + Reel",
         account_label="Facebook account", target_label="Page", target_types=("page",),
-        content_formats=("post",),
+        content_formats=("post", "photo", "multi_photo", "video", "reel"),
         capabilities=PlatformCapabilities("ready", "ready", "ready", "review_required", "review_required", "review_required"),
-        next_milestone="Kiểm thử dry-run và đăng thật có giám sát trên Page thực tế.",
+        next_milestone="Official API hỗ trợ bài chữ, một ảnh, album ảnh, video Page MP4 và Reel; media cần Page/app có quyền phù hợp.",
         selector_version="facebook-web-v1", operational=True,
-        transports=foundation_transports(("post",)),
+        transports=(
+            foundation_transports(("post",))[0],
+            TransportDefinition(
+                id="official_api", readiness="review_required",
+                content_formats=("post", "photo", "multi_photo", "video", "reel"),
+                authentication="review_required", target_discovery="review_required",
+                publishing="review_required", result_verification="review_required",
+                required_scopes=("pages_show_list", "pages_manage_posts", "pages_read_engagement", "read_insights"),
+            ),
+        ),
         format_schemas=(
             FormatSchema("post", "Bài viết", 63206, 0, 10, ("image", "video"), (
                 SettingSchema("first_comment", "Bình luận đầu tiên", "textarea"),
             )),
+            FormatSchema("photo", "Ảnh Facebook", 63206, 1, 1, ("image",)),
+            FormatSchema("multi_photo", "Nhiều ảnh Facebook", 63206, 2, 10, ("image",)),
+            FormatSchema("video", "Video Page thường", 63206, 1, 1, ("video",)),
+            FormatSchema("reel", "Facebook Reel", 63_000, 1, 1, ("video",)),
         ),
     ),
     PlatformDefinition(
-        id="instagram", name="Instagram", phase="Chrome adapter · image/carousel",
+        id="instagram", name="Instagram", phase="Chrome image/carousel · Instagram Login API photo publisher implemented; R2 and live acceptance required",
         account_label="Instagram account", target_label="Profile", target_types=("profile",),
         content_formats=("image", "carousel"),
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
-        next_milestone="Dry-run thủ công trên profile thật; Reel/Story chưa được hỗ trợ.",
+        next_milestone="Instagram Login độc lập; publisher ảnh chờ cấu hình private R2 và nghiệm thu OAuth/live.",
         selector_version="instagram-web-v1", operational=True,
-        transports=foundation_transports(("image", "carousel")),
+        transports=(
+            foundation_transports(("image", "carousel"))[0],
+            TransportDefinition(
+                id="official_api", readiness="review_required", content_formats=("image",),
+                authentication="review_required", target_discovery="api",
+                publishing="review_required", result_verification="review_required",
+                required_scopes=("instagram_business_basic", "instagram_business_content_publish"),
+            ),
+        ),
         format_schemas=(
             FormatSchema("image", "Ảnh", 2200, 1, 1, ("image",)),
             FormatSchema("carousel", "Carousel", 2200, 2, 10, ("image",)),
@@ -169,8 +191,11 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         id="youtube", name="YouTube", phase="Chrome adapter · video/Short",
         account_label="Google account", target_label="Channel", target_types=("channel",),
         content_formats=("video", "short"),
-        capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
-        next_milestone="Dry-run YouTube Studio trên channel thật; Community post chưa được hỗ trợ.",
+        capabilities=PlatformCapabilities(
+            "ready", "review_required", "review_required", "review_required", "review_required", "review_required",
+            analytics="review_required",
+        ),
+        next_milestone="OAuth API hỗ trợ đăng video/Short, snapshot và báo cáo theo ngày; cần acceptance trên channel thật.",
         selector_version="youtube-studio-web-v1", operational=True,
         transports=youtube_transports(),
         format_schemas=(

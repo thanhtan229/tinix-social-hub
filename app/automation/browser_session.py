@@ -34,6 +34,11 @@ class BrowserSession:
             raise BrowserConnectionError("BrowserSession chưa kết nối.")
         return self.context.pages[0] if self.context.pages else await self.context.new_page()
 
+    async def new_page(self) -> Page:
+        if not self.context:
+            raise BrowserConnectionError("BrowserSession chưa kết nối.")
+        return await self.context.new_page()
+
     async def disconnect(self) -> None:
         # Do not call browser.close(): Chrome lifecycle belongs to ChromeManager.
         if self.playwright:
@@ -47,4 +52,3 @@ class BrowserSession:
 
     async def __aexit__(self, *args: Any) -> None:
         await self.disconnect()
-

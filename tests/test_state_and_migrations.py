@@ -12,7 +12,7 @@ from app.db.database import MIGRATIONS, Database, utc_now
 from app.db.repositories import AccountRepository, JobRepository
 from app.domain.jobs import InvalidJobTransition, validate_transition
 from app.services.ai import OpenAICompatibleProvider
-from app.services.publishers import Publisher, PublisherRegistry
+from app.services.publishers import PublishOutcome, PublishResult, Publisher, PublisherRegistry
 from app.services.worker import LocalWorker
 
 
@@ -41,7 +41,10 @@ class MigrationTests(unittest.TestCase):
             database = Database(path, root / "backups")
             self.assertTrue(database.initialize())
             with database.connection() as migrated:
-                self.assertEqual(migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0], 18)
+                self.assertEqual(
+                    migrated.execute("SELECT MAX(version) FROM schema_version").fetchone()[0],
+                    MIGRATIONS[-1][0],
+                )
                 self.assertEqual(migrated.execute("SELECT name FROM accounts WHERE id='a1'").fetchone()[0], "Page")
                 job = migrated.execute("SELECT status,dry_run FROM jobs WHERE id='j1'").fetchone()
                 self.assertEqual((job["status"], job["dry_run"]), ("queued", 1))
@@ -106,7 +109,9 @@ class MigrationTests(unittest.TestCase):
             path = root / "data" / "tinix_social.db"
             path.parent.mkdir(parents=True)
             connection = sqlite3.connect(path, isolation_level=None)
-            for version, sql in MIGRATIONS[:-1]:
+            for version, sql in MIGRATIONS:
+                if version >= 18:
+                    continue
                 for statement in sql.split(";"):
                     if statement.strip():
                         connection.execute(statement)
@@ -148,6 +153,10 @@ class StateMachineTests(unittest.TestCase):
         with self.assertRaises(InvalidJobTransition):
             validate_transition("queued", "succeeded")
 
+    def test_uncertain_album_upload_can_be_marked_unknown(self) -> None:
+        self.assertEqual(validate_transition("checking_login", "unknown_result")[1].value, "unknown_result")
+        self.assertEqual(validate_transition("uploading", "unknown_result")[1].value, "unknown_result")
+
     def test_retry_waits_for_next_attempt(self) -> None:
         job = self.jobs.create("ai_content", {"prompt": "x"}, None, None)
         self.jobs.claim_next()
@@ -168,6 +177,21 @@ class StateMachineTests(unittest.TestCase):
         self.jobs.transition(job["id"], "publishing")
         self.assertEqual(self.jobs.recover_interrupted(), 1)
         self.assertEqual(self.jobs.get(job["id"])["status"], "unknown_result")
+
+    def test_provider_session_marker_survives_restart_and_new_attempt(self) -> None:
+        job = self.jobs.create("publish", {}, None, None)
+        self.jobs.claim_next()
+        upload_url = "https://rupload.facebook.com/video-upload/v26.0/1234567"
+        self.jobs.record_provider_request(job["id"], upload_url)
+        self.assertEqual(self.jobs.recover_interrupted(), 1)
+        self.jobs.claim_next()
+        self.assertEqual(self.jobs.latest_provider_request(job["id"]), {
+            "provider_request_id": upload_url, "commit_possible": 0,
+        })
+        self.jobs.record_provider_request(job["id"], upload_url, commit_possible=True)
+        self.assertEqual(self.jobs.latest_provider_request(job["id"]), {
+            "provider_request_id": upload_url, "commit_possible": 1,
+        })
 
     def test_failure_after_commit_is_never_retried(self) -> None:
         job = self.jobs.create("publish", {}, None, None)
@@ -247,6 +271,26 @@ class WorkerPublisherSafetyTests(unittest.IsolatedAsyncioTestCase):
         finished = await self.wait_for_terminal(job["id"])
         self.assertEqual(finished["status"], "permanent_failure")
         self.assertEqual(finished["failure_code"], "unsupported")
+
+    async def test_unknown_publisher_result_keeps_diagnostic_and_provider_id(self) -> None:
+        class UncertainPublisher(Publisher):
+            async def publish(self, context):
+                return PublishResult(PublishOutcome.UNKNOWN_RESULT,
+                                     "Meta từ chối upload (HTTP 400, code 100).",
+                                     metadata={"external_id": "1234567"})
+
+        self.worker.publishers.register("facebook", UncertainPublisher())
+        account = self.accounts.create("Page", "facebook")
+        job = self.jobs.create("publish", {"text": "hello"}, account["id"], None, dry_run=False)
+        self.worker.notify()
+        for _ in range(100):
+            current = self.jobs.get(job["id"])
+            if current["status"] == "unknown_result":
+                break
+            await asyncio.sleep(0.02)
+        self.assertEqual(current["status"], "unknown_result")
+        self.assertIn("HTTP 400", current["error"])
+        self.assertEqual(current["result"]["metadata"]["external_id"], "1234567")
 
     async def test_running_publisher_receives_real_task_cancellation(self) -> None:
         started = asyncio.Event()

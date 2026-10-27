@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,300..700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=1.0.24">
+  <link rel="stylesheet" href="/static/style.css?v=1.0.44">
 </head>
 <body>
   <aside class="sidebar">
@@ -128,6 +128,7 @@
             </div>
             <div id="aiImageControls" class="ai-image-controls">
               <label class="full">Provider ảnh<select id="aiImageSource" disabled aria-busy="true"><option value="" selected>Đang tải provider từ Tinix Media Creator…</option></select></label>
+              <label class="full">Model tạo ảnh<select id="aiImageModel"><option value="">Tự động (theo provider)</option></select></label>
               <label>Tỷ lệ<select id="aiImageAspectRatio"><option value="auto">Tự động</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="16:9">16:9</option><option value="9:16">9:16</option></select></label>
               <label>Số ảnh<select id="aiImageCount"><option value="1">1 ảnh</option><option value="2">2 ảnh</option><option value="4">4 ảnh</option></select></label>
             </div>
@@ -304,9 +305,10 @@
 
     <section id="tab-compose" class="tab">
       <div class="page-head"><div><p class="eyebrow">CALENDAR & COMPOSER</p><h1>Calendar phát hành</h1><p>Lịch hiển thị theo giờ máy; dữ liệu được lưu UTC.</p></div><button id="calendarToday">Hôm nay</button></div>
-      <div class="calendar-toolbar panel"><div class="view-switch"><button type="button" data-calendar-view="week" class="active">Tuần</button><button type="button" data-calendar-view="month">Tháng</button><button type="button" data-calendar-view="list">Danh sách</button></div><button id="calendarPrev" type="button">←</button><input id="calendarAnchor" type="date"><button id="calendarNext" type="button">→</button><select id="calendarPlatform"><option value="">Mọi nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="x">X</option></select><select id="calendarStatus"><option value="">Mọi trạng thái</option><option value="scheduled">Đã lên lịch</option><option value="queued">Đang chờ</option><option value="succeeded">Thành công</option><option value="dry_run_ready">Dry-run</option><option value="permanent_failure">Lỗi</option></select></div>
+      <div class="calendar-toolbar panel"><div class="view-switch"><button type="button" data-calendar-view="day">Ngày</button><button type="button" data-calendar-view="week" class="active">Tuần</button><button type="button" data-calendar-view="month">Tháng</button><button type="button" data-calendar-view="list">Danh sách</button></div><button id="calendarPrev" type="button">←</button><input id="calendarAnchor" type="date"><button id="calendarNext" type="button">→</button><select id="calendarPlatform"><option value="">Mọi nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="x">X</option></select><select id="calendarAccount"><option value="">Mọi tài khoản</option></select><select id="calendarTarget"><option value="">Mọi Page/kênh</option></select><select id="calendarStatus"><option value="">Mọi trạng thái</option><option value="scheduled">Đã lên lịch</option><option value="queued">Đang chờ</option><option value="succeeded">Thành công</option><option value="dry_run_ready">Dry-run</option><option value="permanent_failure">Lỗi</option></select><button id="calendarBulkReschedule" class="primary hidden" type="button">Đổi lịch các release đã chọn</button></div>
       <div id="calendarRange" class="calendar-range"></div>
-      <div id="calendarGrid" class="calendar-grid panel"></div>
+      <div id="daySlotSuggestions" class="panel day-slot-suggestions hidden"></div>
+      <div id="calendarGrid" class="calendar-grid panel"></div><dialog id="calendarRescheduleDialog"><form id="calendarRescheduleForm" class="form-grid compact"><div class="dialog-head full"><div><h2>Đổi lịch release</h2><p id="calendarRescheduleSummary" class="muted"></p></div><button type="button" data-close aria-label="Đóng">✕</button></div><label class="full">Ngày giờ mới theo giờ máy<input id="calendarRescheduleAt" type="datetime-local" required></label><label class="full">Múi giờ<input id="calendarRescheduleTimezone" required></label><p id="calendarRescheduleError" class="error full"></p><div class="dialog-actions full"><button type="button" data-close>Hủy</button><button type="submit" class="primary">Lưu lịch mới</button></div></form></dialog>
       <div class="grid two compose-panels">
       <form id="scheduleForm" class="panel form-grid">
         <h2 class="full">Universal composer</h2>
@@ -316,10 +318,11 @@
         <label>Định dạng<select id="scheduleFormat"></select></label>
         <div id="formatCounter" class="format-counter"></div>
         <div id="platformSettings" class="full form-grid compact"></div>
-        <label>Ngày giờ<input id="scheduleAt" type="datetime-local"></label>
+        <label>Ngày giờ<input id="scheduleAt" type="datetime-local" required></label>
         <label>Job bị lỡ<select id="missedPolicy"><option value="confirm">Chờ xác nhận</option><option value="publish">Đăng bù</option><option value="skip">Bỏ qua</option></select></label>
         <label>Delay giữa Page (giây)<input id="delaySeconds" type="number" min="0" value="0"></label>
         <label>Delay ngẫu nhiên tối đa<input id="randomDelay" type="number" min="0" value="0"></label>
+        <div id="calendarBatchPreview" class="full hidden"></div>
         <label class="check full"><input id="dryRun" type="checkbox" checked><span><strong>Dry-run an toàn</strong><small>Dừng trước nút Đăng. Bỏ chọn chỉ khi đã duyệt và dry-run thành công.</small></span></label>
         <div id="realWarning" class="warning full hidden">Bạn đang chọn ĐĂNG THẬT. Backend sẽ chỉ tạo job khi revision hiện tại đã duyệt và từng Page/Kênh đã có dry-run thành công với định dạng và phiên bản publisher hiện tại.</div>
         <button class="primary full" type="submit">Lưu lịch</button>
@@ -417,10 +420,11 @@
     </section>
 
     <section id="tab-analytics" class="tab">
-      <div class="page-head"><div><p class="eyebrow">UI-SCRAPED METRICS</p><h1>Analytics & Reconciliation</h1><p>Chỉ đọc số liệu đang hiển thị trong Chrome; “không hỗ trợ” không được biến thành số 0.</p></div><button id="refreshAnalytics">Làm mới</button></div>
-      <div class="toolbar"><select id="analyticsDays"><option value="7">7 ngày</option><option value="30" selected>30 ngày</option><option value="90">90 ngày</option></select><select id="analyticsPlatform"><option value="">Mọi nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="x">X</option></select></div>
+      <div class="page-head"><div><p class="eyebrow">API & UI METRICS</p><h1>Analytics & Reconciliation</h1><p>Ưu tiên số liệu API chính thức khi channel đã cấp quyền; Chrome chỉ thu thập dữ liệu đang hiển thị.</p></div><button id="refreshAnalytics">Làm mới</button></div>
+      <div class="toolbar"><select id="analyticsDays"><option value="7">7 ngày</option><option value="30" selected>30 ngày</option><option value="90">90 ngày</option></select><select id="analyticsPlatform"><option value="">Mọi nền tảng</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="x">X</option></select><select id="analyticsAccount"><option value="">Mọi account</option></select><select id="analyticsTarget"><option value="">Mọi kênh/Page</option></select><label class="check"><input id="analyticsAutoRefresh" type="checkbox"><span>Tự động cập nhật YouTube</span></label><label class="check"><input id="analyticsMetaAutoRefresh" type="checkbox"><span>Tự động cập nhật Facebook Page (Meta)</span></label><select id="analyticsRefreshInterval"><option value="6">Mỗi 6 giờ</option><option value="12">Mỗi 12 giờ</option><option value="24" selected>Mỗi ngày</option><option value="48">Mỗi 2 ngày</option></select></div><p id="analyticsRefreshStatus" class="muted"></p>
       <div id="analyticsStats" class="stats"></div>
-      <article class="panel"><div class="panel-head"><h2>Release reconciliation</h2><span class="muted">Thu thập chỉ chạy khi bấm nút</span></div><div id="analyticsReleases" class="status-list"></div></article>
+      <article class="panel"><div class="panel-head"><h2>Analytics cấp kênh</h2><span class="muted">Số tổng hiện tại và xu hướng theo ngày; cập nhật thủ công</span></div><div id="channelAnalytics" class="status-list"></div></article>
+      <article class="panel"><div class="panel-head"><h2>Bài đã đăng</h2><span class="muted">Lọc, sắp xếp mới nhất và tải thêm; cập nhật metrics chỉ chạy khi bấm nút</span></div><div id="analyticsReleases" class="status-list"></div><button id="analyticsLoadMore" hidden>Tải thêm bài</button></article>
     </section>
 
     <section id="tab-settings" class="tab">
@@ -441,6 +445,7 @@
   <dialog id="recoveryRestoreDialog"><form id="recoveryRestoreForm"><h2>Khôi phục recovery bundle</h2><p class="muted">Database, media và Chrome profile hiện tại sẽ được giữ làm safety copy cạnh thư mục gốc. Khởi động lại app sau khi khôi phục nếu bundle có `.env`.</p><label>Đường dẫn file<input id="recoveryBundlePath" required placeholder="D:\...\Tinix-Social-Hub-recovery-....tinix-recovery.enc"></label><label>Mật khẩu bundle<input id="recoveryRestorePassword" type="password" maxlength="500" required autocomplete="off"></label><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="confirmRecoveryRestore" class="danger">Khôi phục ngay</button></div></form></dialog>
   <dialog id="deleteAccountDialog"><div><h2>Xóa account</h2><p>Bạn muốn xử lý Chrome profile của <strong id="deleteAccountName"></strong> thế nào?</p><p class="muted">Giữ profile nếu muốn khôi phục phiên sau này. Xóa cả profile sẽ xóa vĩnh viễn cookies, phiên đăng nhập và các bản backup profile của account này.</p><div class="dialog-actions delete-account-actions"><button type="button" data-close>Hủy</button><button id="deleteAccountKeepProfile">Chỉ xóa account</button><button id="deleteAccountWithProfile" class="danger">Xóa account và profile</button></div></div></dialog>
   <dialog id="integrationDialog"><form id="integrationForm"><h2 id="integrationDialogTitle">Tích hợp API</h2><div id="integrationDialogFields" class="form-grid"></div><p id="integrationDialogStatus" class="muted" role="status" aria-live="polite"></p><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="saveIntegration" type="submit" class="primary">Lưu</button></div></form></dialog>
+  <dialog id="metaSystemUserDialog"><form id="metaSystemUserForm"><h2>Quản lý Facebook Page API</h2><p class="muted">Account Tinix: <strong id="metaSystemUserAccountName"></strong></p><label>Meta Developer App<select id="metaSystemUserApp" required></select></label><label>System User access token<input id="metaSystemUserToken" type="password" minlength="20" maxlength="10000" autocomplete="off" spellcheck="false" placeholder="Để trống để dùng token đã lưu"></label><div class="dialog-actions"><button id="metaSystemUserDiscover" type="button">Tìm Page bằng token</button></div><p id="metaSystemUserDiscoveryStatus" class="operation-status" role="status" aria-live="polite"></p><fieldset class="full"><legend>Page đang kết nối hoặc được Meta tìm thấy</legend><div id="metaSystemUserPageList" class="meta-page-choice-list"><p class="muted">Nhập token rồi chọn “Tìm Page bằng token”, hoặc nhập Page ID thủ công.</p></div></fieldset><label class="full">Thêm Page ID thủ công<input id="metaSystemUserManualPageIds" inputmode="numeric" maxlength="4000" placeholder="Một hoặc nhiều ID, cách nhau bằng dấu phẩy hoặc xuống dòng"></label><p class="muted full">Tinix lưu binding riêng cho từng Page. Nếu dán token mới, mọi Page đang kết nối phải được chọn lại hoặc xác nhận ngắt. Page task không được Meta xác nhận sẽ ở trạng thái chưa xác minh quyền. Luồng này không cần tunnel, App Secret hay Redirect URI.</p><p id="metaSystemUserStatus" class="operation-status full" role="status" aria-live="polite"></p><div class="dialog-actions full"><button type="button" data-close>Đóng</button><button id="metaSystemUserOAuth" type="button">Dùng OAuth</button><button id="saveMetaSystemUser" type="submit" class="primary">Lưu Page đã chọn</button></div></form></dialog>
 
   <!-- Post Editor Dialog -->
   <dialog id="postDialog" class="post-editor-dialog">
@@ -496,10 +501,16 @@
       <div class="form-group full variant-editor-wrap">
         <div class="variant-tabs-header">
           <div class="variant-header-meta">
-            <span class="field-label-text">Biến thể nội dung theo nền tảng:</span>
-            <small class="text-muted" id="postVariantHint">Chọn tab để chỉnh sửa nội dung/kịch bản riêng cho từng mạng</small>
+            <span class="field-label-text">Nội dung chung và bản riêng theo nơi đăng:</span>
+            <small class="text-muted" id="postVariantHint">Mặc định dùng nội dung chung; tách riêng khi cần.</small>
           </div>
           <div id="postVariantTabsBar" class="variant-tabs-bar"></div>
+        </div>
+        <div class="grid two full">
+          <label>Chỉnh riêng cho Page/kênh (tùy chọn)
+            <select id="postTargetOverride"><option value="">Không chỉnh riêng theo đích</option></select>
+          </label>
+          <div class="actions"><button type="button" id="postVariantOverrideToggle">Dùng nội dung chung</button></div>
         </div>
 
         <div id="variantEditorContainer" class="variant-editor-body">
@@ -534,6 +545,11 @@
               <input id="postCta" placeholder="Ví dụ: Nhắn tin ngay để nhận ưu đãi!">
             </label>
           </div>
+          <div class="signature-tools full">
+            <label>Chữ ký/hashtag mẫu<select id="postSignatureSelect"><option value="">Chọn mẫu</option></select></label>
+            <button type="button" id="insertPostSignature">Chèn vào bản đang sửa</button>
+            <button type="button" id="managePostSignatures">Quản lý mẫu</button>
+          </div>
 
           <div id="variantPinnedWrap" class="form-group full" style="display:none;">
             <label>💬 Gợi ý bình luận ghim (Pinned Comment)
@@ -556,11 +572,38 @@
         </div>
         <div id="postMediaList" class="post-media-items-grid"></div>
       </div>
+      <div class="form-group full target-media-override-editor">
+          <div class="media-section-head">
+            <span class="field-label-text">Media riêng cho Page/kênh (tùy chọn)</span>
+            <div class="media-upload-actions">
+              <select id="postTargetMediaSelect" aria-label="Chọn Page hoặc kênh">
+                <option value="">Chọn Page/kênh</option>
+              </select>
+              <button type="button" id="btnAttachTargetMedia" class="btn btn-secondary btn-sm">📁 Chọn media riêng</button>
+              <button type="button" id="btnInheritTargetMedia" class="btn btn-secondary btn-sm">Dùng media chung</button>
+            </div>
+          </div>
+          <p id="postTargetMediaHint" class="muted">Page/kênh chưa có thiết lập riêng sẽ dùng media chung. Có thể đặt danh sách rỗng để không đính kèm media cho đích đó.</p>
+          <div id="postTargetMediaList" class="post-media-items-grid"></div>
+      </div>
 
       <div class="dialog-actions full">
         <button type="button" data-close>Hủy</button>
         <button type="submit" id="btnSavePostRecord" class="primary">Lưu bài viết</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="postSignatureDialog" class="brand-profile-dialog">
+    <form id="postSignatureForm" class="brand-profile-form">
+      <div class="dialog-head full"><div><h2>Mẫu chữ ký và hashtag</h2><p class="muted">Mẫu chỉ được chèn vào bản nháp khi bạn chọn; bài đã lưu không tự đổi.</p></div><button type="button" data-close class="btn-close" aria-label="Đóng">✕</button></div>
+      <button type="button" id="newPostSignature" class="full">Tạo mẫu mới</button>
+      <div id="postSignatureList" class="full"></div>
+      <input id="postSignatureId" type="hidden">
+      <label class="full">Tên mẫu<input id="postSignatureName" maxlength="100" required></label>
+      <label class="full">Chữ ký<textarea id="postSignatureText" maxlength="2000" rows="3"></textarea></label>
+      <label class="full">Hashtag (cách nhau bởi dấu cách)<input id="postSignatureHashtags" maxlength="1000"></label>
+      <div class="dialog-actions full"><button type="button" data-close>Đóng</button><button id="savePostSignature" type="submit" class="primary">Lưu mẫu</button></div>
     </form>
   </dialog>
 
@@ -620,6 +663,7 @@
         <button id="refreshAssets">Làm mới</button>
       </div>
       <div id="assetList" class="asset-grid"></div>
+      <div class="media-manager-selection"><span id="mediaManagerSelectionCount">0 đã chọn</span><button type="button" id="applySelectedMediaAssets" disabled>Thêm vào bài</button></div>
     </div>
   </dialog>
 
@@ -634,30 +678,35 @@
         <button type="button" data-close class="btn-close" aria-label="Đóng">&#x2715;</button>
       </div>
       <input id="quickSchedulePostId" type="hidden">
-      <label class="full">Tài khoản (Account)
-        <select id="quickScheduleAccount" required></select>
-      </label>
-      <label class="full">Fanpage / Kênh đích
+      <label class="full">Trang / kênh đích (có thể chọn nhiều tài khoản và nền tảng)
         <select id="quickScheduleTargets" multiple size="4" required></select>
       </label>
-      <label class="full">Định dạng xuất bản
-        <select id="quickScheduleFormat" required></select>
-      </label>
+      <div class="full quick-schedule-groups">
+        <label>Bộ Page/kênh lưu sẵn<select id="quickScheduleTargetGroup"><option value="">Chọn bộ Page/kênh</option></select></label>
+        <button type="button" id="applyTargetGroupReplace">Thay thế bằng bộ này</button>
+        <button type="button" id="applyTargetGroupMerge">Gộp bộ này vào lựa chọn</button>
+        <button type="button" id="updateTargetGroup">Cập nhật bộ đang chọn</button>
+        <button type="button" id="deleteTargetGroup" class="danger">Xóa bộ đang chọn</button>
+        <button type="button" id="saveTargetGroup">Lưu lựa chọn thành bộ</button>
+      </div>
+      <input id="quickScheduleFormat" type="hidden" value="post">
       <label class="full">Ngày &amp; Giờ đăng (giờ máy)
         <input id="quickScheduleTime" type="datetime-local" required>
       </label>
+      <div id="quickScheduleTargetTimes" class="full"></div>
       <label class="check full">
         <input id="quickScheduleDryRun" type="checkbox" checked>
         <span><strong>Dry-run an toàn</strong><small>Dừng trước nút Đăng. Bỏ chọn khi đã sẵn sàng đăng thật.</small></span>
       </label>
+      <div id="quickSchedulePreview" class="full hidden" aria-live="polite"></div>
       <div class="dialog-actions full">
         <button type="button" data-close>Hủy</button>
-        <button type="submit" class="primary">Xác nhận lên lịch</button>
+        <button type="submit" class="primary">Kiểm tra Page</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="jobDialog"><div><h2>Release detail</h2><div id="jobSummary"></div><h3>Attempts & events</h3><div id="jobEvents"></div><h3>Artifacts</h3><div id="jobArtifacts" class="status-list"></div><div id="jobFinalize" class="form-grid compact hidden"><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận thất bại</button><button id="finalizeSuccess" class="primary">Xác nhận thành công</button></div></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
+  <dialog id="jobDialog" class="release-detail-dialog"><div class="release-detail-content"><h2>Chi tiết Page/kênh</h2><div id="jobSummary"></div><div id="releaseActions" class="dialog-actions hidden"><button id="releaseRetry">Retry release</button><button id="releaseCancel" class="danger">Hủy job cục bộ</button></div><section><h3>Nội dung và media trong release snapshot</h3><div id="jobReleaseSnapshot"></div></section><section><h3>Lịch sử attempt và sự kiện</h3><div id="jobEvents"></div></section><section><h3>Tệp kỹ thuật</h3><div id="jobArtifacts" class="status-list"></div></section><div id="jobFinalize" class="form-grid compact hidden"><h3 class="full">Kết quả chưa xác định</h3><p class="muted full">Ghi rõ bằng chứng xác nhận đã đăng hoặc chưa đăng. Không retry tự động sau commit point.</p><label class="full">Ghi chú xác minh<input id="finalizeNote" maxlength="2000"></label><label class="full">URL bài đăng (nếu có)<input id="finalizeUrl"></label><div class="actions full"><button id="finalizeFailed" class="danger">Xác nhận chưa đăng</button><button id="finalizeSuccess" class="primary">Xác nhận đã đăng</button></div></div><div id="jobConnect" class="form-grid compact hidden"><h3 class="full">Đối soát thủ công</h3><p class="muted full">Tinix kiểm tra định dạng URL; việc xác nhận Page và bài đúng do bạn thực hiện. Đây không phải xác minh tự động từ mạng xã hội.</p><label class="full">URL bài đăng<input id="connectReleaseUrl" maxlength="2000"></label><label class="full">Ghi chú/bằng chứng<input id="connectReleaseNote" maxlength="2000" value="Đã kiểm tra Page và bài đăng trên nền tảng."></label><label class="check"><input id="confirmReleaseTarget" type="checkbox"><span>Xác nhận đúng Page/kênh</span></label><label class="check"><input id="confirmReleasePost" type="checkbox"><span>Xác nhận đúng bài đăng</span></label><button type="button" id="connectRelease" class="primary">Lưu đối soát thủ công</button></div><div class="dialog-actions"><button data-close>Đóng</button></div></div></dialog>
   <dialog id="historyCleanupDialog"><form id="historyCleanupForm"><h2>Dọn lịch sử</h2><p class="muted">Chỉ xóa lịch sử kỹ thuật trong ứng dụng. Bài đã đăng, nội dung, tài khoản và Page/kênh không bị xóa.</p><div class="form-grid compact"><label>Khoảng thời gian<select id="historyRange"><option value="7">Cũ hơn 7 ngày</option><option value="30" selected>Cũ hơn 30 ngày</option><option value="90">Cũ hơn 90 ngày</option><option value="custom">Khoảng ngày tùy chọn</option><option value="selected">Các mục đã chọn</option><option value="all">Toàn bộ lịch sử</option></select></label><label>Loại tác vụ<select id="historyStatus"><option value="all" selected>Tất cả trạng thái</option><option value="succeeded">Chỉ đăng thành công</option><option value="dry_run">Chỉ dry-run</option><option value="failed">Chỉ tác vụ lỗi</option></select></label><label id="historyFromWrap" class="hidden">Từ ngày<input id="historyFrom" type="date"></label><label id="historyToWrap" class="hidden">Đến ngày<input id="historyTo" type="date"></label><label class="check full"><input id="historyDeleteArtifacts" type="checkbox" checked><span>Xóa ảnh chụp lỗi và tệp kỹ thuật liên quan<small>Không xóa media của nội dung hoặc bài trên mạng xã hội.</small></span></label></div><div id="historyCleanupPreview" class="cleanup-preview muted">Chọn phạm vi rồi bấm Xem trước.</div><div class="dialog-actions"><button type="button" data-close>Hủy</button><button id="previewHistoryCleanup" type="button">Xem trước</button><button id="executeHistoryCleanup" type="button" class="danger" disabled>Xóa lịch sử</button></div></form></dialog>
   <!-- Brand Profile Modal -->
   <dialog id="promptTemplateDialog" class="brand-profile-dialog prompt-template-dialog">
@@ -791,6 +840,6 @@
   </dialog>
 
   <div id="toast"></div>
-  <script type="module" src="/static/js/main.js?v=1.0.24"></script>
+  <script type="module" src="/static/js/main.js?v=1.0.44"></script>
 </body>
 </html>

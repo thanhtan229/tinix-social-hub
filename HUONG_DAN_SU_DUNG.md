@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng Tinix Social Hub
 
-Phiên bản áp dụng: `1.0.24`  
+Phiên bản áp dụng: `1.0.44`
 Hệ điều hành hỗ trợ: **Windows 10 / 11** (PC-first, Local-first)
 
 ---
@@ -160,6 +160,15 @@ Nếu bạn có Google Cloud Console và muốn dùng API chính thức cho YouT
 3. Bạn có thể chọn chế độ:
    - **Ưu tiên API**: Dùng API trước, nếu token hết hạn sẽ tự động chuyển sang dùng Chrome.
    - **Chỉ API**: Tuyệt đối chỉ dùng API, không bao giờ dùng Chrome.
+
+### 5.7. Kết nối Facebook Page API bằng System User token
+1. Vào **Cài đặt → Tích hợp**, thêm Meta Developer App, điền App ID và Graph API version rồi bật app. Nếu chỉ dùng System User token, App Secret và Redirect URI có thể để trống.
+2. Trong Meta Business Settings, gán Meta App và Page cần quản lý cho System User; tạo token với quyền cần thiết như `pages_manage_posts`, `pages_read_engagement`, `read_insights` và `pages_show_list`.
+3. Vào **Tài khoản & Page**, chọn account Facebook rồi bấm **Kết nối Meta API** hoặc **Cập nhật Meta API**. Chọn Meta App, nhập token rồi bấm **Tìm Page bằng token** và đánh dấu các Page muốn kết nối.
+4. Nếu Meta không trả danh sách, nhập một hoặc nhiều Page ID dạng số, cách nhau bằng dấu phẩy hoặc xuống dòng. Bấm **Lưu Page đã chọn** để Tinix xác minh từng Page.
+5. Một account Tinix có thể quản lý nhiều Page. Để thêm Page bằng token hiện tại, để trống ô token rồi chọn/nhập Page mới. Có thể ngắt riêng từng Page mà vẫn giữ target và dữ liệu lịch sử.
+
+Token được lưu mã hóa cục bộ bằng Windows DPAPI. Trong chi tiết account, nút **Show** có thể hiện lại System User token đã lưu; chỉ dùng trên máy Tinix đang chạy. Kết nối thủ công không cần tunnel. Nếu Meta không trả Page task, quyền được ghi là chưa xác minh và Tinix không bật đăng API. Khi đổi token, xác minh lại Page đang giữ; Page bỏ chọn chỉ bị ngắt sau khi xác nhận. OAuth vẫn dùng được qua nút **Dùng OAuth** nếu App có Secret và Redirect URI HTTPS hợp lệ. Thay đổi token hoặc quyền sẽ yêu cầu dry-run và duyệt lại release API liên quan.
 
 ---
 

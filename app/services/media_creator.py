@@ -46,8 +46,11 @@ class MediaCreatorClient:
         return [item for item in response.json().get("providers", []) if isinstance(item, dict)]
 
     async def create_run(
-        self, *, run_id: str, provider: str, prompt: str, aspect_ratio: str, count: int,
+        self, *, run_id: str, provider: str, prompt: str, aspect_ratio: str, count: int, model: str = "",
     ) -> str:
+        options = {"count": count, "imageCount": count, "aspectRatio": aspect_ratio}
+        if model:
+            options["model"] = model
         job = {
             "id": run_id,
             "provider": provider,
@@ -57,7 +60,7 @@ class MediaCreatorClient:
             "originalPrompt": prompt,
             "aspectRatio": aspect_ratio,
             "imageCount": count,
-            "options": {"count": count, "imageCount": count, "aspectRatio": aspect_ratio},
+            "options": options,
         }
         body = {"runId": run_id, "provider": provider, "jobs": [job], "async": True, "maxConcurrentProfiles": 1}
         try:

@@ -7,3 +7,4 @@ playwright==1.62.0
 pillow==12.3.0
 tzdata==2026.3
 cryptography==50.0.1
+boto3==1.43.103

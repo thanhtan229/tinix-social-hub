@@ -90,6 +90,7 @@ class ContentRepository:
     def _content_from_row(row: Any) -> dict[str, Any]:
         result = dict(row)
         result["hashtags"] = _loads(result.pop("hashtags_json"), [])
+        result["composition"] = _loads(result.pop("composition_json", None), {})
         return result
 
     def _enrich_content_items(self, connection: Any, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -106,6 +107,21 @@ class ContentRepository:
         for m in media_rows:
             media_by_cid[m["content_id"]].append(dict(m))
 
+        target_media_by_cid: dict[str, dict[str, list[dict[str, Any]]]] = {cid: {} for cid in cids}
+        target_overrides = connection.execute(
+            f"SELECT content_id,target_id FROM content_target_media_overrides WHERE content_id IN ({placeholders})",
+            cids,
+        ).fetchall()
+        for override in target_overrides:
+            target_media_by_cid[override["content_id"]][override["target_id"]] = []
+        target_media_rows = connection.execute(
+            f"SELECT cm.content_id,cm.target_id,a.id,a.media_type,a.relative_path,a.thumbnail_relative_path,a.original_name,a.mime_type,a.size_bytes,a.sha256,a.width,a.height,cm.sort_order,cm.alt_text,cm.asset_id "
+            f"FROM content_media_targets cm JOIN media_assets a ON a.id=cm.asset_id WHERE cm.content_id IN ({placeholders}) ORDER BY cm.sort_order,cm.created_at",
+            cids,
+        ).fetchall()
+        for media in target_media_rows:
+            target_media_by_cid[media["content_id"]][media["target_id"]].append(dict(media))
+
         variant_rows = connection.execute(
             f"SELECT * FROM platform_content_variants WHERE content_id IN ({placeholders}) ORDER BY platform",
             cids,
@@ -119,7 +135,8 @@ class ContentRepository:
         release_rows = connection.execute(
             f"""
             SELECT r.id, r.content_id, r.platform, r.status, r.scheduled_at, r.published_at,
-                   r.external_url, r.target_id, t.name as target_name, j.error, j.failure_code
+                   r.external_url, r.external_release_id, r.target_id, r.job_id, r.verification_status, j.dry_run as dry_run,
+                   r.verification_method, t.name as target_name, j.error, j.failure_code
             FROM publication_releases r
             LEFT JOIN publishing_targets t ON t.id = r.target_id
             LEFT JOIN jobs j ON j.id = r.job_id
@@ -135,6 +152,7 @@ class ContentRepository:
         for item in items:
             cid = item["id"]
             item["media"] = media_by_cid.get(cid, [])
+            item["target_media_overrides"] = target_media_by_cid.get(cid, {})
             item["platform_variants"] = variants_by_cid.get(cid, {})
             releases = releases_by_cid.get(cid, [])
             item["releases"] = releases
@@ -276,12 +294,39 @@ class ContentRepository:
         row = connection.execute("SELECT * FROM content_items WHERE id=?", (content_id,)).fetchone()
         content = dict(row)
         content["hashtags"] = _loads(content.pop("hashtags_json"), [])
+        content["composition"] = _loads(content.pop("composition_json", None), {})
         variants = []
         for raw in connection.execute("SELECT * FROM platform_content_variants WHERE content_id=?", (content_id,)):
             item = dict(raw)
             item["hashtags"] = _loads(item.pop("hashtags_json"), [])
             variants.append(item)
-        return {"content": content, "variants": variants}
+        media = [dict(item) for item in connection.execute(
+            "SELECT media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,asset_id,alt_text,thumbnail_timestamp "
+            "FROM content_media WHERE content_id=? ORDER BY sort_order,created_at,id", (content_id,)
+        )]
+        target_media: dict[str, list[dict[str, Any]]] = {}
+        for override in connection.execute(
+            "SELECT target_id FROM content_target_media_overrides WHERE content_id=?", (content_id,)
+        ):
+            target_media[override["target_id"]] = [dict(item) for item in connection.execute(
+                "SELECT cm.asset_id,cm.sort_order,cm.alt_text,a.media_type,a.relative_path,a.thumbnail_relative_path,a.original_name,a.mime_type,a.size_bytes,a.sha256,a.width,a.height "
+                "FROM content_media_targets cm JOIN media_assets a ON a.id=cm.asset_id "
+                "WHERE cm.content_id=? AND cm.target_id=? ORDER BY cm.sort_order,cm.created_at",
+                (content_id, override["target_id"]),
+            )]
+        return {"content": content, "variants": variants, "media": media, "target_media_overrides": target_media}
+
+    @staticmethod
+    def _record_media_revision(connection: Any, content_id: str, source: str = "media") -> None:
+        row = connection.execute("SELECT current_revision FROM content_items WHERE id=?", (content_id,)).fetchone()
+        if not row:
+            raise KeyError(content_id)
+        revision = row["current_revision"] + 1
+        connection.execute(
+            "UPDATE content_items SET current_revision=?,approval_status='draft',updated_at=? WHERE id=?",
+            (revision, utc_now(), content_id),
+        )
+        ContentRepository._insert_revision(connection, content_id, revision, source)
 
     @staticmethod
     def _insert_revision(connection: Any, content_id: str, number: int, source: str, note: str | None = None) -> str:
@@ -321,11 +366,13 @@ class ContentRepository:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute(
-                    "INSERT INTO content_items(id,brand_profile_id,brief_id,title,topic,summary,caption,hashtags_json,cta,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO content_items(id,brand_profile_id,brief_id,title,topic,summary,caption,hashtags_json,cta,composition_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         content_id, data.get("brand_profile_id"), data.get("brief_id"), data["title"].strip(),
                         data.get("topic"), data.get("summary"), data.get("caption", ""),
-                        _json(data.get("hashtags", [])), data.get("cta"), now, now,
+                        _json(data.get("hashtags", [])), data.get("cta"),
+                        _json(data.get("composition").model_dump(mode="json") if hasattr(data.get("composition"), "model_dump") else data.get("composition") or {}),
+                        now, now,
                     ),
                 )
                 self._upsert_variants(connection, content_id, data.get("platform_variants", {}))
@@ -340,16 +387,23 @@ class ContentRepository:
         with self.db.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
-                current = connection.execute("SELECT current_revision FROM content_items WHERE id=?", (content_id,)).fetchone()
+                current = connection.execute("SELECT current_revision,composition_json FROM content_items WHERE id=?", (content_id,)).fetchone()
                 if not current:
                     connection.execute("ROLLBACK")
                     return None
                 revision = current["current_revision"] + 1
+                composition = data.get("composition")
+                if composition is None:
+                    composition = _loads(current["composition_json"], {})
+                elif hasattr(composition, "model_dump"):
+                    composition = composition.model_dump(mode="json")
                 connection.execute(
-                    "UPDATE content_items SET brand_profile_id=?,title=?,topic=?,summary=?,caption=?,hashtags_json=?,cta=?,approval_status='draft',current_revision=?,updated_at=? WHERE id=?",
+                    "UPDATE content_items SET brand_profile_id=?,title=?,topic=?,summary=?,caption=?,hashtags_json=?,cta=?,composition_json=?,approval_status='draft',current_revision=?,updated_at=? WHERE id=?",
                     (
                         data.get("brand_profile_id"), data["title"].strip(), data.get("topic"), data.get("summary"),
-                        data.get("caption", ""), _json(data.get("hashtags", [])), data.get("cta"), revision, utc_now(), content_id,
+                        data.get("caption", ""), _json(data.get("hashtags", [])), data.get("cta"),
+                        _json(composition),
+                        revision, utc_now(), content_id,
                     ),
                 )
                 self._upsert_variants(connection, content_id, data.get("platform_variants", {}))
@@ -370,21 +424,38 @@ class ContentRepository:
             platform: variant for platform, variant in content.get("platform_variants", {}).items()
         }
         duplicate = self.create(content_copy, source="duplicate")
-        if duplicate and content.get("media"):
+        if duplicate and (content.get("media") or content.get("target_media_overrides")):
             with self.db.connection() as connection:
-                for item in content["media"]:
-                    media_id = str(uuid.uuid4())
-                    connection.execute(
-                        "INSERT INTO content_media(id,content_id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,asset_id,alt_text,thumbnail_timestamp,created_at) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (
-                            media_id, duplicate["id"], item["media_type"], item["relative_path"],
-                            item.get("thumbnail_relative_path"), item["original_name"], item["mime_type"],
-                            item["size_bytes"], item["sha256"], item.get("sort_order", 0),
-                            item.get("asset_id"), item.get("alt_text"), item.get("thumbnail_timestamp"),
-                            utc_now(),
-                        ),
-                    )
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    for item in content["media"]:
+                        media_id = str(uuid.uuid4())
+                        connection.execute(
+                            "INSERT INTO content_media(id,content_id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,asset_id,alt_text,thumbnail_timestamp,created_at) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (
+                                media_id, duplicate["id"], item["media_type"], item["relative_path"],
+                                item.get("thumbnail_relative_path"), item["original_name"], item["mime_type"],
+                                item["size_bytes"], item["sha256"], item.get("sort_order", 0),
+                                item.get("asset_id"), item.get("alt_text"), item.get("thumbnail_timestamp"),
+                                utc_now(),
+                            ),
+                        )
+                    for target_id, items in content.get("target_media_overrides", {}).items():
+                        connection.execute(
+                            "INSERT INTO content_target_media_overrides(content_id,target_id,created_at) VALUES(?,?,?)",
+                            (duplicate["id"], target_id, utc_now()),
+                        )
+                        for media in items:
+                            connection.execute(
+                                "INSERT INTO content_media_targets(content_id,target_id,asset_id,sort_order,alt_text,created_at) VALUES(?,?,?,?,?,?)",
+                                (duplicate["id"], target_id, media["asset_id"], media.get("sort_order", 0), media.get("alt_text"), utc_now()),
+                            )
+                    self._record_media_revision(connection, duplicate["id"], "duplicate_media")
+                    connection.execute("COMMIT")
+                except Exception:
+                    connection.execute("ROLLBACK")
+                    raise
             return self.get(duplicate["id"])
         return duplicate
 
@@ -404,8 +475,59 @@ class ContentRepository:
             return None
         snapshot = _loads(row[0], {})
         content = snapshot["content"]
-        content["platform_variants"] = {item["platform"]: item for item in snapshot.get("variants", [])}
-        return self.update(content_id, content, source="restore")
+        variants = {item["platform"]: item for item in snapshot.get("variants", [])}
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                current = connection.execute("SELECT current_revision FROM content_items WHERE id=?", (content_id,)).fetchone()
+                if not current:
+                    connection.execute("ROLLBACK")
+                    return None
+                revision = current["current_revision"] + 1
+                connection.execute(
+                    "UPDATE content_items SET brand_profile_id=?,brief_id=?,title=?,topic=?,summary=?,caption=?,hashtags_json=?,cta=?,composition_json=?,approval_status='draft',current_revision=?,updated_at=? WHERE id=?",
+                    (content.get("brand_profile_id"), content.get("brief_id"), content["title"], content.get("topic"),
+                     content.get("summary"), content.get("caption", ""), _json(content.get("hashtags", [])),
+                     content.get("cta"), _json(content.get("composition") or {}), revision, utc_now(), content_id),
+                )
+                self._upsert_variants(connection, content_id, variants)
+                if "media" in snapshot:
+                    connection.execute("DELETE FROM content_media WHERE content_id=?", (content_id,))
+                    for media in snapshot["media"]:
+                        if media.get("asset_id") and not connection.execute(
+                            "SELECT 1 FROM media_assets WHERE id=?", (media["asset_id"],)
+                        ).fetchone():
+                            raise ValueError("Không thể khôi phục revision vì media asset đã bị xóa.")
+                        connection.execute(
+                            "INSERT INTO content_media(id,content_id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,asset_id,alt_text,thumbnail_timestamp,created_at) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (str(uuid.uuid4()), content_id, media["media_type"], media["relative_path"],
+                             media.get("thumbnail_relative_path"), media["original_name"], media["mime_type"],
+                             media["size_bytes"], media["sha256"], media.get("sort_order", 0), media.get("asset_id"),
+                            media.get("alt_text"), media.get("thumbnail_timestamp"), utc_now()),
+                        )
+                if "target_media_overrides" in snapshot:
+                    connection.execute("DELETE FROM content_target_media_overrides WHERE content_id=?", (content_id,))
+                    for target_id, items in snapshot["target_media_overrides"].items():
+                        if not connection.execute("SELECT 1 FROM publishing_targets WHERE id=?", (target_id,)).fetchone():
+                            raise ValueError("Không thể khôi phục revision vì target media override đã bị xóa.")
+                        connection.execute(
+                            "INSERT INTO content_target_media_overrides(content_id,target_id,created_at) VALUES(?,?,?)",
+                            (content_id, target_id, utc_now()),
+                        )
+                        for media in items:
+                            if not connection.execute("SELECT 1 FROM media_assets WHERE id=?", (media["asset_id"],)).fetchone():
+                                raise ValueError("Không thể khôi phục revision vì media asset đã bị xóa.")
+                            connection.execute(
+                                "INSERT INTO content_media_targets(content_id,target_id,asset_id,sort_order,alt_text,created_at) VALUES(?,?,?,?,?,?)",
+                                (content_id, target_id, media["asset_id"], media.get("sort_order", 0), media.get("alt_text"), utc_now()),
+                            )
+                self._insert_revision(connection, content_id, revision, "restore")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return self.get(content_id)
 
     def request_approval(self, content_id: str) -> dict[str, Any] | None:
         now = utc_now()
@@ -468,13 +590,18 @@ class ContentRepository:
     def add_media(self, content_id: str, media: dict[str, Any]) -> dict[str, Any]:
         media_id = str(uuid.uuid4())
         with self.db.connection() as connection:
-            connection.execute(
-                "INSERT INTO content_media(id,content_id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    media_id, content_id, media["media_type"], media["relative_path"], media.get("thumbnail_relative_path"),
-                    media["original_name"], media["mime_type"], media["size_bytes"], media["sha256"], media.get("sort_order", 0), utc_now(),
-                ),
-            )
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    "INSERT INTO content_media(id,content_id,media_type,relative_path,thumbnail_relative_path,original_name,mime_type,size_bytes,sha256,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (media_id, content_id, media["media_type"], media["relative_path"], media.get("thumbnail_relative_path"),
+                     media["original_name"], media["mime_type"], media["size_bytes"], media["sha256"], media.get("sort_order", 0), utc_now()),
+                )
+                self._record_media_revision(connection, content_id)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
         return self.get(content_id)
 
     def delete(self, content_id: str, force: bool = False) -> list[str] | None:
@@ -587,6 +714,13 @@ class AIGenerationRepository:
         item["request"] = _loads(item.pop("request_json"), {})
         item["response"] = _loads(item.pop("response_json"), {})
         return item
+
+    def pending_image_jobs(self) -> list[dict[str, Any]]:
+        with self.db.connection() as connection:
+            ids = connection.execute(
+                "SELECT id FROM ai_generations WHERE operation='image' AND status IN ('queued','running')"
+            ).fetchall()
+        return [item for row in ids if (item := self.get(row["id"])) is not None]
 
     def update_image_job(
         self, generation_id: str, *, status: str, response: dict[str, Any] | None = None,

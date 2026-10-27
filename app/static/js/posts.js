@@ -1,5 +1,6 @@
 import {api, badge, bytes, esc, toast} from "./api.js?v=2.3.5";
 import {store} from "./store.js?v=2.3.5";
+import {openReleaseDetail} from "./jobs.js?v=1.0.42";
 
 const state = {
   posts: [],
@@ -191,6 +192,16 @@ function renderPostsGrid() {
     const hasHook = variant && variant.video_hook;
     const hasScript = variant && variant.video_script;
     const hasYtTitle = variant && variant.title && activePlatform === "youtube";
+    const releases = post.releases || [];
+    const succeeded = releases.filter(item => item.status === "succeeded").length;
+    const dryRuns = releases.filter(item => item.dry_run || item.status === "dry_run_ready").length;
+    const unknown = releases.filter(item => item.status === "unknown_result").length;
+    const failed = releases.filter(item => ["failed", "temporary_failure", "permanent_failure", "login_required", "checkpoint"].includes(item.status)).length;
+    const waiting = releases.filter(item => ["scheduled", "queued", "pending_approval", "approved", "opening_browser", "checking_login", "uploading", "publishing", "verifying"].includes(item.status)).length;
+    const releaseButtons=items=>items.map(item=>`<button type="button" data-release-detail="${esc(item.id)}">${esc(item.target_name||item.platform)} · ${esc(item.status)}</button>`).join("");
+    const releaseSummary = releases.length ? `<div class="post-release-group-summary"><strong>${releases.length} đích</strong> · ${succeeded} thành công · ${waiting} chờ · ${failed} lỗi · ${unknown} cần đối soát · ${dryRuns} dry-run
+      <div>${releaseButtons(releases.slice(0,5))}</div>
+      ${releases.length>5?`<details><summary>Xem ${releases.length-5} release còn lại</summary><div>${releaseButtons(releases.slice(5))}</div></details>`:""}</div>` : "";
 
     return `
       <article class="post-card ${isSelected ? "post-selected" : ""}" data-id="${esc(post.id)}">
@@ -222,6 +233,7 @@ function renderPostsGrid() {
             ${dateText}
             ${externalLinkHtml}
           </div>
+          ${releaseSummary}
         </div>
 
         <div class="post-card-actions">
@@ -300,6 +312,9 @@ function renderPostsTable() {
 }
 
 function bindPostCardEvents() {
+  document.querySelectorAll("[data-release-detail]").forEach(button => {
+    button.onclick = event => { event.stopPropagation(); openReleaseDetail(button.dataset.releaseDetail).catch(error => toast(error.message)); };
+  });
   // Interactive platform badge click on card or table
   document.querySelectorAll("[data-card-platform]").forEach(badge => {
     badge.onclick = e => {
@@ -376,6 +391,10 @@ let pendingMediaFiles = []; // Array of { file: File, previewUrl: string }
 let stagedLibraryAssets = []; // Array of Asset objects from media library
 let detachedMediaAssetIds = new Set(); // Set of asset_id strings to detach
 let availableMediaAssets = new Map(); // assetId -> asset object
+let stagedTargetMediaOverrides = {};
+let originalTargetMediaOverrideIds = new Set();
+let mediaPickerTargetId = "";
+let mediaManagerSelectedAssetIds = new Set();
 
 function handleAddEditorFiles(fileList) {
   if (!fileList || !fileList.length) return;
@@ -394,7 +413,70 @@ function handleAddEditorFiles(fileList) {
 }
 
 let editingVariants = {};
-let activeVariantTab = "facebook";
+let editingComposition = null;
+let editingTargets = [];
+let activeVariantTab = "global";
+let contentSignatures = [];
+
+function variantFromContent(value = {}) {
+  return {
+    title: value.title ?? null,
+    caption: value.caption ?? "",
+    hashtags: Array.isArray(value.hashtags) ? [...value.hashtags] : [],
+    cta: value.cta ?? "",
+    pinned_comment: value.pinned_comment ?? null,
+    video_hook: value.video_hook ?? null,
+    video_script: value.video_script ?? null,
+  };
+}
+
+function normalizeComposition(item = null) {
+  if (item?.composition?.version === 1) {
+    return JSON.parse(JSON.stringify(item.composition));
+  }
+  const globalContent = variantFromContent(item || {});
+  const platformOverrides = {};
+  for (const [platform, variant] of Object.entries(item?.platform_variants || {})) {
+    platformOverrides[platform] = variantFromContent(variant);
+  }
+  return {version: 1, global_content: globalContent, platform_overrides: platformOverrides, target_overrides: {}};
+}
+
+function activeOverride() {
+  if (!editingComposition) return null;
+  const targetId = document.querySelector("#postTargetOverride")?.value || "";
+  if (targetId) return editingComposition.target_overrides[targetId] || null;
+  if (activeVariantTab !== "global") return editingComposition.platform_overrides[activeVariantTab] || null;
+  return editingComposition.global_content;
+}
+
+function resolvedEditorVariant(platform = activeVariantTab, targetId = "") {
+  if (!editingComposition) return variantFromContent(editingVariants[platform] || {});
+  let value = variantFromContent(editingComposition.global_content);
+  if (platform !== "global") {
+    const platformOverride = editingComposition.platform_overrides[platform];
+    if (platformOverride) value = {...value, ...variantFromContent(platformOverride)};
+  }
+  if (targetId && editingComposition.target_overrides[targetId]) {
+    value = {...value, ...variantFromContent(editingComposition.target_overrides[targetId])};
+  }
+  return value;
+}
+
+function renderOverrideControl() {
+  const button = document.querySelector("#postVariantOverrideToggle");
+  if (!button) return;
+  const targetId = document.querySelector("#postTargetOverride")?.value || "";
+  const isGlobal = activeVariantTab === "global" && !targetId;
+  const override = activeOverride();
+  const inherited = !isGlobal && !override;
+  button.hidden = isGlobal;
+  button.textContent = inherited ? "Tùy chỉnh nội dung này" : "Quay về dùng bản kế thừa";
+  button.dataset.inherited = String(inherited);
+  document.querySelectorAll("#variantEditorContainer input, #variantEditorContainer textarea").forEach(field => {
+    field.disabled = inherited;
+  });
+}
 
 function getCheckedPlatformsInDialog() {
   const platforms = [];
@@ -408,10 +490,14 @@ function getCheckedPlatformsInDialog() {
 
 function saveActiveVariantFromDom() {
   if (!activeVariantTab) return;
-  if (!editingVariants[activeVariantTab]) {
-    editingVariants[activeVariantTab] = {};
-  }
-  const cur = editingVariants[activeVariantTab];
+  const targetId = document.querySelector("#postTargetOverride")?.value || "";
+  if (targetId && !editingComposition.target_overrides[targetId]) return;
+  if (activeVariantTab !== "global" && !targetId && !editingComposition.platform_overrides[activeVariantTab]) return;
+  const cur = variantFromContent(activeVariantTab === "global"
+    ? editingComposition.global_content
+    : targetId
+      ? editingComposition.target_overrides[targetId]
+      : editingComposition.platform_overrides[activeVariantTab]);
   cur.caption = document.querySelector("#postCaption")?.value || "";
   cur.hashtags = (document.querySelector("#postHashtags")?.value || "")
     .split(/\s+/)
@@ -429,11 +515,18 @@ function saveActiveVariantFromDom() {
   if (activeVariantTab === "facebook") {
     cur.pinned_comment = document.querySelector("#postVariantPinned")?.value.trim() || null;
   }
+  if (activeVariantTab === "global") editingComposition.global_content = cur;
+  else if (targetId) editingComposition.target_overrides[targetId] = cur;
+  else editingComposition.platform_overrides[activeVariantTab] = cur;
+  if (activeVariantTab !== "global" && !targetId) editingVariants[activeVariantTab] = cur;
 }
 
 function loadActiveVariantToDom(platform) {
   activeVariantTab = platform;
-  const cur = editingVariants[platform] || {};
+  const targetId = document.querySelector("#postTargetOverride")?.value || "";
+  const cur = platform === "global"
+    ? variantFromContent(editingComposition?.global_content || {})
+    : resolvedEditorVariant(platform, targetId);
 
   const captionInput = document.querySelector("#postCaption");
   const hashtagsInput = document.querySelector("#postHashtags");
@@ -467,6 +560,7 @@ function loadActiveVariantToDom(platform) {
   if (captionLabel) {
     captionLabel.innerHTML = `Nội dung Caption <span class="caption-platform-badge" title="${pNames[platform] || platform}">${PLATFORM_ICONS[platform] || ""}</span>`;
   }
+  renderOverrideControl();
 }
 
 function renderVariantTabs() {
@@ -479,11 +573,15 @@ function renderVariantTabs() {
     return;
   }
 
-  if (!platforms.includes(activeVariantTab)) {
-    activeVariantTab = platforms[0];
+  if (activeVariantTab !== "global" && !platforms.includes(activeVariantTab)) {
+    activeVariantTab = "global";
   }
+  const targetId = document.querySelector("#postTargetOverride")?.value || "";
+  const availablePlatforms = targetId
+    ? [editingTargets.find(target => target.id === targetId)?.platform].filter(Boolean)
+    : platforms;
 
-  container.innerHTML = platforms.map(p => {
+  container.innerHTML = `${targetId ? "" : `<button type="button" class="btn-variant-tab ${activeVariantTab === "global" ? "active" : ""}" data-variant-tab="global">Chung</button>`}` + availablePlatforms.map(p => {
     const isActive = p === activeVariantTab;
     const name = PLATFORM_LABELS[p] || p;
     const iconSvg = PLATFORM_ICONS[p] || `<span style="font-size:11px;">${esc(p)}</span>`;
@@ -494,15 +592,15 @@ function renderVariantTabs() {
     `;
   }).join("");
 
-  container.querySelectorAll("[data-variant-tab]").forEach(btn => {
-    btn.onclick = () => {
-      const targetPlat = btn.dataset.variantTab;
-      if (targetPlat === activeVariantTab) return;
-      saveActiveVariantFromDom();
-      loadActiveVariantToDom(targetPlat);
-      renderVariantTabs();
-    };
-  });
+    container.querySelectorAll("[data-variant-tab]").forEach(btn => {
+      btn.onclick = () => {
+        const targetPlat = btn.dataset.variantTab;
+        if (targetPlat === activeVariantTab) return;
+        saveActiveVariantFromDom();
+        loadActiveVariantToDom(targetPlat);
+        renderVariantTabs();
+      };
+    });
 }
 
 export async function openPostEditor(id = null) {
@@ -521,9 +619,33 @@ export async function openPostEditor(id = null) {
     pendingMediaFiles = [];
     stagedLibraryAssets = [];
     detachedMediaAssetIds.clear();
+    stagedTargetMediaOverrides = {};
+    originalTargetMediaOverrideIds = new Set();
+    mediaPickerTargetId = "";
 
     const form = document.querySelector("#postForm");
     if (form) form.reset();
+    editingTargets = await api("/targets?enabled=true");
+    contentSignatures = await api("/content-signatures");
+    renderSignatureSelect();
+    const targetMediaSelect = document.querySelector("#postTargetMediaSelect");
+    if (targetMediaSelect) {
+      const accounts = await api("/accounts");
+      const accountNames = new Map(accounts.map(account => [account.id, account.name]));
+      targetMediaSelect.innerHTML = '<option value="">Chọn Page/kênh</option>' + editingTargets.map(target =>
+        `<option value="${esc(target.id)}">${esc(target.name)} · ${esc(accountNames.get(target.account_id) || "Account")} · ${esc(PLATFORM_LABELS[target.platform] || target.platform)}</option>`
+      ).join("");
+      targetMediaSelect.value = "";
+    }
+    const targetOverride = document.querySelector("#postTargetOverride");
+    if (targetOverride) {
+      const accounts = await api("/accounts");
+      const accountNames = new Map(accounts.map(account => [account.id, account.name]));
+      targetOverride.innerHTML = '<option value="">Không chỉnh riêng theo đích</option>' + editingTargets.map(target =>
+        `<option value="${esc(target.id)}">${esc(target.name)} · ${esc(accountNames.get(target.account_id) || "Account")} · ${esc(PLATFORM_LABELS[target.platform] || target.platform)}</option>`
+      ).join("");
+      targetOverride.value = "";
+    }
 
     const postIdInput = document.querySelector("#postId");
     if (postIdInput) postIdInput.value = id || "";
@@ -542,6 +664,8 @@ export async function openPostEditor(id = null) {
       try {
         const item = await api(`/contents/${id}`);
         state.editingPost = item;
+        stagedTargetMediaOverrides = JSON.parse(JSON.stringify(item.target_media_overrides || {}));
+        originalTargetMediaOverrideIds = new Set(Object.keys(item.target_media_overrides || {}));
         if (titleInput) titleInput.value = item.title || "";
 
         // Platforms
@@ -554,6 +678,7 @@ export async function openPostEditor(id = null) {
 
         // Clone platform variants from item
         editingVariants = JSON.parse(JSON.stringify(item.platform_variants || {}));
+        editingComposition = normalizeComposition(item);
         plats.forEach(p => {
           if (!editingVariants[p]) {
             editingVariants[p] = {
@@ -564,7 +689,7 @@ export async function openPostEditor(id = null) {
           }
         });
 
-        activeVariantTab = plats[0] || "facebook";
+        activeVariantTab = "global";
         loadActiveVariantToDom(activeVariantTab);
         renderVariantTabs();
 
@@ -575,7 +700,9 @@ export async function openPostEditor(id = null) {
       }
     } else {
       if (titleHeading) titleHeading.textContent = "Tạo bài viết mới";
-      state.editingPost = null;
+        state.editingPost = null;
+      stagedTargetMediaOverrides = {};
+      originalTargetMediaOverrideIds = new Set();
       if (titleInput) titleInput.value = "";
 
       if (fbCheck) fbCheck.checked = true;
@@ -587,12 +714,15 @@ export async function openPostEditor(id = null) {
       editingVariants = {
         facebook: { caption: "", hashtags: [], cta: "" }
       };
-      activeVariantTab = "facebook";
-      loadActiveVariantToDom("facebook");
+      editingComposition = normalizeComposition();
+      activeVariantTab = "global";
+      loadActiveVariantToDom("global");
       renderVariantTabs();
 
       renderEditorMediaList([]);
     }
+
+    renderTargetMediaOverride();
 
     if (dialog.open) {
       dialog.close();
@@ -685,6 +815,84 @@ function renderEditorMediaList(existingMediaItems = []) {
   });
 }
 
+function renderTargetMediaOverride() {
+  const select = document.querySelector("#postTargetMediaSelect");
+  const container = document.querySelector("#postTargetMediaList");
+  const hint = document.querySelector("#postTargetMediaHint");
+  const targetId = select?.value || "";
+  const assets = targetId ? stagedTargetMediaOverrides[targetId] : undefined;
+  const inheritButton = document.querySelector("#btnInheritTargetMedia");
+  const attachButton = document.querySelector("#btnAttachTargetMedia");
+  if (attachButton) attachButton.disabled = !targetId;
+  if (inheritButton) inheritButton.disabled = !targetId || assets === undefined;
+  if (!container) return;
+  if (!targetId) {
+    container.innerHTML = "";
+    if (hint) hint.textContent = "Page/kênh chưa có thiết lập riêng sẽ dùng media chung. Có thể đặt danh sách rỗng để không đính kèm media cho đích đó.";
+    return;
+  }
+  if (assets === undefined) {
+    container.innerHTML = "";
+    if (hint) hint.textContent = "Đích này đang kế thừa media chung.";
+    return;
+  }
+  if (hint) hint.textContent = assets.length ? `Đích này dùng ${assets.length} media riêng và không dùng media chung.` : "Đã đặt danh sách riêng rỗng: đích này sẽ không đính kèm media.";
+  container.innerHTML = assets.length ? assets.map(asset => {
+    const assetId = asset.asset_id || asset.id;
+    return `<div class="editor-media-item target-media-item" data-target-asset-id="${esc(assetId)}">
+      ${asset.thumbnail_relative_path || asset.media_type === "image"
+        ? `<img src="/api/media/${esc(asset.thumbnail_relative_path || asset.relative_path)}" alt="${esc(asset.original_name || "Media")}">`
+        : `<div class="video-item-box">🎬 VIDEO</div>`}
+      <span class="media-item-name" title="${esc(asset.original_name || "Media")}">${esc(asset.original_name || "Media")}</span>
+      <button type="button" class="btn-remove-media" data-remove-target-asset="${esc(assetId)}" title="Bỏ media riêng này">✕</button>
+    </div>`;
+  }).join("") : `<p class="muted">Danh sách media riêng đang rỗng.</p>`;
+  container.querySelectorAll("[data-remove-target-asset]").forEach(button => {
+    button.onclick = () => {
+      stagedTargetMediaOverrides[targetId] = (stagedTargetMediaOverrides[targetId] || [])
+        .filter(asset => (asset.asset_id || asset.id) !== button.dataset.removeTargetAsset);
+      renderTargetMediaOverride();
+    };
+  });
+}
+
+function renderSignatureSelect() {
+  const select = document.querySelector("#postSignatureSelect");
+  if (!select) return;
+  select.innerHTML = '<option value="">Chọn mẫu</option>' + contentSignatures.map(signature =>
+    `<option value="${esc(signature.id)}">${esc(signature.name)}</option>`
+  ).join("");
+}
+
+function renderSignatureManager() {
+  const container = document.querySelector("#postSignatureList");
+  if (!container) return;
+  container.innerHTML = `<div class="signature-manager-list">${contentSignatures.map(signature => `
+    <div class="signature-manager-row"><span><strong>${esc(signature.name)}</strong><small>${esc(signature.text || signature.hashtags.join(" ") || "(Chưa có nội dung)")}</small></span>
+    <button type="button" data-edit-signature="${esc(signature.id)}">Sửa</button><button type="button" class="danger" data-delete-signature="${esc(signature.id)}">Xóa</button></div>
+  `).join("") || '<p class="muted">Chưa có mẫu chữ ký.</p>'}</div>`;
+  container.querySelectorAll("[data-edit-signature]").forEach(button => {
+    button.onclick = () => {
+      const signature = contentSignatures.find(item => item.id === button.dataset.editSignature);
+      if (!signature) return;
+      document.querySelector("#postSignatureId").value = signature.id;
+      document.querySelector("#postSignatureName").value = signature.name;
+      document.querySelector("#postSignatureText").value = signature.text;
+      document.querySelector("#postSignatureHashtags").value = signature.hashtags.join(" ");
+    };
+  });
+  container.querySelectorAll("[data-delete-signature]").forEach(button => {
+    button.onclick = async () => {
+      const next = contentSignatures.filter(item => item.id !== button.dataset.deleteSignature);
+      try {
+        contentSignatures = await api("/content-signatures", {method: "PUT", body: JSON.stringify({signatures: next})});
+        renderSignatureManager();
+        renderSignatureSelect();
+      } catch (err) { toast(err.message); }
+    };
+  });
+}
+
 async function handleSavePost(event) {
   event.preventDefault();
   saveActiveVariantFromDom();
@@ -708,14 +916,19 @@ async function handleSavePost(event) {
   });
 
   const primaryKey = platforms.includes("facebook") ? "facebook" : platforms[0];
-  const primaryVariant = platform_variants[primaryKey] || {};
+  const globalContent = variantFromContent(editingComposition.global_content);
+  const savedPlatformVariants = Object.fromEntries(Object.entries(editingComposition.platform_overrides)
+    .filter(([platform]) => platforms.includes(platform)));
 
   const body = {
     title,
-    caption: primaryVariant.caption || "",
-    hashtags: primaryVariant.hashtags || [],
-    cta: primaryVariant.cta || null,
-    platform_variants,
+    caption: globalContent.caption,
+    hashtags: globalContent.hashtags,
+    cta: globalContent.cta,
+    platform_variants: {...savedPlatformVariants, ...Object.fromEntries(
+      Object.entries(platform_variants).filter(([platform]) => !savedPlatformVariants[platform])
+    )},
+    composition: editingComposition,
   };
 
   const saveBtn = document.querySelector("#btnSavePostRecord");
@@ -732,23 +945,15 @@ async function handleSavePost(event) {
 
     // 1. Detach any removed media (for existing posts)
     for (const assetId of detachedMediaAssetIds) {
-      try {
-        await api(`/media-assets/${assetId}/attach/${saved.id}`, { method: "DELETE" });
-      } catch (e) {
-        console.warn("Could not detach media:", e);
-      }
+      await api(`/media-assets/${assetId}/attach/${saved.id}`, { method: "DELETE" });
     }
 
     // 2. Attach any staged library assets
-    for (const asset of stagedLibraryAssets) {
-      try {
-        await api(`/media-assets/${asset.id}/attach`, {
-          method: "POST",
-          body: JSON.stringify({ content_id: saved.id, sort_order: 0 }),
-        });
-      } catch (e) {
-        console.warn("Could not attach staged asset:", e);
-      }
+    for (const [sort_order, asset] of stagedLibraryAssets.entries()) {
+      await api(`/media-assets/${asset.id}/attach`, {
+        method: "POST",
+        body: JSON.stringify({ content_id: saved.id, sort_order }),
+      });
     }
 
     // 3. Upload any pending local files
@@ -762,6 +967,21 @@ async function handleSavePost(event) {
       });
     }
 
+    // Target media is saved with the post so canceling the editor makes no partial changes.
+    const mediaOverrideTargetIds = new Set([
+      ...originalTargetMediaOverrideIds,
+      ...Object.keys(stagedTargetMediaOverrides),
+    ]);
+    for (const targetId of mediaOverrideTargetIds) {
+      const assets = stagedTargetMediaOverrides[targetId];
+      await api(`/contents/${saved.id}/media-targets/${targetId}`, {
+        method: "PUT",
+        body: JSON.stringify(assets === undefined
+          ? {inherit: true}
+          : {asset_ids: assets.map(asset => asset.asset_id || asset.id)}),
+      });
+    }
+
     // Clean up preview object URLs
     pendingMediaFiles.forEach(item => {
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -769,6 +989,9 @@ async function handleSavePost(event) {
     pendingMediaFiles = [];
     stagedLibraryAssets = [];
     detachedMediaAssetIds.clear();
+    stagedTargetMediaOverrides = {};
+    originalTargetMediaOverrideIds = new Set();
+    mediaPickerTargetId = "";
 
     document.querySelector("#postDialog").close();
     toast(id ? "Đã cập nhật bài viết thành công!" : "Đã tạo bài viết mới thành công!");
@@ -825,6 +1048,46 @@ async function bulkDeletePosts() {
 }
 
 // Quick Schedule
+function renderQuickScheduleTargetTimes() {
+  const quickSchedule = state.quickSchedule;
+  if (!quickSchedule) return;
+  const commonTime = document.querySelector("#quickScheduleTime").value;
+  const selected = Array.from(document.querySelector("#quickScheduleTargets").selectedOptions);
+  const wrap = document.querySelector("#quickScheduleTargetTimes");
+  wrap.innerHTML = selected.length ? `<details open><summary>Định dạng, thiết lập và giờ theo từng đích</summary><div class="quick-schedule-time-list">${selected.map(option => {
+    const target = quickSchedule.targets.find(item => item.id === option.value);
+    const account = quickSchedule.accounts.find(item => item.id === target?.account_id);
+    const platform = quickSchedule.platforms.find(item => item.id === account?.platform);
+    const formats = (platform?.format_schemas || []).filter(item => (platform.content_formats || []).includes(item.id));
+    const selectedFormat = quickSchedule.targetFormatOverrides[option.value] || formats[0]?.id || "";
+    const schema = formats.find(item => item.id === selectedFormat);
+    const settings = quickSchedule.targetSettingsOverrides[option.value] || {};
+    const renderSetting = field => {
+      const value = settings[field.key] ?? (field.key === "title" ? quickSchedule.post.title : field.default);
+      if (field.field_type === "checkbox") return `<label class="check"><input type="checkbox" data-target="${esc(option.value)}" data-target-setting="${esc(field.key)}" ${value ? "checked" : ""}><span>${esc(field.label)}</span></label>`;
+      if (field.field_type === "select") return `<label>${esc(field.label)}<select data-target="${esc(option.value)}" data-target-setting="${esc(field.key)}" ${field.required ? "required" : ""}>${field.options.map(item => `<option value="${esc(item)}" ${item === value ? "selected" : ""}>${esc(item)}</option>`).join("")}</select></label>`;
+      if (field.field_type === "textarea") return `<label>${esc(field.label)}<textarea data-target="${esc(option.value)}" data-target-setting="${esc(field.key)}" ${field.required ? "required" : ""}>${esc(value ?? "")}</textarea></label>`;
+      return `<label>${esc(field.label)}<input data-target="${esc(option.value)}" data-target-setting="${esc(field.key)}" value="${esc(value ?? "")}" ${field.required ? "required" : ""}></label>`;
+    };
+    const value = quickSchedule.targetTimeOverrides[option.value] || commonTime;
+    return `<fieldset class="target-schedule-fields"><legend>${esc(target?.name || option.textContent)} · ${esc(account?.name || "Account")} · ${esc(platform?.name || account?.platform || "")}</legend>
+      <label>Định dạng<select data-target-format="${esc(option.value)}" required>${formats.map(item => `<option value="${esc(item.id)}" ${item.id === selectedFormat ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label>
+      ${(schema?.settings || []).map(renderSetting).join("")}
+      <label>Ngày giờ<input type="datetime-local" data-target-time="${esc(option.value)}" value="${esc(value)}" required></label>
+    </fieldset>`;
+  }).join("")}</div></details>` : "";
+  wrap.querySelectorAll("[data-target-time]").forEach(input => input.onchange = () => { quickSchedule.targetTimeOverrides[input.dataset.targetTime] = input.value; });
+  wrap.querySelectorAll("[data-target-format]").forEach(input => input.onchange = () => {
+    quickSchedule.targetFormatOverrides[input.dataset.targetFormat] = input.value;
+    renderQuickScheduleTargetTimes();
+  });
+  wrap.querySelectorAll("[data-target-setting]").forEach(input => input.onchange = () => {
+    const targetId = input.dataset.target;
+    quickSchedule.targetSettingsOverrides[targetId] ||= {};
+    quickSchedule.targetSettingsOverrides[targetId][input.dataset.targetSetting] = input.type === "checkbox" ? input.checked : input.value;
+  });
+}
+
 async function openQuickSchedule(id) {
   const post = state.posts.find(p => p.id === id);
   if (!post) return;
@@ -843,35 +1106,121 @@ async function openQuickSchedule(id) {
 
   // Load catalog data so the selected format is valid for the account platform.
   try {
-    const [accounts, targets, platforms] = await Promise.all([
+    const [accounts, targets, platforms, targetGroups] = await Promise.all([
       api("/accounts"),
       api("/targets?enabled=true"),
       api("/platforms"),
+      api("/target-groups"),
     ]);
-    const enabledAccounts = accounts.filter(account => account.enabled);
-    if (!enabledAccounts.length) {
-      toast("Cần có ít nhất một account đang bật để lên lịch.");
+    const enabledAccounts = accounts.filter(account => account.enabled
+      && platforms.some(platform => platform.id === account.platform && platform.operational && platform.content_formats?.length));
+    const accountById = new Map(enabledAccounts.map(account => [account.id, account]));
+    const selectableTargets = targets.filter(target => accountById.has(target.account_id)
+      && target.platform === accountById.get(target.account_id)?.platform && target.enabled
+      && ["accessible", "unknown"].includes(target.access_status));
+    if (!selectableTargets.length) {
+      toast("Cần có ít nhất một Page/kênh đang khả dụng trên nền tảng đã bật.");
       return;
     }
-    state.quickSchedule = {post, accounts: enabledAccounts, targets, platforms};
-
-    const accountSelect = document.querySelector("#quickScheduleAccount");
-    accountSelect.innerHTML = enabledAccounts.map(a => `<option value="${a.id}">${esc(a.name)} (${esc(a.platform)})</option>`).join("");
+    state.quickSchedule = {post, accounts: enabledAccounts, targets: selectableTargets, platforms, targetGroups, requestSignature: null, requestKey: null, previewReady: false, targetTimeOverrides: {}, targetFormatOverrides: {}, targetSettingsOverrides: {}};
+    const preview = document.querySelector("#quickSchedulePreview");
+    preview.innerHTML = "";
+    preview.classList.add("hidden");
+    document.querySelector('#quickScheduleForm button[type="submit"]').textContent = "Kiểm tra Page";
 
     const targetSelect = document.querySelector("#quickScheduleTargets");
-    const formatSelect = document.querySelector("#quickScheduleFormat");
-    function updateTargets() {
-      const selectedAccount = accountSelect.value;
-      const filteredTargets = targets.filter(t => t.account_id === selectedAccount);
-      targetSelect.innerHTML = filteredTargets.map(t => `<option value="${t.id}" selected>${esc(t.name)} (${esc(t.target_type)})</option>`).join("");
-      const account = enabledAccounts.find(item => item.id === selectedAccount);
-      const platform = platforms.find(item => item.id === account?.platform);
-      const formats = (platform?.format_schemas || []).filter(item => (platform.content_formats || []).includes(item.id));
-      formatSelect.innerHTML = formats.map(item => `<option value="${esc(item.id)}">${esc(item.label)}</option>`).join("");
-      if (!formats.length) toast("Nền tảng của account chưa có định dạng xuất bản khả dụng.");
-    }
-    accountSelect.onchange = updateTargets;
-    updateTargets();
+    targetSelect.innerHTML = selectableTargets.map(target => {
+      const account = accountById.get(target.account_id);
+      return `<option value="${esc(target.id)}" selected>${esc(target.name)} — ${esc(account.name)} · ${esc(account.platform)} (${esc(target.target_type)})</option>`;
+    }).join("");
+    const groupSelect = document.querySelector("#quickScheduleTargetGroup");
+    groupSelect.innerHTML = '<option value="">Chọn bộ Page/kênh</option>' + targetGroups.map(group =>
+      `<option value="${esc(group.id)}">${esc(group.name)} (${group.target_ids.length})</option>`
+    ).join("");
+    const resolveGroup = () => {
+      const group = state.quickSchedule.targetGroups.find(item => item.id === groupSelect.value);
+      if (!group) return null;
+      const known = new Set(selectableTargets.map(target => target.id));
+      const missing = group.target_ids.filter(targetId => !known.has(targetId));
+      if (missing.length) {
+        const names = missing.map(targetId => targets.find(item => item.id === targetId)?.name || targetId);
+        toast(`Bộ "${group.name}" có Page/kênh không khả dụng: ${names.join(", ")}. Hãy sửa bộ hoặc trạng thái kết nối trước.`);
+        return null;
+      }
+      return group;
+    };
+    const defaultsForTargets = target_ids => ({
+      target_content_formats: Object.fromEntries(target_ids.filter(targetId => quickSchedule.targetFormatOverrides[targetId])
+        .map(targetId => [targetId, quickSchedule.targetFormatOverrides[targetId]])),
+      target_platform_settings: Object.fromEntries(target_ids.filter(targetId => quickSchedule.targetSettingsOverrides[targetId])
+        .map(targetId => [targetId, quickSchedule.targetSettingsOverrides[targetId]])),
+    });
+    document.querySelector("#applyTargetGroupReplace").onclick = () => {
+      const group = resolveGroup();
+      if (!group) return;
+      if (!confirm(`Thay toàn bộ lựa chọn hiện tại bằng ${group.target_ids.length} Page/kênh trong bộ "${group.name}"?`)) return;
+      for (const option of targetSelect.options) option.selected = group.target_ids.includes(option.value);
+      quickSchedule.targetFormatOverrides = {...(group.defaults?.target_content_formats || {})};
+      quickSchedule.targetSettingsOverrides = JSON.parse(JSON.stringify(group.defaults?.target_platform_settings || {}));
+      targetSelect.dispatchEvent(new Event("change", {bubbles: true}));
+    };
+    document.querySelector("#applyTargetGroupMerge").onclick = () => {
+      const group = resolveGroup();
+      if (!group) return;
+      const selected = new Set(Array.from(targetSelect.selectedOptions, option => option.value));
+      group.target_ids.forEach(targetId => selected.add(targetId));
+      for (const option of targetSelect.options) option.selected = selected.has(option.value);
+      Object.assign(quickSchedule.targetFormatOverrides, group.defaults?.target_content_formats || {});
+      Object.assign(quickSchedule.targetSettingsOverrides, JSON.parse(JSON.stringify(group.defaults?.target_platform_settings || {})));
+      targetSelect.dispatchEvent(new Event("change", {bubbles: true}));
+    };
+    document.querySelector("#updateTargetGroup").onclick = async () => {
+      const group = resolveGroup();
+      if (!group) return;
+      const target_ids = Array.from(targetSelect.selectedOptions, option => option.value);
+      if (!confirm(`Cập nhật bộ "${group.name}" bằng đúng ${target_ids.length} Page/kênh đang chọn cùng format/settings hiện tại?`)) return;
+      try {
+        const updated = await api(`/target-groups/${group.id}`, {
+          method: "PUT",
+          body: JSON.stringify({name: group.name, description: group.description || null, defaults: defaultsForTargets(target_ids), target_ids}),
+        });
+        state.quickSchedule.targetGroups = state.quickSchedule.targetGroups.map(item => item.id === group.id ? updated : item);
+        groupSelect.selectedOptions[0].textContent = `${updated.name} (${updated.target_ids.length})`;
+        toast(`Đã cập nhật bộ "${updated.name}". Lịch đã tạo trước đó không đổi.`);
+      } catch (err) { toast(err.message); }
+    };
+    document.querySelector("#deleteTargetGroup").onclick = async () => {
+      const group = state.quickSchedule.targetGroups.find(item => item.id === groupSelect.value);
+      if (!group || !confirm(`Xóa bộ "${group.name}"? Các lịch đã tạo và Page/kênh không bị xóa.`)) return;
+      try {
+        await api(`/target-groups/${group.id}`, {method: "DELETE"});
+        state.quickSchedule.targetGroups = state.quickSchedule.targetGroups.filter(item => item.id !== group.id);
+        groupSelect.querySelector(`option[value="${CSS.escape(group.id)}"]`)?.remove();
+        groupSelect.value = "";
+      } catch (err) { toast(err.message); }
+    };
+    document.querySelector("#saveTargetGroup").onclick = async () => {
+      const target_ids = Array.from(targetSelect.selectedOptions, option => option.value);
+      if (!target_ids.length) return toast("Hãy chọn ít nhất một Page/kênh để lưu bộ.");
+      const name = prompt("Tên bộ Page/kênh:")?.trim();
+      if (!name) return;
+      const defaults = defaultsForTargets(target_ids);
+      try {
+        const group = await api("/target-groups", {method: "POST", body: JSON.stringify({name, defaults})});
+        const savedGroup = await api(`/target-groups/${group.id}/members`, {
+          method: "PUT", body: JSON.stringify({target_ids}),
+        });
+        state.quickSchedule.targetGroups.push(savedGroup);
+        groupSelect.insertAdjacentHTML("beforeend", `<option value="${esc(savedGroup.id)}">${esc(savedGroup.name)} (${savedGroup.target_ids.length})</option>`);
+        groupSelect.value = savedGroup.id;
+        toast(`Đã lưu bộ "${savedGroup.name}". Việc này không tạo lịch đăng.`);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    targetSelect.onchange = renderQuickScheduleTargetTimes;
+    document.querySelector("#quickScheduleTime").onchange = renderQuickScheduleTargetTimes;
+    renderQuickScheduleTargetTimes();
 
     dialog.showModal();
   } catch (err) {
@@ -882,7 +1231,6 @@ async function openQuickSchedule(id) {
 async function handleSaveQuickSchedule(event) {
   event.preventDefault();
   const content_id = document.querySelector("#quickSchedulePostId").value;
-  const account_id = document.querySelector("#quickScheduleAccount").value;
   const target_ids = Array.from(document.querySelector("#quickScheduleTargets").selectedOptions).map(o => o.value);
   const scheduled_at_str = document.querySelector("#quickScheduleTime").value;
   const dry_run = document.querySelector("#quickScheduleDryRun").checked;
@@ -900,26 +1248,47 @@ async function handleSaveQuickSchedule(event) {
 
   try {
     const scheduled_at = scheduled_at_str ? new Date(scheduled_at_str).toISOString() : null;
-    const selectedAccount = quickSchedule.accounts.find(item => item.id === account_id);
-    const platform = quickSchedule.platforms.find(item => item.id === selectedAccount?.platform);
-    const schema = (platform?.format_schemas || []).find(item => item.id === content_format);
-    const platform_settings = Object.fromEntries((schema?.settings || []).map(field => [
-      field.key, field.default ?? (field.key === "title" ? quickSchedule.post.title : ""),
+    const target_scheduled_at = Object.fromEntries(Array.from(document.querySelectorAll("#quickScheduleTargetTimes [data-target-time]"), input => [
+      input.dataset.targetTime, input.value ? new Date(input.value).toISOString() : scheduled_at,
     ]));
-    await api("/schedules", {
+    const target_content_formats = Object.fromEntries(Array.from(document.querySelectorAll("#quickScheduleTargetTimes [data-target-format]"), input => [input.dataset.targetFormat, input.value]));
+    const target_platform_settings = {};
+    document.querySelectorAll("#quickScheduleTargetTimes [data-target-setting]").forEach(input => {
+      const targetId = input.dataset.target;
+      target_platform_settings[targetId] ||= {};
+      target_platform_settings[targetId][input.dataset.targetSetting] = input.type === "checkbox" ? input.checked : input.value;
+    });
+    const platform_settings = {};
+    const signature = JSON.stringify([content_id, [...target_ids].sort(), scheduled_at, target_scheduled_at, dry_run, target_content_formats, target_platform_settings]);
+    if (quickSchedule.requestSignature !== signature) {
+      quickSchedule.requestSignature = signature;
+      quickSchedule.requestKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+      quickSchedule.previewReady = false;
+    }
+    const payload = {
+      content_id, target_ids, scheduled_at, dry_run, missed_policy: "confirm", content_format,
+      platform_settings, target_scheduled_at, target_content_formats, target_platform_settings,
+      request_key: quickSchedule.requestKey,
+    };
+    if (!quickSchedule.previewReady) {
+      const result = await api("/schedules/batch/preflight", {method: "POST", body: JSON.stringify(payload)});
+      const preview = document.querySelector("#quickSchedulePreview");
+      preview.innerHTML = `<h3>Kết quả kiểm tra từng Page</h3><ul class="status-list quick-schedule-preview">${(result.targets || []).map(target => `
+        <li data-status="${esc(target.status)}">
+          <strong>${esc(target.name)}</strong>${target.account_name ? ` · ${esc(target.account_name)}` : ""}${target.platform ? ` · ${esc(target.platform)} ${esc(target.content_format || "")}` : ""}
+          ${target.status === "ready"
+            ? `<small>${esc(target.transport)}${target.provider ? ` · ${esc(target.provider)}` : ""} · ${esc(new Date(target.scheduled_at).toLocaleString())}<br>${esc([target.caption, (target.hashtags || []).join(" ")].filter(Boolean).join("\n") || "(caption trống)")}${target.media?.length ? `<br>Media: ${esc(target.media.map(item => item.name).join(", "))}` : ""}</small>`
+          : `<small>${esc(target.error || "Không thể lên lịch Page này.")}</small>`}
+        </li>`).join("")}</ul>${result.ready ? "<p>Kiểm tra xong. Xác nhận lần nữa để tạo lịch cho toàn bộ Page.</p>" : "<p>Sửa hoặc bỏ các Page lỗi rồi kiểm tra lại. Chưa có lịch nào được tạo.</p>"}`;
+      preview.classList.remove("hidden");
+      quickSchedule.previewReady = Boolean(result.ready);
+      document.querySelector('#quickScheduleForm button[type="submit"]').textContent = result.ready
+        ? `Tạo lịch cho ${target_ids.length} đích` : "Kiểm tra lại";
+      return;
+    }
+    await api("/schedules/batch", {
       method: "POST",
-      body: JSON.stringify({
-        content_id,
-        account_id,
-        target_ids,
-        scheduled_at,
-        dry_run,
-        delay_seconds: 0,
-        random_delay_seconds: 0,
-        missed_policy: "confirm",
-        content_format,
-        platform_settings,
-      }),
+      body: JSON.stringify(payload),
     });
     document.querySelector("#quickScheduleDialog").close();
     toast("Đã lên lịch xuất bản bài viết.");
@@ -988,7 +1357,6 @@ export async function refreshMediaManager() {
 
   try {
     const assets = await api(`/media-assets?${params.toString()}`);
-    availableMediaAssets.clear();
     assets.forEach(a => availableMediaAssets.set(a.id, a));
 
     const container = document.querySelector("#assetList");
@@ -1006,7 +1374,7 @@ export async function refreshMediaManager() {
           <div class="tag-list">${asset.tags.map(t => `<span>${esc(t)}</span>`).join("")}</div>
           <small>${asset.reference_count} bài viết đang dùng</small>
           <div class="actions">
-            <button data-use-asset="${esc(asset.id)}">Gắn vào bài</button>
+          <label class="media-asset-select"><input type="checkbox" data-select-asset="${esc(asset.id)}" ${mediaManagerSelectedAssetIds.has(asset.id) ? "checked" : ""}> Chọn</label>
             <button class="danger" data-delete-asset="${esc(asset.id)}" ${asset.reference_count ? "disabled" : ""}>Xóa tệp</button>
           </div>
         </div>
@@ -1026,58 +1394,133 @@ export async function refreshMediaManager() {
       };
     });
 
-    container.querySelectorAll("[data-use-asset]").forEach(b => {
-      b.onclick = async () => {
-        const assetId = b.dataset.useAsset;
-        const asset = availableMediaAssets.get(assetId);
-        if (!asset) {
-          toast("Không tìm thấy thông tin tệp media.");
-          return;
-        }
-
-        const postDialog = document.querySelector("#postDialog");
-        const isEditorOpen = postDialog && postDialog.open;
-
-        if (!isEditorOpen) {
-          toast("Hãy mở form Tạo hoặc Sửa bài viết trước khi chọn tệp.");
-          return;
-        }
-
-        // If editing an existing post in database
-        if (state.editingPost?.id) {
-          try {
-            await api(`/media-assets/${assetId}/attach`, {
-              method: "POST",
-              body: JSON.stringify({ content_id: state.editingPost.id, sort_order: 0 }),
-            });
-            toast(`Đã gắn "${asset.original_name}" vào bài viết.`);
-            document.querySelector("#mediaManagerDialog").close();
-            const refreshed = await api(`/contents/${state.editingPost.id}`);
-            state.editingPost = refreshed;
-            renderEditorMediaList(refreshed.media || []);
-          } catch (err) {
-            toast(err.message);
-          }
-        } else {
-          // Creating a new post: stage asset locally
-          const alreadyStaged = stagedLibraryAssets.some(a => a.id === assetId);
-          if (alreadyStaged) {
-            toast("Tệp này đã được chọn trong bài viết.");
-            return;
-          }
-          stagedLibraryAssets.push(asset);
-          toast(`Đã chọn "${asset.original_name}".`);
-          document.querySelector("#mediaManagerDialog").close();
-          renderEditorMediaList([]);
-        }
+    container.querySelectorAll("[data-select-asset]").forEach(input => {
+      input.onchange = () => {
+        if (input.checked) mediaManagerSelectedAssetIds.add(input.dataset.selectAsset);
+        else mediaManagerSelectedAssetIds.delete(input.dataset.selectAsset);
+        updateMediaManagerSelection();
       };
     });
+    updateMediaManagerSelection();
   } catch (err) {
     toast(err.message);
   }
 }
 
+function updateMediaManagerSelection() {
+  const count = mediaManagerSelectedAssetIds.size;
+  const label = document.querySelector("#mediaManagerSelectionCount");
+  const button = document.querySelector("#applySelectedMediaAssets");
+  if (label) label.textContent = `${count} đã chọn`;
+  if (button) {
+    button.disabled = count === 0;
+    button.textContent = `Thêm ${count} media vào bài`;
+  }
+}
+
+function applySelectedMediaAssets() {
+  const postDialog = document.querySelector("#postDialog");
+  if (!postDialog?.open) return toast("Hãy mở form Tạo hoặc Sửa bài viết trước khi chọn media.");
+  const assets = Array.from(mediaManagerSelectedAssetIds, assetId => availableMediaAssets.get(assetId)).filter(Boolean);
+  if (!assets.length) return toast("Các media đã chọn không còn trong danh sách. Hãy tải lại thư viện.");
+  if (mediaPickerTargetId) {
+    const targetId = mediaPickerTargetId;
+    const current = stagedTargetMediaOverrides[targetId] || [];
+    const seen = new Set(current.map(item => item.asset_id || item.id));
+    stagedTargetMediaOverrides[targetId] = [...current, ...assets.filter(asset => !seen.has(asset.id))];
+    renderTargetMediaOverride();
+  } else {
+    const existingIds = new Set((state.editingPost?.media || []).map(item => item.asset_id || item.id));
+    const stagedIds = new Set(stagedLibraryAssets.map(item => item.id));
+    for (const asset of assets) {
+      if (existingIds.has(asset.id)) detachedMediaAssetIds.delete(asset.id);
+      else if (!stagedIds.has(asset.id)) stagedLibraryAssets.push(asset);
+    }
+    renderEditorMediaList(state.editingPost?.media || []);
+  }
+  mediaManagerSelectedAssetIds.clear();
+  updateMediaManagerSelection();
+  document.querySelector("#mediaManagerDialog").close();
+  toast(`Đã chọn ${assets.length} media. Thay đổi sẽ được lưu cùng bài viết.`);
+}
+
 export function initPosts() {
+  document.querySelector("#insertPostSignature")?.addEventListener("click", () => {
+    const signature = contentSignatures.find(item => item.id === document.querySelector("#postSignatureSelect")?.value);
+    if (!signature) return toast("Hãy chọn một mẫu trước.");
+    const caption = document.querySelector("#postCaption");
+    const hashtags = document.querySelector("#postHashtags");
+    if (caption?.disabled || hashtags?.disabled) return toast("Hãy tạo bản tùy chỉnh cho platform/Page trước khi chèn mẫu.");
+    if (signature.text && !caption.value.includes(signature.text)) {
+      caption.value = [caption.value.trimEnd(), signature.text].filter(Boolean).join("\n\n");
+    }
+    const existingTags = hashtags.value.split(/\s+/).filter(Boolean);
+    for (const tag of signature.hashtags || []) if (!existingTags.includes(tag)) existingTags.push(tag);
+    hashtags.value = existingTags.join(" ");
+    caption.dispatchEvent(new Event("input", {bubbles: true}));
+    hashtags.dispatchEvent(new Event("input", {bubbles: true}));
+  });
+  document.querySelector("#managePostSignatures")?.addEventListener("click", () => {
+    document.querySelector("#postSignatureId").value = "";
+    document.querySelector("#postSignatureName").value = "";
+    document.querySelector("#postSignatureText").value = "";
+    document.querySelector("#postSignatureHashtags").value = "";
+    renderSignatureManager();
+    document.querySelector("#postSignatureDialog").showModal();
+  });
+  document.querySelector("#newPostSignature")?.addEventListener("click", () => {
+    document.querySelector("#postSignatureId").value = "";
+    document.querySelector("#postSignatureName").value = "";
+    document.querySelector("#postSignatureText").value = "";
+    document.querySelector("#postSignatureHashtags").value = "";
+    document.querySelector("#postSignatureName").focus();
+  });
+  document.querySelector("#postSignatureForm")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const id = document.querySelector("#postSignatureId").value || globalThis.crypto?.randomUUID?.() || String(Date.now());
+    const signature = {
+      id,
+      name: document.querySelector("#postSignatureName").value.trim(),
+      text: document.querySelector("#postSignatureText").value.trim(),
+      hashtags: document.querySelector("#postSignatureHashtags").value.split(/\s+/).filter(Boolean),
+    };
+    const next = contentSignatures.filter(item => item.id !== id);
+    next.push(signature);
+    try {
+      contentSignatures = await api("/content-signatures", {method: "PUT", body: JSON.stringify({signatures: next})});
+      renderSignatureManager();
+      renderSignatureSelect();
+      document.querySelector("#postSignatureSelect").value = id;
+      document.querySelector("#postSignatureId").value = id;
+      toast("Đã lưu mẫu; mẫu chỉ được áp dụng khi bạn chèn vào bài.");
+    } catch (err) { toast(err.message); }
+  });
+  document.querySelector("#postTargetOverride")?.addEventListener("change", () => {
+    saveActiveVariantFromDom();
+    const targetId = document.querySelector("#postTargetOverride").value;
+    if (targetId) {
+      const target = editingTargets.find(item => item.id === targetId);
+      if (target && activeVariantTab !== target.platform) activeVariantTab = target.platform;
+    }
+    loadActiveVariantToDom(activeVariantTab);
+    renderVariantTabs();
+  });
+  document.querySelector("#postVariantOverrideToggle")?.addEventListener("click", () => {
+    const targetId = document.querySelector("#postTargetOverride")?.value || "";
+    const button = document.querySelector("#postVariantOverrideToggle");
+    if (button.dataset.inherited === "true") {
+      const inherited = resolvedEditorVariant(activeVariantTab, "");
+      if (targetId) editingComposition.target_overrides[targetId] = {...inherited};
+      else editingComposition.platform_overrides[activeVariantTab] = {...inherited};
+      if (!targetId) editingVariants[activeVariantTab] = {...inherited};
+    } else {
+      if (!confirm("Bỏ bản tùy chỉnh và quay về dùng nội dung kế thừa?")) return;
+      if (targetId) delete editingComposition.target_overrides[targetId];
+      else delete editingComposition.platform_overrides[activeVariantTab];
+    }
+    loadActiveVariantToDom(activeVariantTab);
+    renderVariantTabs();
+  });
   // Navigation & toolbar buttons
   const newPostBtn = document.querySelector("#newPost");
   if (newPostBtn) {
@@ -1286,10 +1729,33 @@ export function initPosts() {
   const btnAttachMedia = document.querySelector("#btnAttachFromMediaManager");
   if (btnAttachMedia) {
     btnAttachMedia.onclick = () => {
+      mediaPickerTargetId = "";
+      mediaManagerSelectedAssetIds.clear();
+      availableMediaAssets.clear();
+      updateMediaManagerSelection();
       document.querySelector("#mediaManagerDialog").showModal();
       refreshMediaManager();
     };
   }
+  const targetMediaSelect = document.querySelector("#postTargetMediaSelect");
+  targetMediaSelect?.addEventListener("change", renderTargetMediaOverride);
+  document.querySelector("#btnAttachTargetMedia")?.addEventListener("click", () => {
+    const targetId = targetMediaSelect?.value || "";
+    if (!targetId) return;
+    mediaPickerTargetId = targetId;
+    mediaManagerSelectedAssetIds.clear();
+    availableMediaAssets.clear();
+    updateMediaManagerSelection();
+    document.querySelector("#mediaManagerDialog").showModal();
+    refreshMediaManager();
+  });
+  document.querySelector("#applySelectedMediaAssets")?.addEventListener("click", applySelectedMediaAssets);
+  document.querySelector("#btnInheritTargetMedia")?.addEventListener("click", () => {
+    const targetId = targetMediaSelect?.value || "";
+    if (!targetId) return;
+    delete stagedTargetMediaOverrides[targetId];
+    renderTargetMediaOverride();
+  });
 
   // Lightbox navigation
   const prevBtn = document.querySelector("#lightboxPrevBtn");

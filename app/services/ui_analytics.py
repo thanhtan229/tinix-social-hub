@@ -82,7 +82,7 @@ class UIAnalyticsCollector:
     def _validate_url(platform: str, url: str) -> None:
         hosts={
             "facebook": ("facebook.com",), "instagram": ("instagram.com",),
-            "tiktok": ("tiktok.com",), "youtube": ("youtube.com",),
+            "tiktok": ("tiktok.com",), "youtube": ("youtube.com", "youtu.be"),
             "x": ("x.com", "twitter.com"),
         }
         parsed=urlparse(url)

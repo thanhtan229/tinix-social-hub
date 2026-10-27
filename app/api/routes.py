@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+from contextlib import asynccontextmanager, ExitStack, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,14 @@ class RoutingPreferenceUpdate(BaseModel):
 class TargetGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
+    defaults: dict[str, Any] = Field(default_factory=dict)
+
+
+class TargetGroupUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    defaults: dict[str, Any] = Field(default_factory=dict)
+    target_ids: list[str] | None = Field(default=None, max_length=500)
 
 
 class TargetGroupMembers(BaseModel):
@@ -105,6 +114,15 @@ class ProfileAutoCleanupSettings(BaseModel):
     threshold_gb: float = Field(default=5, ge=0.5, le=100)
 
 
+class AnalyticsRefreshSettings(BaseModel):
+    enabled: bool = False
+    meta_enabled: bool = False
+    interval_hours: int = Field(default=24, ge=6, le=48)
+    days: int = Field(default=30, ge=7, le=90)
+    posts_per_run: int = Field(default=10, ge=1, le=50)
+    channels_per_run: int = Field(default=10, ge=1, le=50)
+
+
 class AIProviderConfigCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=40)
     name: str = Field(min_length=1, max_length=100)
@@ -139,8 +157,8 @@ class PlatformAppCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=40)
     name: str = Field(min_length=1, max_length=100)
     client_id: str = Field(min_length=1, max_length=1000)
-    client_secret: str = Field(min_length=1, max_length=2000)
-    redirect_uri: str = Field(min_length=8, max_length=2000)
+    client_secret: str = Field(default="", max_length=2000)
+    redirect_uri: str = Field(default="", max_length=2000)
     api_version: str = Field(default="", max_length=100)
     scopes: list[str] | None = Field(default=None, max_length=50)
     enabled: bool = True
@@ -150,7 +168,7 @@ class PlatformAppUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     client_id: str | None = Field(default=None, min_length=1, max_length=1000)
     client_secret: str | None = Field(default=None, min_length=1, max_length=2000)
-    redirect_uri: str | None = Field(default=None, min_length=8, max_length=2000)
+    redirect_uri: str | None = Field(default=None, max_length=2000)
     api_version: str | None = Field(default=None, max_length=100)
     scopes: list[str] | None = Field(default=None, max_length=50)
     enabled: bool | None = None
@@ -158,6 +176,19 @@ class PlatformAppUpdate(BaseModel):
 
 class ProviderAuthorizeBody(BaseModel):
     platform_app_id: str | None = Field(default=None, max_length=100)
+
+
+class MetaSystemUserConnect(BaseModel):
+    platform_app_id: str = Field(min_length=1, max_length=100)
+    access_token: str = Field(default="", max_length=10000)
+    page_id: str | None = Field(default=None, min_length=1, max_length=30, pattern=r"^[0-9]+$")
+    page_ids: list[str] = Field(default_factory=list, max_length=100)
+    disconnect_page_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class MetaSystemUserDiscovery(BaseModel):
+    platform_app_id: str = Field(min_length=1, max_length=100)
+    access_token: str = Field(min_length=20, max_length=10000)
 
 
 class PostingSlotItem(BaseModel):
@@ -171,6 +202,12 @@ class PostingSlotsUpdate(BaseModel):
 
 
 class ReleaseReschedule(BaseModel):
+    scheduled_at: datetime
+    timezone: str = Field(default="Asia/Bangkok", min_length=1, max_length=100)
+
+
+class BulkReleaseReschedule(BaseModel):
+    release_ids: list[str] = Field(min_length=1, max_length=100)
     scheduled_at: datetime
     timezone: str = Field(default="Asia/Bangkok", min_length=1, max_length=100)
 
@@ -202,6 +239,8 @@ class JobHistoryCleanup(BaseModel):
 class ReleaseConnect(BaseModel):
     external_url: str = Field(min_length=10, max_length=2000)
     note: str = Field(default="Kết nối thủ công từ WebUI", min_length=1, max_length=2000)
+    confirm_target_identity: bool = False
+    confirm_post_identity: bool = False
 
 
 def services(request: Request) -> Any:
@@ -274,8 +313,11 @@ async def health(request: Request) -> dict[str, Any]:
     if usage.free < max(2 * 1024**3, int(usage.total * .1)):
         warnings.append({"code": "disk_low", "severity": "error", "free_bytes": usage.free})
     maintenance = getattr(svc, "maintenance", None)
+    queue_degraded = svc.worker.state in {"failed", "degraded", "retrying"} or svc.scheduler.state in {"failed", "degraded"}
+    if queue_degraded:
+        warnings.append({"code": "queue_service_degraded", "severity": "error"})
     return {
-        "status": "ok" if integrity["ok"] else "degraded",
+        "status": "ok" if integrity["ok"] and not queue_degraded else "degraded",
         "version": __version__,
         "backend": "running",
         "worker": {"state": svc.worker.state, "active_jobs": svc.worker.active_count},
@@ -615,20 +657,69 @@ async def list_account_connections(account_id: str, request: Request) -> list[di
     svc = services(request)
     if not await asyncio.to_thread(svc.accounts.get, account_id):
         raise HTTPException(404, "Không tìm thấy account.")
-    return await asyncio.to_thread(svc.provider_connections.list, account_id=account_id)
+    connections = await asyncio.to_thread(svc.provider_connections.list, account_id=account_id)
+    for item in connections:
+        if item.get("provider") == "meta":
+            metadata = dict(item.get("refresh_metadata") or {})
+            metadata["connected_page_count"] = await asyncio.to_thread(
+                svc.meta_accounts.connected_page_count, item["id"],
+            )
+            item["refresh_metadata"] = metadata
+    return connections
 
 
 @router.get("/connections")
 async def list_provider_connections(request: Request) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(services(request).provider_connections.list)
+    svc = services(request)
+    connections = await asyncio.to_thread(svc.provider_connections.list)
+    for item in connections:
+        if item.get("provider") == "meta":
+            metadata = dict(item.get("refresh_metadata") or {})
+            metadata["connected_page_count"] = await asyncio.to_thread(
+                svc.meta_accounts.connected_page_count, item["id"],
+            )
+            item["refresh_metadata"] = metadata
+    return connections
 
 
 @router.post("/accounts/{account_id}/connections/{provider}/authorize")
 async def authorize_provider_connection(account_id: str, provider: str, request: Request, body: ProviderAuthorizeBody | None = None) -> dict[str, Any]:
     try:
+        if provider == "meta":
+            return await asyncio.to_thread(
+                services(request).meta_accounts.authorize_url, account_id,
+                body.platform_app_id if body else None,
+            )
+        if provider == "instagram":
+            return await asyncio.to_thread(
+                services(request).instagram_accounts.authorize_url, account_id,
+                body.platform_app_id if body else None,
+            )
         return await asyncio.to_thread(
             services(request).provider_accounts.authorize_url, account_id, provider,
             body.platform_app_id if body else None,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/accounts/{account_id}/connections/{provider}/authorize/open")
+async def open_provider_authorization(account_id: str, provider: str, request: Request, body: ProviderAuthorizeBody | None = None) -> dict[str, Any]:
+    try:
+        if provider == "meta":
+            return await services(request).meta_accounts.open_authorization(
+                account_id, body.platform_app_id if body else None,
+            )
+        if provider == "instagram":
+            return await services(request).instagram_accounts.open_authorization(
+                account_id, body.platform_app_id if body else None,
+            )
+        return await services(request).provider_accounts.open_authorization_in_profile(
+            account_id, provider, body.platform_app_id if body else None,
         )
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy account.") from exc
@@ -648,6 +739,16 @@ async def delete_provider_connection(account_id: str, connection_id: str, reques
     return {"deleted": True}
 
 
+@router.post("/accounts/{account_id}/connections/{connection_id}/instagram/refresh")
+async def refresh_instagram_connection(account_id: str, connection_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return await services(request).instagram_accounts.refresh_connection(connection_id, account_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get("/oauth/youtube/callback")
 async def youtube_oauth_callback(code: str, state: str, request: Request) -> dict[str, Any]:
     try:
@@ -664,6 +765,128 @@ async def youtube_oauth_callback(code: str, state: str, request: Request) -> dic
         "channel_title": connection.get("channel_title"),
         "message": "Đã kết nối YouTube API. Bạn có thể đóng tab này và quay lại Tinix Social Hub.",
     }
+
+
+@router.get("/oauth/meta/callback")
+async def meta_oauth_callback(code: str, state: str, request: Request) -> dict[str, Any]:
+    try:
+        connection = await services(request).meta_accounts.oauth_callback(code, state)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Meta OAuth callback failed: %s", exc)
+        raise HTTPException(409, f"Không thể kết nối Meta Page API: {exc}") from exc
+    return {
+        "connected": True, "provider": "meta", "account_id": connection["account_id"],
+        "message": "Đã kết nối Meta Page API và đồng bộ Page. Bạn có thể đóng tab này rồi quay lại Tinix.",
+    }
+
+
+@router.get("/oauth/instagram/callback")
+async def instagram_oauth_callback(
+    request: Request, code: str | None = None, state: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    if error or not code or not state:
+        raise HTTPException(400, "Instagram OAuth bị hủy hoặc thiếu code/state; hãy thử kết nối lại trong Tinix.")
+    try:
+        connection = await services(request).instagram_accounts.oauth_callback(code, state)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Instagram OAuth callback failed: %s", exc)
+        raise HTTPException(409, f"Không thể kết nối Instagram độc lập: {exc}") from exc
+    return {
+        "connected": True, "provider": "instagram", "account_id": connection["account_id"],
+        "username": connection.get("username"),
+        "message": "Đã kết nối Instagram Login độc lập. Bạn có thể đóng tab này rồi quay lại Tinix.",
+    }
+
+
+@router.post("/accounts/{account_id}/connections/meta/sync-targets")
+async def sync_meta_targets(account_id: str, request: Request) -> list[dict[str, Any]]:
+    svc = services(request)
+    connection = next((item for item in svc.provider_connections.list(account_id=account_id, transport="official_api")
+                       if item.get("provider") == "meta"), None)
+    if not connection:
+        raise HTTPException(409, "Account chưa kết nối Meta API.")
+    try:
+        return await svc.meta_accounts.sync_targets(connection["id"])
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account hoặc kết nối Meta.") from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/accounts/{account_id}/connections/meta/system-user")
+async def connect_meta_system_user(
+    account_id: str, body: MetaSystemUserConnect, request: Request,
+) -> dict[str, Any]:
+    try:
+        result = await services(request).meta_accounts.connect_system_user(
+            account_id, body.platform_app_id, body.access_token,
+            body.page_ids or ([body.page_id] if body.page_id else []),
+            body.disconnect_page_ids,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account hoặc Meta Platform App.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return result
+
+
+@router.post("/accounts/{account_id}/connections/meta/system-user/discover")
+async def discover_meta_system_user_pages(
+    account_id: str, body: MetaSystemUserDiscovery, request: Request,
+) -> dict[str, Any]:
+    svc = services(request)
+    account = await asyncio.to_thread(svc.accounts.get, account_id)
+    if not account:
+        raise HTTPException(404, "Không tìm thấy account.")
+    if account.get("platform") != "facebook":
+        raise HTTPException(422, "Meta Page API cần account Facebook trong Tinix.")
+    try:
+        return await svc.meta_accounts.discover_system_user_pages(
+            body.platform_app_id, body.access_token,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/accounts/{account_id}/connections/meta/targets")
+async def list_meta_targets(account_id: str, request: Request) -> list[dict[str, Any]]:
+    svc = services(request)
+    if not await asyncio.to_thread(svc.accounts.get, account_id):
+        raise HTTPException(404, "Không tìm thấy account.")
+    return await asyncio.to_thread(svc.meta_accounts.list_bindings, account_id)
+
+
+@router.get("/accounts/{account_id}/connections/meta/system-user/token")
+async def get_meta_system_user_token(
+    account_id: str, request: Request, response: Response,
+) -> dict[str, str]:
+    svc = services(request)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        token = await asyncio.to_thread(svc.meta_accounts.system_user_access_token, account_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"access_token": token}
+
+
+@router.delete("/accounts/{account_id}/connections/meta/targets/{binding_id}")
+async def disconnect_meta_target(account_id: str, binding_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return await services(request).meta_accounts.disconnect_binding(account_id, binding_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy account hoặc Page binding.") from exc
 
 
 @router.delete("/accounts/{account_id}")
@@ -927,12 +1150,36 @@ async def list_target_groups(request: Request) -> list[dict[str, Any]]:
 
 @router.post("/target-groups", status_code=201)
 async def create_target_group(body: TargetGroupCreate, request: Request) -> dict[str, Any]:
-    return await asyncio.to_thread(services(request).targets.create_group, body.name, body.description)
+    return await asyncio.to_thread(services(request).targets.create_group, body.name, body.description, body.defaults)
+
+
+@router.put("/target-groups/{group_id}")
+async def update_target_group(group_id: str, body: TargetGroupUpdate, request: Request) -> dict[str, Any]:
+    try:
+        group = await asyncio.to_thread(
+            services(request).targets.update_group, group_id, body.name, body.description, body.defaults, body.target_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not group:
+        raise HTTPException(404, "Không tìm thấy nhóm Page.")
+    return group
+
+
+@router.delete("/target-groups/{group_id}")
+async def delete_target_group(group_id: str, request: Request) -> dict[str, Any]:
+    deleted = await asyncio.to_thread(services(request).targets.delete_group, group_id)
+    if not deleted:
+        raise HTTPException(404, "Không tìm thấy nhóm Page.")
+    return {"deleted": True, "group_id": group_id}
 
 
 @router.put("/target-groups/{group_id}/members")
 async def set_target_group_members(group_id: str, body: TargetGroupMembers, request: Request) -> dict[str, Any]:
-    group = await asyncio.to_thread(services(request).targets.set_group_members, group_id, body.target_ids)
+    try:
+        group = await asyncio.to_thread(services(request).targets.set_group_members, group_id, body.target_ids)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if not group:
         raise HTTPException(404, "Không tìm thấy nhóm Page.")
     return group
@@ -968,10 +1215,15 @@ async def list_publication_releases(
     platform: str | None = None,
     status: str | None = None,
     limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
+    account_id: str | None = None,
+    target_id: str | None = None,
 ) -> list[dict[str, Any]]:
     return await asyncio.to_thread(
         services(request).publications.list_releases,
-        start=start, end=end, platform=platform, status=status, limit=limit,
+        start=start, end=end, platform=platform, status=status, limit=limit, offset=offset,
+        order=order, account_id=account_id, target_id=target_id,
     )
 
 
@@ -987,6 +1239,24 @@ async def reschedule_publication_release(
         )
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy release.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/publication-releases/reschedule-bulk")
+async def reschedule_publication_releases_bulk(
+    body: BulkReleaseReschedule, request: Request
+) -> list[dict[str, Any]]:
+    if len(set(body.release_ids)) != len(body.release_ids):
+        raise HTTPException(422, "Danh sách release bị trùng.")
+    try:
+        services(request).posting_slots.validate_timezone(body.timezone)
+        return await asyncio.to_thread(
+            services(request).publications.reschedule_releases,
+            body.release_ids, body.scheduled_at.isoformat(), body.timezone,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy một release trong nhóm.") from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -1013,25 +1283,157 @@ async def connect_publication_release(
     release = await asyncio.to_thread(services(request).publications.get_release, release_id)
     if not release:
         raise HTTPException(404, "Không tìm thấy release.")
+    if not body.confirm_target_identity or not body.confirm_post_identity:
+        raise HTTPException(422, "Cần xác nhận URL thuộc đúng channel/Page và đúng bài đăng trước khi đối soát.")
     from app.services.ui_analytics import AnalyticsCollectionError
     try:
         services(request).analytics_collector._validate_url(release["platform"], body.external_url)
+        from app.services.api_analytics import YouTubeAPIAnalyticsCollector
+        video_id = YouTubeAPIAnalyticsCollector.video_id_from_url(body.external_url) if release["platform"] == "youtube" else None
+        if release["platform"] == "youtube" and not video_id:
+            raise HTTPException(422, "URL YouTube cần trỏ tới video/Short/live hợp lệ.")
         return await asyncio.to_thread(
-            services(request).analytics.connect_release, release_id, body.external_url, body.note
+            services(request).analytics.connect_release, release_id, body.external_url, body.note, video_id
         )
     except AnalyticsCollectionError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/publication-releases/{release_id}/collect-metrics")
-async def collect_release_metrics(release_id: str, request: Request) -> dict[str, Any]:
+async def collect_release_metrics(
+    release_id: str, request: Request, days: int = Query(30, ge=7, le=90),
+) -> dict[str, Any]:
     from app.services.ui_analytics import AnalyticsCollectionError
+    svc = services(request)
     try:
-        return await services(request).analytics_collector.collect(release_id)
+        release = await asyncio.to_thread(svc.publications.get_release, release_id)
+        if not release:
+            raise KeyError(release_id)
+        if release["platform"] == "youtube":
+            target = await asyncio.to_thread(svc.targets.get, release["target_id"])
+            matching = target and any(
+                item.get("provider") == "youtube" and item.get("transport") == "official_api"
+                and item.get("status") == "connected" and item.get("external_account_id") == target.get("external_id")
+                for item in svc.provider_connections.list(account_id=release["account_id"])
+            )
+            if matching:
+                return await svc.api_analytics_collector.collect_release(release_id, days)
+        if release["platform"] == "facebook":
+            return await svc.meta_analytics_collector.collect_release(release_id, days)
+        return await svc.analytics_collector.collect(release_id)
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy release.") from exc
     except AnalyticsCollectionError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/targets/{target_id}/collect-metrics")
+async def collect_channel_metrics(
+    target_id: str, request: Request, days: int = Query(30, ge=7, le=90),
+) -> dict[str, Any]:
+    try:
+        svc = services(request)
+        target = await asyncio.to_thread(svc.targets.get, target_id)
+        if not target:
+            raise KeyError(target_id)
+        if target.get("platform") == "facebook":
+            return await svc.meta_analytics_collector.collect_channel(target_id, days)
+        return await svc.api_analytics_collector.collect_channel(target_id, days)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy channel đích.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/targets/{target_id}/metrics")
+async def target_metrics(
+    target_id: str, request: Request, days: int = Query(90, ge=7, le=365),
+) -> dict[str, Any]:
+    svc = services(request)
+    if not await asyncio.to_thread(svc.targets.get, target_id):
+        raise HTTPException(404, "Không tìm thấy channel đích.")
+    metrics, runs = await asyncio.gather(
+        asyncio.to_thread(svc.analytics.channel_metrics, target_id),
+        asyncio.to_thread(svc.analytics.channel_runs, target_id),
+    )
+    history = await asyncio.to_thread(svc.analytics.channel_metric_history, target_id, days)
+    return {"metrics": metrics, "history": history, "fetch_runs": runs}
+
+
+@router.get("/analytics/channels")
+async def channel_analytics(
+    request: Request, platform: str | None = None, account_id: str | None = None,
+    target_id: str | None = None,
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(services(request).analytics.channel_metrics, target_id, platform, account_id)
+
+
+@router.get("/analytics/channels/history")
+async def channel_analytics_history(
+    request: Request, days: int = Query(30, ge=7, le=365), platform: str | None = None,
+    account_id: str | None = None, target_id: str | None = None,
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(
+        services(request).analytics.channel_metric_history,
+        target_id, days, None, platform, account_id,
+    )
+
+
+@router.get("/analytics/channels/runs")
+async def channel_analytics_latest_runs(
+    request: Request, platform: str | None = None, account_id: str | None = None,
+    target_id: str | None = None,
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(
+        services(request).analytics.latest_channel_runs, target_id, platform, account_id,
+    )
+
+
+@router.get("/analytics/channels/connected-meta-targets")
+async def connected_meta_analytics_targets(
+    request: Request, account_id: str | None = None, target_id: str | None = None,
+) -> list[str]:
+    return await asyncio.to_thread(
+        services(request).analytics.connected_meta_target_ids, target_id, account_id,
+    )
+
+
+@router.get("/analytics/channels/meta-target-statuses")
+async def meta_analytics_target_statuses(
+    request: Request, account_id: str | None = None, target_id: str | None = None,
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(
+        services(request).analytics.meta_target_connection_statuses, target_id, account_id,
+    )
+
+
+@router.get("/analytics/channels/summary")
+async def channel_analytics_summary(
+    request: Request, days: int = Query(30, ge=7, le=90), platform: str | None = None,
+    account_id: str | None = None, target_id: str | None = None,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        services(request).analytics.channel_summary, days, platform, target_id, account_id,
+    )
+
+
+@router.get("/analytics/refresh-settings")
+async def analytics_refresh_settings(request: Request) -> dict[str, Any]:
+    return await asyncio.to_thread(services(request).analytics_scheduler.status)
+
+
+@router.put("/analytics/refresh-settings")
+async def update_analytics_refresh_settings(
+    body: AnalyticsRefreshSettings, request: Request,
+) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(services(request).analytics_scheduler.configure, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/publication-releases/{release_id}/metrics")
@@ -1047,9 +1449,10 @@ async def release_metrics(release_id: str, request: Request) -> dict[str, Any]:
 
 @router.get("/analytics/summary")
 async def analytics_summary(
-    request: Request, days: int = Query(30, ge=7, le=90), platform: str | None = None
+    request: Request, days: int = Query(30, ge=7, le=90), platform: str | None = None,
+    account_id: str | None = None, target_id: str | None = None,
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(services(request).analytics.summary, days, platform)
+    return await asyncio.to_thread(services(request).analytics.summary, days, platform, account_id, target_id)
 
 
 @router.post("/jobs", status_code=201)
@@ -1315,14 +1718,26 @@ async def create_backup(request: Request) -> dict[str, str]:
     return {"name": path.name}
 
 
+@asynccontextmanager
+async def restore_guard(svc):
+    async with svc.scheduler.maintenance_lock:
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(getattr(svc.worker, "exclusive_database", nullcontext)())
+            except RuntimeError as exc:
+                raise HTTPException(409, "Dừng standalone worker trước khi restore database.") from exc
+            yield
+
+
 @router.post("/database/restore")
 async def restore_backup(body: RestoreRequest, request: Request) -> dict[str, bool]:
     svc = services(request)
-    async with svc.scheduler.maintenance_lock:
+    async with restore_guard(svc):
         safety_name: str | None = None
         resume_worker = True
         try:
             await svc.worker.pause()
+            await svc.image_generation.close()
         except TimeoutError as exc:
             svc.worker.resume()
             raise HTTPException(409, str(exc)) from exc
@@ -1341,7 +1756,7 @@ async def restore_backup(body: RestoreRequest, request: Request) -> dict[str, bo
                 await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
             except Exception as exc:
                 try:
-                    await asyncio.to_thread(svc.database.restore_backup, safety_name)
+                    await asyncio.to_thread(svc.database.restore_backup, safety_name, quarantine=False)
                     await asyncio.to_thread(svc.database.initialize)
                     await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
                 except Exception as rollback_exc:
@@ -1357,6 +1772,7 @@ async def restore_backup(body: RestoreRequest, request: Request) -> dict[str, bo
                 ) from exc
         finally:
             if resume_worker:
+                await svc.image_generation.start()
                 svc.worker.resume()
     return {"restored": True}
 
@@ -1393,11 +1809,12 @@ async def restore_recovery_bundle(
     recovery = getattr(svc, "recovery", None)
     if not recovery:
         raise HTTPException(503, "Recovery service không khả dụng.")
-    async with svc.scheduler.maintenance_lock:
+    async with restore_guard(svc):
         result: dict[str, Any] | None = None
         resume_worker = True
         try:
             await svc.worker.pause()
+            await svc.image_generation.close()
             result = await asyncio.to_thread(recovery.restore_bundle, body.bundle_path, body.password)
             await asyncio.to_thread(svc.database.initialize)
             await asyncio.to_thread(svc.accounts.migrate_legacy_credentials)
@@ -1422,6 +1839,7 @@ async def restore_recovery_bundle(
             raise HTTPException(500, "Khôi phục recovery bundle không hoàn tất; dữ liệu trước đó đã được hoàn nguyên.") from exc
         finally:
             if resume_worker:
+                await svc.image_generation.start()
                 svc.worker.resume()
     result.pop("_rollback", None)
     return result

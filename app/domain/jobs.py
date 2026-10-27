@@ -59,11 +59,12 @@ ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.CHECKING_LOGIN: {
         JobStatus.UPLOADING, JobStatus.PUBLISHING, JobStatus.TEMPORARY_FAILURE,
         JobStatus.PERMANENT_FAILURE, JobStatus.LOGIN_REQUIRED, JobStatus.CHECKPOINT,
-        JobStatus.CANCELLED,
+        JobStatus.UNKNOWN_RESULT, JobStatus.CANCELLED,
     },
     JobStatus.UPLOADING: {
         JobStatus.PUBLISHING, JobStatus.TEMPORARY_FAILURE, JobStatus.PERMANENT_FAILURE,
-        JobStatus.LOGIN_REQUIRED, JobStatus.CHECKPOINT, JobStatus.CANCELLED,
+        JobStatus.LOGIN_REQUIRED, JobStatus.CHECKPOINT, JobStatus.UNKNOWN_RESULT,
+        JobStatus.CANCELLED,
     },
     JobStatus.PUBLISHING: {
         JobStatus.VERIFYING, JobStatus.SUCCEEDED, JobStatus.DRY_RUN_READY,

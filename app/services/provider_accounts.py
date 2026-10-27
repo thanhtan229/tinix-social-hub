@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
 from app.core.config import Settings
 from app.db.provider_repositories import OAuthStateRepository, ProviderConnectionRepository
 from app.db.repositories import AccountRepository, TargetRepository
+from app.automation.browser_session import BrowserSession
 
 
 YOUTUBE_SCOPES = (
@@ -23,6 +24,7 @@ class ProviderAccountService:
         self, settings: Settings, accounts: AccountRepository,
         connections: ProviderConnectionRepository, oauth_states: OAuthStateRepository,
         targets: TargetRepository | None = None, platform_apps: Any | None = None,
+        chrome: Any | None = None,
     ) -> None:
         self.settings = settings
         self.accounts = accounts
@@ -30,6 +32,7 @@ class ProviderAccountService:
         self.oauth_states = oauth_states
         self.targets = targets
         self.platform_apps = platform_apps
+        self.chrome = chrome
         self._refresh_locks: dict[str, asyncio.Lock] = {}
 
     def _youtube_client(self, platform_app_id: str | None = None) -> dict[str, str | None]:
@@ -83,6 +86,44 @@ class ProviderAccountService:
         })
         return {"provider": provider, "authorization_url": f"https://accounts.google.com/o/oauth2/v2/auth?{query}"}
 
+    async def open_authorization_in_profile(
+        self, account_id: str, provider: str, platform_app_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not self.chrome:
+            raise RuntimeError("Chrome profile của Tinix chưa được cấu hình.")
+        account = await asyncio.to_thread(self.accounts.get, account_id)
+        if not account:
+            raise KeyError(account_id)
+        authorization = await asyncio.to_thread(self.authorize_url, account_id, provider, platform_app_id)
+        url = authorization["authorization_url"]
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname != "accounts.google.com" or parsed.path != "/o/oauth2/v2/auth":
+            raise ValueError("Địa chỉ OAuth YouTube không hợp lệ.")
+        await asyncio.to_thread(self.chrome.open, account)
+        managed = None
+        for _ in range(30):
+            managed = await asyncio.to_thread(self.chrome.status, account_id)
+            if managed and managed.get("state") == "ready":
+                break
+            if managed and managed.get("state") == "unresponsive":
+                raise RuntimeError("Chrome profile của account không phản hồi qua CDP.")
+            await asyncio.sleep(0.5)
+        if not managed or managed.get("state") != "ready":
+            raise RuntimeError("Chrome profile của account khởi động quá thời gian chờ.")
+        async with BrowserSession(managed["port"]) as session:
+            page = await session.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            await page.bring_to_front()
+        return {"opened": True, "account_id": account_id, "provider": provider}
+
+    @staticmethod
+    def _assert_same_youtube_channel(expected_channel_id: str | None, actual_channel_id: str) -> None:
+        if expected_channel_id and expected_channel_id != actual_channel_id:
+            raise ValueError(
+                "Google đã cấp quyền cho một YouTube channel khác với channel đang liên kết. "
+                "Hãy chọn đúng Google account trong Chrome profile của Tinix rồi thử lại."
+            )
+
     async def youtube_callback(self, code: str, state: str) -> dict[str, Any]:
         pending = await asyncio.to_thread(self.oauth_states.consume, state, "youtube")
         client_config = await asyncio.to_thread(self._youtube_client, pending.get("platform_app_id"))
@@ -110,6 +151,13 @@ class ProviderAccountService:
                 raise RuntimeError("Không tìm thấy YouTube channel cho tài khoản đã cấp quyền.")
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(token.get("expires_in", 3600)))).isoformat()
         channel = items[0]
+        existing_connections = await asyncio.to_thread(
+            self.connections.list, account_id=pending["account_id"], transport="official_api",
+        )
+        current = next((item for item in existing_connections if item.get("provider") == "youtube"), None)
+        self._assert_same_youtube_channel(
+            current.get("external_account_id") if current else None, str(channel["id"]),
+        )
         connection = await asyncio.to_thread(
             self.connections.upsert,
             account_id=pending["account_id"], provider="youtube", external_account_id=channel["id"],
