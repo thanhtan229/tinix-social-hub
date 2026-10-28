@@ -26,7 +26,8 @@ Hoàn tất các đợt Postiz 01–10 ở mức code/fixture; live acceptance F
 - Git remote: chưa cấu hình. Chưa push; cần URL remote từ người dùng.
 - Multi-Page (01): fixture/UI xong, chưa live.
 - Giai đoạn 02–05: fixture/UI xong, chưa nghiệm thu live.
-- Analytics tự động (09): scheduler opt-in, mặc định tắt; chưa có chu kỳ live.
+- Analytics tự động (09): đã chạy một chu kỳ Facebook thật (28-10-2026): 10 bài và 10 kênh được xử lý, 2 kênh thành công, phần lớn bài bị `meta_permission_denied` (trạng thái cần kết nối lại), 1 Reel `meta_post_unavailable`. Scheduler đã được tắt lại (mặc định). Cần kiểm tra quyền token Page trên Meta (đọc số liệu bài) và kết nối lại trong Tinix trước khi bật tự động.
+- Instagram Reel: khuyến nghị kiểm tra trạng thái container đã đổi thành mỗi phút, tối đa 5 lần (theo tài liệu Meta). Giới hạn 100 MB và thời lượng Reel chưa xác minh từ tài liệu.
 - TikTok, X: scaffold, chưa bật.
 - NOT TESTED: lint/typecheck, CI Python 3.11, clean install, power loss, workload lớn.
 
