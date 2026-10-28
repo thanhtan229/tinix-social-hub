@@ -64,9 +64,10 @@ class ReelAPI(InstagramAPI):
     REEL_CONTAINER_ID = "17900000000000030"
     REEL_MEDIA_ID = "17900000000000031"
 
-    def __init__(self) -> None:
+    def __init__(self, in_progress_polls: int = 2) -> None:
         super().__init__()
         self.polls = 0
+        self.in_progress_polls = in_progress_polls
 
     async def graph_request(self, _connection_id, method, path, *, params=None, data=None):
         data = data or {}
@@ -75,7 +76,7 @@ class ReelAPI(InstagramAPI):
             return {"id": self.REEL_CONTAINER_ID}
         if path == self.REEL_CONTAINER_ID and method == "GET":
             self.polls += 1
-            status = "IN_PROGRESS" if self.polls <= 2 else "FINISHED"
+            status = "IN_PROGRESS" if self.polls <= self.in_progress_polls else "FINISHED"
             return {"id": path, "status_code": status, "status": status.title()}
         if path.endswith("/media_publish") and method == "POST":
             return {"id": self.REEL_MEDIA_ID}
@@ -360,6 +361,7 @@ class InstagramOfficialPublisherTests(unittest.IsolatedAsyncioTestCase):
         delivery = Delivery()
         publisher = InstagramOfficialPublisher(
             Connections(), api, Media(self.image, {"clip.mp4": video}), delivery, poll_interval_seconds=0,
+            reel_poll_interval_seconds=0,
         )
         transitions, requests = [], []
         result = await publisher.publish(self._reel_context(media, dry_run=False, transitions=transitions, requests=requests))
@@ -371,6 +373,23 @@ class InstagramOfficialPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(api.polls, 3)
         self.assertEqual(delivery.deleted, ["tinix-instagram-tmp/release-1/clip.mp4"])
         self.assertEqual(delivery.created[0]["mime_type"], "video/mp4")
+
+    async def test_reel_still_processing_after_five_checks_is_a_checkpoint_and_resumes_without_new_container(self) -> None:
+        video, media = self._reel_setup()
+        api = ReelAPI(in_progress_polls=10)
+        delivery = Delivery()
+        publisher = InstagramOfficialPublisher(
+            Connections(), api, Media(self.image, {"clip.mp4": video}), delivery, poll_interval_seconds=0,
+            reel_poll_interval_seconds=0,
+        )
+        requests: list = []
+        result = await publisher.publish(self._reel_context(media, dry_run=False, transitions=[], requests=requests))
+        self.assertEqual(result.outcome, PublishOutcome.CHECKPOINT)
+        self.assertEqual(api.polls, 5)
+        self.assertEqual(sum(call[0] == "POST" and call[1] == f"{TARGET_ID}/media" for call in api.calls), 1)
+        self.assertFalse(any(call[1].endswith("/media_publish") for call in api.calls))
+        self.assertEqual(len(delivery.created), 1)
+        self.assertEqual(requests[-1][0][:len(InstagramOfficialPublisher.MARKER_PREFIX)], InstagramOfficialPublisher.MARKER_PREFIX)
 
     async def test_reel_dry_run_validates_without_cloud_or_graph_calls(self) -> None:
         video, media = self._reel_setup()

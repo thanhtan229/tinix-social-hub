@@ -28,8 +28,9 @@ class InstagramOfficialPublisher(Publisher):
     supported_formats = frozenset({"image", "carousel", "reel"})
     MAX_CAPTION_LENGTH = 2200
     MAX_CONTAINER_POLLS = 60
-    # Reels are processed server-side for longer than photos; the poll budget is about 5 minutes at 2 s.
-    MAX_VIDEO_POLLS = 150
+    # Meta recommends checking a container once per minute for no more than 5 minutes.
+    MAX_VIDEO_POLLS = 5
+    REEL_POLL_INTERVAL_SECONDS = 60
     MIN_CAROUSEL_ITEMS = 2
     MAX_CAROUSEL_ITEMS = 10
     MARKER_PREFIX = "ig-photo:"
@@ -38,12 +39,14 @@ class InstagramOfficialPublisher(Publisher):
     def __init__(
         self, connections: ProviderConnectionRepository, instagram_accounts: InstagramAccountService,
         media: MediaService, media_delivery: InstagramMediaDelivery, poll_interval_seconds: float = 2,
+        reel_poll_interval_seconds: float = REEL_POLL_INTERVAL_SECONDS,
     ) -> None:
         self.connections = connections
         self.instagram_accounts = instagram_accounts
         self.media = media
         self.media_delivery = media_delivery
         self.poll_interval_seconds = poll_interval_seconds
+        self.reel_poll_interval_seconds = reel_poll_interval_seconds
 
     @classmethod
     def validate(cls, payload: dict[str, Any], settings: dict[str, Any]) -> list[str]:
@@ -139,9 +142,11 @@ class InstagramOfficialPublisher(Publisher):
         return True, permalink
 
     async def _container_status(
-        self, connection_id: str, container_id: str, context: PublishContext, max_polls: int | None = None,
+        self, connection_id: str, container_id: str, context: PublishContext,
+        max_polls: int | None = None, interval_seconds: float | None = None,
     ) -> str:
         """Poll a media container until Instagram reports FINISHED, an error, or the poll budget ends."""
+        sleep_seconds = self.poll_interval_seconds if interval_seconds is None else interval_seconds
         for _ in range(max_polls or self.MAX_CONTAINER_POLLS):
             if await context.is_cancelled():
                 raise asyncio.CancelledError
@@ -153,7 +158,7 @@ class InstagramOfficialPublisher(Publisher):
                 return "FINISHED"
             if status_code in {"ERROR", "EXPIRED"}:
                 return "ERROR"
-            await asyncio.sleep(self.poll_interval_seconds)
+            await asyncio.sleep(sleep_seconds)
         return "PENDING"
 
     async def publish(self, context: PublishContext) -> PublishResult:
@@ -256,6 +261,7 @@ class InstagramOfficialPublisher(Publisher):
             status = await self._container_status(
                 connection["id"], container_id, context,
                 max_polls=self.MAX_VIDEO_POLLS if is_reel else None,
+                interval_seconds=self.reel_poll_interval_seconds if is_reel else None,
             )
             if status == "ERROR":
                 return PublishResult(
