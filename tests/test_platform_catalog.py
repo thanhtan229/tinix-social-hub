@@ -61,7 +61,7 @@ class PlatformCatalogTests(unittest.TestCase):
 
     def test_instagram_official_photo_publisher_is_review_gated_until_live_acceptance(self) -> None:
         transport = get_platform("instagram").transport("official_api")
-        self.assertEqual(transport.content_formats, ("image",))
+        self.assertEqual(transport.content_formats, ("image", "carousel"))
         self.assertEqual(transport.authentication, "review_required")
         self.assertEqual(transport.publishing, "review_required")
         self.assertEqual(transport.readiness, "review_required")

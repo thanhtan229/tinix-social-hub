@@ -161,7 +161,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         transports=(
             foundation_transports(("image", "carousel"))[0],
             TransportDefinition(
-                id="official_api", readiness="review_required", content_formats=("image",),
+                id="official_api", readiness="review_required", content_formats=("image", "carousel"),
                 authentication="review_required", target_discovery="api",
                 publishing="review_required", result_verification="review_required",
                 required_scopes=("instagram_business_basic", "instagram_business_content_publish"),

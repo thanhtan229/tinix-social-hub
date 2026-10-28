@@ -59,11 +59,43 @@ class InstagramAPI:
 
 
 class Media:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, by_name: dict[str, Path] | None = None) -> None:
         self.path = path
+        self.by_name = by_name or {}
 
-    def resolve_existing(self, _relative_path):
-        return self.path
+    def resolve_existing(self, relative_path):
+        return self.by_name.get(relative_path, self.path)
+
+
+class CarouselAPI(InstagramAPI):
+    """Fake Graph API for carousel: children get unique ids, parent CAROUSEL container, CAROUSEL_ALBUM media."""
+
+    CHILD_IDS = ("17900000000000011", "17900000000000012", "17900000000000013")
+    CAROUSEL_ID = "17900000000000020"
+    CAROUSEL_MEDIA_ID = "17900000000000021"
+
+    def __init__(self, *, fail_publish: bool = False) -> None:
+        super().__init__(fail_publish=fail_publish)
+        self.child_index = 0
+
+    async def graph_request(self, _connection_id, method, path, *, params=None, data=None):
+        data = data or {}
+        self.calls.append((method, path, params or {}, data))
+        if path == f"{TARGET_ID}/media" and method == "POST":
+            if data.get("is_carousel_item") == "true":
+                child = self.CHILD_IDS[self.child_index]
+                self.child_index += 1
+                return {"id": child}
+            return {"id": self.CAROUSEL_ID}
+        if method == "GET" and (path in self.CHILD_IDS or path == self.CAROUSEL_ID):
+            return {"id": path, "status_code": "FINISHED", "status": "Finished"}
+        if path.endswith("/media_publish") and method == "POST":
+            if self.fail_publish:
+                raise RuntimeError("simulated timeout after sending publish")
+            return {"id": self.CAROUSEL_MEDIA_ID}
+        if path == self.CAROUSEL_MEDIA_ID and method == "GET":
+            return {"id": path, "media_type": "CAROUSEL_ALBUM", "permalink": "https://www.instagram.com/p/car123/"}
+        raise AssertionError(f"Unexpected Instagram API request: {method} {path}")
 
 
 class Delivery:
@@ -76,7 +108,7 @@ class Delivery:
         self.created.append({"path": path, **kwargs})
         return InstagramMediaUrl(
             url="https://tinix-test.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com/photo?sig=test",
-            object_key="tinix-instagram-tmp/release-1/photo.jpg", expires_in=3600,
+            object_key=f"tinix-instagram-tmp/release-1/{Path(path).name}", expires_in=3600,
         )
 
     async def delete(self, key):
@@ -187,6 +219,100 @@ class InstagramOfficialPublisherTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(missing_scope.outcome, PublishOutcome.LOGIN_REQUIRED)
         self.assertEqual(api.calls, [])
+
+    def _carousel_setup(self):
+        second = Path(self.temp.name) / "photo2.jpg"
+        Image.new("RGB", (50, 40), color="orange").save(second, "JPEG")
+        third = Path(self.temp.name) / "photo3.jpg"
+        Image.new("RGB", (60, 50), color="purple").save(third, "JPEG")
+        paths = {"photo.jpg": self.image, "photo2.jpg": second, "photo3.jpg": third}
+        media = [
+            {"type": "image", "relative_path": name, "mime_type": "image/jpeg",
+             "size_bytes": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in paths.items()
+        ]
+        return paths, media
+
+    def _carousel_context(self, media, *, dry_run: bool, transitions: list, requests: list, marker: str = "") -> PublishContext:
+        context = self._context(dry_run=dry_run, transitions=transitions, requests=requests, marker=marker)
+        context.payload["content_format"] = "carousel"
+        context.payload["media"] = media[: len(media)]
+        return context
+
+    def _carousel_publisher(self, api, paths, delivery=None):
+        return InstagramOfficialPublisher(
+            Connections(), api, Media(self.image, paths), delivery or Delivery(), poll_interval_seconds=0,
+        )
+
+    async def test_carousel_dry_run_checks_every_item_without_cloud_or_graph_writes(self) -> None:
+        paths, media = self._carousel_setup()
+        api, delivery = CarouselAPI(), Delivery(configured=False)
+        result = await self._carousel_publisher(api, paths, delivery).publish(
+            self._carousel_context(media, dry_run=True, transitions=[], requests=[]),
+        )
+        self.assertEqual(result.outcome, PublishOutcome.DRY_RUN_READY)
+        self.assertEqual(result.metadata["media_count"], 3)
+        self.assertEqual(api.calls, [])
+        self.assertEqual(delivery.created, [])
+
+    async def test_carousel_publish_creates_children_then_parent_then_verifies_album(self) -> None:
+        paths, media = self._carousel_setup()
+        api, delivery = CarouselAPI(), Delivery()
+        transitions, requests = [], []
+        result = await self._carousel_publisher(api, paths, delivery).publish(
+            self._carousel_context(media, dry_run=False, transitions=transitions, requests=requests),
+        )
+        self.assertEqual(result.outcome, PublishOutcome.PUBLISHED)
+        self.assertEqual(result.post_url, "https://www.instagram.com/p/car123/")
+        creates = [call[3] for call in api.calls if call[0] == "POST" and call[1] == f"{TARGET_ID}/media"]
+        self.assertEqual(len(creates), 4)
+        self.assertEqual([c.get("is_carousel_item") for c in creates[:3]], ["true", "true", "true"])
+        self.assertEqual(creates[3]["media_type"], "CAROUSEL")
+        self.assertEqual(creates[3]["children"], ",".join(CarouselAPI.CHILD_IDS))
+        publish_calls = [call for call in api.calls if call[1].endswith("/media_publish")]
+        self.assertEqual(len(publish_calls), 1)
+        self.assertEqual(publish_calls[0][3], {"creation_id": CarouselAPI.CAROUSEL_ID})
+        self.assertTrue(requests[-1][1])
+        self.assertEqual(sorted(delivery.deleted), sorted([
+            "tinix-instagram-tmp/release-1/photo.jpg",
+            "tinix-instagram-tmp/release-1/photo2.jpg",
+            "tinix-instagram-tmp/release-1/photo3.jpg",
+        ]))
+
+    async def test_carousel_resume_creates_only_missing_children_and_no_second_parent(self) -> None:
+        paths, media = self._carousel_setup()
+        api, delivery = CarouselAPI(), Delivery()
+        state = {"v": 2, "release": "release-1", "sha": hashlib.sha256(
+            "".join(item["sha256"] for item in media).encode()).hexdigest(),
+            "children": [CarouselAPI.CHILD_IDS[0]], "container": "", "stage": "children"}
+        marker = InstagramOfficialPublisher.MARKER_PREFIX + json.dumps(state)
+        result = await self._carousel_publisher(api, paths, delivery).publish(
+            self._carousel_context(media, dry_run=False, transitions=[], requests=[], marker=marker),
+        )
+        self.assertEqual(result.outcome, PublishOutcome.PUBLISHED)
+        child_creates = [call for call in api.calls if call[1] == f"{TARGET_ID}/media" and call[3].get("is_carousel_item")]
+        self.assertEqual(len(child_creates), 2)
+        self.assertEqual(len(delivery.created), 2)
+        parent_creates = [call for call in api.calls if call[1] == f"{TARGET_ID}/media" and call[3].get("media_type") == "CAROUSEL"]
+        self.assertEqual(len(parent_creates), 1)
+
+    async def test_carousel_unknown_publish_response_is_not_retried(self) -> None:
+        paths, media = self._carousel_setup()
+        api = CarouselAPI(fail_publish=True)
+        result = await self._carousel_publisher(api, paths).publish(
+            self._carousel_context(media, dry_run=False, transitions=[], requests=[]),
+        )
+        self.assertEqual(result.outcome, PublishOutcome.UNKNOWN_RESULT)
+        self.assertEqual(sum(call[1].endswith("/media_publish") for call in api.calls), 1)
+
+    def test_carousel_validation_requires_two_to_ten_jpeg_items(self) -> None:
+        _, media = self._carousel_setup()
+        one = {"content_format": "carousel", "caption": "c", "media": media[:1]}
+        self.assertTrue(any("từ 2 đến 10" in e for e in InstagramOfficialPublisher.validate(one, {})))
+        eleven = {"content_format": "carousel", "caption": "c", "media": media * 4}
+        self.assertTrue(any("từ 2 đến 10" in e for e in InstagramOfficialPublisher.validate(eleven, {})))
+        two = {"content_format": "carousel", "caption": "c", "media": media[:2]}
+        self.assertEqual(InstagramOfficialPublisher.validate(two, {}), [])
 
     def test_validation_rejects_media_over_8_mb_before_r2_upload(self) -> None:
         payload = {

@@ -15,7 +15,8 @@ Hoàn tất các đợt Postiz 01–10 ở mức code/fixture; live acceptance F
 - `.env`: đã xóa giá trị `TINIX_AI_API_KEY` (key cũ bị Google báo lộ).
 
 ## Đang mở / chưa nghiệm thu
-- Album Facebook 5–10 ảnh: chưa thử (đã live 2, 3, 4 ảnh).
+- Album Facebook: đã live 2, 3, 4, 5 và 10 ảnh (28-10-2026, dry-run rồi real `succeeded`). Album 5 ảnh: https://www.facebook.com/122132248658779083/posts/122137990040779083. Album 10 ảnh: https://www.facebook.com/122132248658779083/posts/122137991528779083. Caption có nhãn BÀI THỬ.
+- Instagram carousel 2 ảnh: đã phát triển publisher carousel (container con, container CAROUSEL, checkpoint khôi phục, test fixture PASS) và đăng thật thành công: https://www.instagram.com/p/DfBnqUhibGq/ . Chưa commit. Chưa thử carousel nhiều hơn 2 ảnh trên Instagram.
 - Video Page thường sau bản sửa: fixture PASS, chưa live lần hai.
 - Instagram 1 ảnh live: đã kết nối `@tannguyen3569` (Huong Vo), R2 đã cấu hình. Đăng thử 1 ảnh JPEG thành công (job `a06e9ae4-…`, release `verified`, post `DfARbESEyNj`). Người dùng đã xem và xóa bài thử.
 - Lỗi chưa rõ nguyên nhân: lượt kết nối đầu bị Meta `code=100` "Unsupported request - method type: get" ở bước `ig_exchange_token`. Lượt sau thành công, không có thay đổi cấu hình rõ ràng nào được xác nhận. Có khả năng liên quan đến việc tài khoản tester chưa chấp nhận lời mời, nhưng chưa được xác minh.
