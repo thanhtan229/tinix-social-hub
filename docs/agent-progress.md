@@ -21,6 +21,7 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Ảnh đơn FB (mới): https://www.facebook.com/122132248658779083/posts/122138021468779083
 - Carousel IG 2 ảnh: https://www.instagram.com/p/DfBnqUhibGq/
 - Carousel IG 5 ảnh: https://www.instagram.com/p/DfBozoWiXM0/
+- Carousel IG 10 ảnh (10 container con xác nhận): https://www.instagram.com/p/DfCE4Gbid3r/
 - Reel IG: https://www.instagram.com/reel/DfBrpiNG402/
 
 ## Đang mở / chưa nghiệm thu
@@ -29,7 +30,7 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Đường thu Chrome (`method=chrome`): không đọc được số liệu bài; chưa dùng. Bộ chọn chưa khớp giao diện tiếng Việt.
 - Giới hạn Reel (dung lượng 100 MB, thời lượng) là giả định tự đặt, chưa xác minh từ tài liệu Meta.
 - Lỗi đã biết, chưa rõ nguyên nhân: lượt kết nối Instagram đầu bị `ig_exchange_token` trả code 100 "Unsupported request - method type: get"; lượt sau thành công.
-- Carousel IG 6–10 ảnh: chưa thử.
+- Carousel IG 6–9 ảnh: chưa thử riêng (carousel 10 ảnh đã thành công).
 - Multi-Page (01): fixture/UI xong, chưa live. Giai đoạn 02–05: fixture/UI, chưa nghiệm thu live.
 - TikTok, X: scaffold, chưa bật.
 - NOT TESTED: lint/typecheck, CI Python 3.11, clean install, power loss, workload lớn.
