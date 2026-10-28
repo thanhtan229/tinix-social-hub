@@ -273,6 +273,31 @@ class InstagramAccountService:
         return {**connection, "username": username, "target": target,
                 "reconnected": bool(existing)}
 
+    async def refresh_due_connections(self, within: timedelta = timedelta(days=7)) -> dict[str, int]:
+        """Refresh connected Instagram tokens that expire within the window. Never logs tokens."""
+        summary = {"checked": 0, "refreshed": 0, "failed": 0}
+        connections = await asyncio.to_thread(self.connections.list, transport="official_api")
+        cutoff = datetime.now(timezone.utc) + within
+        for connection in connections:
+            if connection.get("provider") != self.provider or connection.get("status") != "connected":
+                continue
+            summary["checked"] += 1
+            expires = connection.get("expires_at")
+            if not expires:
+                continue
+            expiry = datetime.fromisoformat(expires)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry > cutoff:
+                continue
+            try:
+                await self.refresh_connection(connection["id"], connection.get("account_id"))
+                summary["refreshed"] += 1
+            except (RuntimeError, ValueError) as exc:
+                summary["failed"] += 1
+                logger.warning("Instagram token refresh failed for connection %s: %s", connection["id"], exc)
+        return summary
+
     async def refresh_connection(self, connection_id: str, account_id: str | None = None) -> dict[str, Any]:
         lock = self._refresh_locks.setdefault(connection_id, asyncio.Lock())
         async with lock:

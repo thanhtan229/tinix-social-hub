@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 import webbrowser
+from typing import Any
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -227,6 +229,19 @@ def build_services(settings: Settings) -> Services:
     )
 
 
+async def _instagram_token_refresh_loop(services: Any, interval_seconds: int = 24 * 3600) -> None:
+    """Check Instagram tokens once at startup and then daily; refresh only those close to expiry."""
+    while True:
+        try:
+            summary = await services.instagram_accounts.refresh_due_connections()
+            logger.info("Instagram token refresh check: %s", summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Instagram token refresh check failed")
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     settings = get_settings()
@@ -247,6 +262,7 @@ async def lifespan(application: FastAPI):
         await services.scheduler.start()
     await services.image_generation.start()
     await services.analytics_scheduler.start()
+    instagram_refresh_task = asyncio.create_task(_instagram_token_refresh_loop(services))
     await services.maintenance.start()
     await services.webhook_dispatcher.start()
     if settings.open_browser:
@@ -256,6 +272,9 @@ async def lifespan(application: FastAPI):
         yield
     finally:
         logger.info("Graceful shutdown started")
+        instagram_refresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await instagram_refresh_task
         await services.webhook_dispatcher.stop()
         await services.maintenance.stop()
         await services.image_generation.close()
