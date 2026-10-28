@@ -1304,6 +1304,7 @@ async def connect_publication_release(
 @router.post("/publication-releases/{release_id}/collect-metrics")
 async def collect_release_metrics(
     release_id: str, request: Request, days: int = Query(30, ge=7, le=90),
+    method: str = Query("api", pattern="^(api|chrome)$"),
 ) -> dict[str, Any]:
     from app.services.ui_analytics import AnalyticsCollectionError
     svc = services(request)
@@ -1320,7 +1321,7 @@ async def collect_release_metrics(
             )
             if matching:
                 return await svc.api_analytics_collector.collect_release(release_id, days)
-        if release["platform"] == "facebook":
+        if release["platform"] == "facebook" and method == "api":
             return await svc.meta_analytics_collector.collect_release(release_id, days)
         return await svc.analytics_collector.collect(release_id)
     except KeyError as exc:

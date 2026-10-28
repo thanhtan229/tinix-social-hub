@@ -118,9 +118,13 @@ class UIAnalyticsCollector:
                     text=" ".join(filter(None,[await locator.text_content(),await locator.get_attribute("aria-label")]))
                     parsed=parse_visible_number(text)
                     if parsed is not None:values[key]=parsed
+                # Diagnostic only, read while the page is still open: labels with digits, to tune selectors.
+                observed=[] if values else await page.evaluate("""() => [...document.querySelectorAll('[aria-label]')]
+                    .map(e => e.getAttribute('aria-label')).filter(t => /\\d/.test(t)).slice(0, 15)""")
             if not values:
                 await asyncio.to_thread(self.analytics.finish_run,run_id,"unsupported",0,"UI hiện không hiển thị metric được hỗ trợ.")
-                return {"status":"unsupported","message":"UI hiện không hiển thị metric được hỗ trợ.","metrics":[]}
+                return {"status":"unsupported","message":"UI hiện không hiển thị metric được hỗ trợ.","metrics":[],
+                        "observed_labels":[str(label)[:120] for label in observed]}
             zone=ZoneInfo(release.get("timezone") or "Asia/Bangkok")
             metric_date=datetime.now(timezone.utc).astimezone(zone).date().isoformat()
             metrics=await asyncio.to_thread(
