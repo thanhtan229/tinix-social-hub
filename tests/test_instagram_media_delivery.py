@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -91,6 +92,26 @@ class InstagramMediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 oversized, release_id="release-1", sha256="0" * 64, mime_type="image/jpeg",
             )
         self.assertEqual(self.factory_calls, [])
+
+    async def test_uploads_private_mp4_for_reels_with_video_content_type(self) -> None:
+        video = Path(self.temp.name) / "clip.mp4"
+        video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 4096)
+        digest = hashlib.sha256(video.read_bytes()).hexdigest()
+        result = await self.delivery.create_url(video, release_id="release-1", sha256=digest, mime_type="video/mp4")
+        self.assertEqual(result.object_key, f"tinix-instagram-tmp/release-1/{digest}.mp4")
+        self.assertEqual(self.client.put_calls[0]["ContentType"], "video/mp4")
+        self.assertEqual(self.client.put_calls[0]["CacheControl"], "private, no-store")
+
+    async def test_refuses_mp4_over_the_reel_byte_ceiling_before_cloud_access(self) -> None:
+        video = Path(self.temp.name) / "big.mp4"
+        video.write_bytes(b"\x00" * 16)
+        with patch.dict(InstagramMediaDelivery.ALLOWED_TYPES, {"video/mp4": (frozenset({".mp4"}), 8, "mp4")}):
+            with self.assertRaisesRegex(InstagramMediaDeliveryError, "100 MB"):
+                await self.delivery.create_url(
+                    video, release_id="release-1", sha256=hashlib.sha256(video.read_bytes()).hexdigest(),
+                    mime_type="video/mp4",
+                )
+        self.assertEqual(self.client.put_calls, [])
 
     async def test_unconfigured_delivery_fails_closed(self) -> None:
         settings = SimpleNamespace(**{**vars(self.settings), "instagram_r2_secret_access_key": ""})

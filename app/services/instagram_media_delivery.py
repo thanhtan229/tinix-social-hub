@@ -27,11 +27,18 @@ class InstagramMediaUrl:
 
 
 class InstagramMediaDelivery:
-    """Copies one validated local JPEG to a private R2 bucket and signs a short GET URL."""
+    """Copies one validated local JPEG or MP4 to a private R2 bucket and signs a short GET URL."""
 
     PREFIX = "tinix-instagram-tmp"
     # Stay below the provider's 8 MB ceiling using decimal bytes.
     MAX_IMAGE_BYTES = 8_000_000
+    # Conservative Reel ceiling; Meta's published Reel size limit is not confirmed here.
+    MAX_VIDEO_BYTES = 100_000_000
+    # mime type -> (allowed suffixes, byte ceiling, object-key extension)
+    ALLOWED_TYPES = {
+        "image/jpeg": (frozenset({".jpg", ".jpeg"}), MAX_IMAGE_BYTES, "jpg"),
+        "video/mp4": (frozenset({".mp4"}), MAX_VIDEO_BYTES, "mp4"),
+    }
 
     def __init__(self, settings: Settings, client_factory: Callable[..., Any] = boto3.client) -> None:
         self.settings = settings
@@ -66,14 +73,17 @@ class InstagramMediaDelivery:
         )
 
     @classmethod
-    def _validate_image(cls, path: Path, expected_sha256: str, mime_type: str) -> int:
-        if path.suffix.lower() not in {".jpg", ".jpeg"} or mime_type.lower() != "image/jpeg":
-            raise InstagramMediaDeliveryError("Instagram API hiện chỉ nhận một ảnh JPEG.")
+    def _validate_media(cls, path: Path, expected_sha256: str, mime_type: str) -> int:
+        allowed = cls.ALLOWED_TYPES.get(mime_type.lower())
+        if not allowed or path.suffix.lower() not in allowed[0]:
+            raise InstagramMediaDeliveryError("Instagram API chỉ nhận ảnh JPEG hoặc video MP4 đúng định dạng.")
         if path.is_symlink() or not path.is_file():
-            raise InstagramMediaDeliveryError("Không tìm thấy file ảnh Instagram trong storage cục bộ.")
+            raise InstagramMediaDeliveryError("Không tìm thấy file Instagram trong storage cục bộ.")
         size = path.stat().st_size
-        if size <= 0 or size > cls.MAX_IMAGE_BYTES:
-            raise InstagramMediaDeliveryError("Ảnh Instagram phải lớn hơn 0 và không vượt 8 MB.")
+        if size <= 0 or size > allowed[1]:
+            if mime_type.lower() == "image/jpeg":
+                raise InstagramMediaDeliveryError("Ảnh Instagram phải lớn hơn 0 và không vượt 8 MB.")
+            raise InstagramMediaDeliveryError("Video Instagram phải lớn hơn 0 và không vượt 100 MB.")
         digest = hashlib.sha256()
         with path.open("rb") as source:
             while chunk := source.read(1024 * 1024):
@@ -90,19 +100,21 @@ class InstagramMediaDelivery:
         )
 
     def _create_url(self, path: Path, *, release_id: str, sha256: str, mime_type: str) -> InstagramMediaUrl:
-        size = self._validate_image(path, sha256, mime_type)
+        size = self._validate_media(path, sha256, mime_type)
+        content_type = mime_type.lower()
+        extension = self.ALLOWED_TYPES[content_type][2]
         safe_release = re.sub(r"[^A-Za-z0-9_-]", "", release_id)[:80]
         if not safe_release:
             raise InstagramMediaDeliveryError("Release Instagram không hợp lệ.")
-        key = f"{self.PREFIX}/{safe_release}/{sha256.lower()}.jpg"
+        key = f"{self.PREFIX}/{safe_release}/{sha256.lower()}.{extension}"
         bucket = self.settings.instagram_r2_bucket
         ttl = self.settings.instagram_r2_url_ttl_seconds
         try:
             client = self._client()
-            with path.open("rb") as image:
+            with path.open("rb") as media:
                 client.put_object(
-                    Bucket=bucket, Key=key, Body=image, ContentLength=size,
-                    ContentType="image/jpeg", CacheControl="private, no-store",
+                    Bucket=bucket, Key=key, Body=media, ContentLength=size,
+                    ContentType=content_type, CacheControl="private, no-store",
                 )
             url = str(client.generate_presigned_url(
                 "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=ttl,

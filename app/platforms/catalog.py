@@ -154,14 +154,14 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
     PlatformDefinition(
         id="instagram", name="Instagram", phase="Chrome image/carousel · Instagram Login API photo publisher implemented; R2 and live acceptance required",
         account_label="Instagram account", target_label="Profile", target_types=("profile",),
-        content_formats=("image", "carousel"),
+        content_formats=("image", "carousel", "reel"),
         capabilities=PlatformCapabilities("ready", "review_required", "review_required", "review_required", "review_required", "review_required"),
         next_milestone="Instagram Login độc lập; publisher ảnh chờ cấu hình private R2 và nghiệm thu OAuth/live.",
         selector_version="instagram-web-v1", operational=True,
         transports=(
             foundation_transports(("image", "carousel"))[0],
             TransportDefinition(
-                id="official_api", readiness="review_required", content_formats=("image", "carousel"),
+                id="official_api", readiness="review_required", content_formats=("image", "carousel", "reel"),
                 authentication="review_required", target_discovery="api",
                 publishing="review_required", result_verification="review_required",
                 required_scopes=("instagram_business_basic", "instagram_business_content_publish"),
@@ -170,6 +170,7 @@ PLATFORM_CATALOG: tuple[PlatformDefinition, ...] = (
         format_schemas=(
             FormatSchema("image", "Ảnh", 2200, 1, 1, ("image",)),
             FormatSchema("carousel", "Carousel", 2200, 2, 10, ("image",)),
+            FormatSchema("reel", "Instagram Reel", 2200, 1, 1, ("video",)),
         ),
     ),
     PlatformDefinition(

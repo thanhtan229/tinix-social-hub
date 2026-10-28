@@ -25,9 +25,11 @@ class InstagramOfficialPublisher(Publisher):
     provider_version = "instagram-graph-image-v1"
     selector_version = provider_version
     max_concurrent_jobs = 1
-    supported_formats = frozenset({"image", "carousel"})
+    supported_formats = frozenset({"image", "carousel", "reel"})
     MAX_CAPTION_LENGTH = 2200
     MAX_CONTAINER_POLLS = 60
+    # Reels are processed server-side for longer than photos; the poll budget is about 5 minutes at 2 s.
+    MAX_VIDEO_POLLS = 150
     MIN_CAROUSEL_ITEMS = 2
     MAX_CAROUSEL_ITEMS = 10
     MARKER_PREFIX = "ig-photo:"
@@ -55,28 +57,44 @@ class InstagramOfficialPublisher(Publisher):
         elif fmt == "carousel":
             if not cls.MIN_CAROUSEL_ITEMS <= len(media) <= cls.MAX_CAROUSEL_ITEMS:
                 errors.append("Carousel Instagram cần từ 2 đến 10 ảnh JPEG.")
+        elif fmt == "reel":
+            if len(media) != 1:
+                errors.append("Instagram Reel cần đúng một video MP4.")
         else:
-            errors.append("Instagram Official API chỉ hỗ trợ một ảnh hoặc carousel ảnh.")
+            errors.append("Instagram Official API chỉ hỗ trợ một ảnh, carousel ảnh hoặc Reel.")
+        expected_type = "video" if fmt == "reel" else "image"
         for item in media:
-            errors.extend(cls._media_errors(item))
+            errors.extend(cls._media_errors(item, expected_type))
         if len(str(payload.get("caption") or "")) > cls.MAX_CAPTION_LENGTH:
             errors.append("Caption Instagram không được vượt quá 2.200 ký tự.")
         return errors
 
     @staticmethod
-    def _media_errors(item: Any) -> list[str]:
-        if not isinstance(item, dict) or item.get("type") != "image":
+    def _media_errors(item: Any, expected_type: str = "image") -> list[str]:
+        if not isinstance(item, dict) or item.get("type") != expected_type:
+            if expected_type == "video":
+                return ["Instagram Reel chỉ nhận video MP4."]
             return ["Instagram Official API chỉ nhận ảnh JPEG."]
         errors: list[str] = []
-        if (Path(str(item.get("relative_path") or "")).suffix.lower() not in {".jpg", ".jpeg"}
-                or str(item.get("mime_type") or "").lower() != "image/jpeg"):
-            errors.append("Instagram Official API hiện chỉ nhận JPEG đúng MIME.")
+        if expected_type == "video":
+            if (Path(str(item.get("relative_path") or "")).suffix.lower() != ".mp4"
+                    or str(item.get("mime_type") or "").lower() != "video/mp4"):
+                errors.append("Instagram Reel hiện chỉ nhận MP4 đúng MIME video/mp4.")
+            max_bytes = InstagramMediaDelivery.MAX_VIDEO_BYTES
+        else:
+            if (Path(str(item.get("relative_path") or "")).suffix.lower() not in {".jpg", ".jpeg"}
+                    or str(item.get("mime_type") or "").lower() != "image/jpeg"):
+                errors.append("Instagram Official API hiện chỉ nhận JPEG đúng MIME.")
+            max_bytes = InstagramMediaDelivery.MAX_IMAGE_BYTES
         try:
             size_bytes = int(item.get("size_bytes") or 0)
         except (TypeError, ValueError):
             size_bytes = 0
-        if size_bytes <= 0 or size_bytes > 8_000_000:
-            errors.append("Ảnh Instagram phải lớn hơn 0 và không vượt 8 MB.")
+        if size_bytes <= 0 or size_bytes > max_bytes:
+            errors.append(
+                "Ảnh Instagram phải lớn hơn 0 và không vượt 8 MB." if expected_type == "image"
+                else "Video Instagram phải lớn hơn 0 và không vượt 100 MB."
+            )
         if not re.fullmatch(r"[a-fA-F0-9]{64}", str(item.get("sha256") or "")):
             errors.append("Ảnh Instagram thiếu mã SHA-256 của bản đã lên lịch.")
         return errors
@@ -120,9 +138,11 @@ class InstagramOfficialPublisher(Publisher):
             return False, None
         return True, permalink
 
-    async def _container_status(self, connection_id: str, container_id: str, context: PublishContext) -> str:
+    async def _container_status(
+        self, connection_id: str, container_id: str, context: PublishContext, max_polls: int | None = None,
+    ) -> str:
         """Poll a media container until Instagram reports FINISHED, an error, or the poll budget ends."""
-        for _ in range(self.MAX_CONTAINER_POLLS):
+        for _ in range(max_polls or self.MAX_CONTAINER_POLLS):
             if await context.is_cancelled():
                 raise asyncio.CancelledError
             status = await self.instagram_accounts.graph_request(
@@ -155,21 +175,22 @@ class InstagramOfficialPublisher(Publisher):
         if target_id != str(connection.get("external_account_id") or ""):
             return PublishResult(PublishOutcome.UNSUPPORTED, "Instagram connection không khớp profile đã chọn.")
         items = list(context.payload.get("media") or [])
+        fmt = str(context.payload.get("content_format") or "image")
         image_paths: list[Path] = []
         for item in items:
             try:
                 image_path = await asyncio.to_thread(self.media.resolve_existing, str(item.get("relative_path") or ""))
             except (MediaValidationError, OSError) as exc:
                 return PublishResult(PublishOutcome.UNSUPPORTED, str(exc))
-            try:
-                with Image.open(image_path) as image:
-                    if image.format != "JPEG" or image.width <= 0 or image.height <= 0:
-                        return PublishResult(PublishOutcome.UNSUPPORTED, "File ảnh Instagram không phải JPEG hợp lệ.")
-                    image.verify()
-            except (UnidentifiedImageError, OSError):
-                return PublishResult(PublishOutcome.UNSUPPORTED, "File ảnh Instagram không đọc được.")
+            if fmt != "reel":
+                try:
+                    with Image.open(image_path) as image:
+                        if image.format != "JPEG" or image.width <= 0 or image.height <= 0:
+                            return PublishResult(PublishOutcome.UNSUPPORTED, "File ảnh Instagram không phải JPEG hợp lệ.")
+                        image.verify()
+                except (UnidentifiedImageError, OSError):
+                    return PublishResult(PublishOutcome.UNSUPPORTED, "File ảnh Instagram không đọc được.")
             image_paths.append(image_path)
-        fmt = str(context.payload.get("content_format") or "image")
         if context.job.get("dry_run"):
             if await context.is_cancelled():
                 raise asyncio.CancelledError
@@ -193,8 +214,11 @@ class InstagramOfficialPublisher(Publisher):
         self, context: PublishContext, connection: dict[str, Any], target_id: str,
         item: dict[str, Any], image_path: Path, release_id: str,
     ) -> PublishResult:
-        state = self._marker(context) or {"v": 1, "release": release_id, "sha": str(item.get("sha256") or "")}
-        if state.get("release") != release_id or state.get("sha") != str(item.get("sha256") or ""):
+        is_reel = context.payload.get("content_format") == "reel"
+        kind = "reel" if is_reel else "image"
+        state = self._marker(context) or {"v": 1, "kind": kind, "release": release_id, "sha": str(item.get("sha256") or "")}
+        if (state.get("release") != release_id or state.get("sha") != str(item.get("sha256") or "")
+                or state.get("kind", "image") != kind):
             return PublishResult(PublishOutcome.UNSUPPORTED, "Checkpoint Instagram không khớp media đã duyệt.")
         if state.get("stage") == "publish_possible":
             return PublishResult(
@@ -212,9 +236,14 @@ class InstagramOfficialPublisher(Publisher):
                     image_path, release_id=release_id, sha256=str(item.get("sha256") or ""),
                     mime_type=str(item.get("mime_type") or ""),
                 )
+                container_data = (
+                    {"media_type": "REELS", "video_url": media_url.url,
+                     "caption": str(context.payload.get("caption") or "")}
+                    if is_reel else
+                    {"image_url": media_url.url, "caption": str(context.payload.get("caption") or "")}
+                )
                 response = await self.instagram_accounts.graph_request(
-                    connection["id"], "POST", f"{target_id}/media",
-                    data={"image_url": media_url.url, "caption": str(context.payload.get("caption") or "")},
+                    connection["id"], "POST", f"{target_id}/media", data=container_data,
                 )
                 container_id = str(response.get("id") or "")
                 if not container_id.isdigit():
@@ -224,11 +253,14 @@ class InstagramOfficialPublisher(Publisher):
             else:
                 container_id = str(state["container"])
 
-            status = await self._container_status(connection["id"], container_id, context)
+            status = await self._container_status(
+                connection["id"], container_id, context,
+                max_polls=self.MAX_VIDEO_POLLS if is_reel else None,
+            )
             if status == "ERROR":
                 return PublishResult(
                     PublishOutcome.UNSUPPORTED,
-                    "Instagram không xử lý được ảnh; container hết hạn hoặc lỗi.",
+                    "Instagram không xử lý được media; container hết hạn hoặc lỗi.",
                     metadata={"container_id": container_id},
                 )
             if status == "PENDING":
@@ -255,7 +287,9 @@ class InstagramOfficialPublisher(Publisher):
                 )
             await context.transition(JobStatus.VERIFYING.value, "instagram_media_publish_confirmed", True)
             try:
-                verified, permalink = await self._verify(connection["id"], media_id)
+                verified, permalink = await self._verify(
+                    connection["id"], media_id, expected_type="VIDEO" if is_reel else "IMAGE",
+                )
             except Exception:
                 verified, permalink = False, None
             if not verified:
@@ -268,9 +302,12 @@ class InstagramOfficialPublisher(Publisher):
             if object_key:
                 await self.media_delivery.delete(object_key)
             return PublishResult(
-                PublishOutcome.PUBLISHED, "Đã đăng ảnh qua Instagram Official API.", post_url=permalink,
+                PublishOutcome.PUBLISHED,
+                "Đã đăng Reel qua Instagram Official API." if is_reel else "Đã đăng ảnh qua Instagram Official API.",
+                post_url=permalink,
                 metadata={"external_id": media_id, "container_id": container_id,
-                          "external_account_id": target_id, "provider_version": self.provider_version},
+                          "external_account_id": target_id, "provider_version": self.provider_version,
+                          "content_format": "reel" if is_reel else "image"},
             )
         except asyncio.CancelledError:
             raise

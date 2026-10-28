@@ -58,6 +58,32 @@ class InstagramAPI:
         raise AssertionError(f"Unexpected Instagram API request: {method} {path}")
 
 
+class ReelAPI(InstagramAPI):
+    """Fake Graph API for Reels: the container reports IN_PROGRESS twice before FINISHED."""
+
+    REEL_CONTAINER_ID = "17900000000000030"
+    REEL_MEDIA_ID = "17900000000000031"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.polls = 0
+
+    async def graph_request(self, _connection_id, method, path, *, params=None, data=None):
+        data = data or {}
+        self.calls.append((method, path, params or {}, data))
+        if path == f"{TARGET_ID}/media" and method == "POST":
+            return {"id": self.REEL_CONTAINER_ID}
+        if path == self.REEL_CONTAINER_ID and method == "GET":
+            self.polls += 1
+            status = "IN_PROGRESS" if self.polls <= 2 else "FINISHED"
+            return {"id": path, "status_code": status, "status": status.title()}
+        if path.endswith("/media_publish") and method == "POST":
+            return {"id": self.REEL_MEDIA_ID}
+        if path == self.REEL_MEDIA_ID and method == "GET":
+            return {"id": path, "media_type": "VIDEO", "permalink": "https://www.instagram.com/reel/rl123/"}
+        raise AssertionError(f"Unexpected Instagram API request: {method} {path}")
+
+
 class Media:
     def __init__(self, path: Path, by_name: dict[str, Path] | None = None) -> None:
         self.path = path
@@ -313,6 +339,62 @@ class InstagramOfficialPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("từ 2 đến 10" in e for e in InstagramOfficialPublisher.validate(eleven, {})))
         two = {"content_format": "carousel", "caption": "c", "media": media[:2]}
         self.assertEqual(InstagramOfficialPublisher.validate(two, {}), [])
+
+    def _reel_setup(self):
+        video = Path(self.temp.name) / "clip.mp4"
+        video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048)
+        digest = hashlib.sha256(video.read_bytes()).hexdigest()
+        media = [{"type": "video", "relative_path": "clip.mp4", "mime_type": "video/mp4",
+                  "size_bytes": video.stat().st_size, "sha256": digest}]
+        return video, media
+
+    def _reel_context(self, media, *, dry_run: bool, transitions: list, requests: list, marker: str = "") -> PublishContext:
+        context = self._context(dry_run=dry_run, transitions=transitions, requests=requests, marker=marker)
+        context.payload["content_format"] = "reel"
+        context.payload["media"] = media
+        return context
+
+    async def test_reel_publish_uses_reels_container_waits_for_processing_and_verifies_video(self) -> None:
+        video, media = self._reel_setup()
+        api = ReelAPI()
+        delivery = Delivery()
+        publisher = InstagramOfficialPublisher(
+            Connections(), api, Media(self.image, {"clip.mp4": video}), delivery, poll_interval_seconds=0,
+        )
+        transitions, requests = [], []
+        result = await publisher.publish(self._reel_context(media, dry_run=False, transitions=transitions, requests=requests))
+        self.assertEqual(result.outcome, PublishOutcome.PUBLISHED)
+        self.assertEqual(result.post_url, "https://www.instagram.com/reel/rl123/")
+        create = [call for call in api.calls if call[0] == "POST" and call[1] == f"{TARGET_ID}/media"][0]
+        self.assertEqual(create[3]["media_type"], "REELS")
+        self.assertTrue(create[3]["video_url"].startswith("https://"))
+        self.assertEqual(api.polls, 3)
+        self.assertEqual(delivery.deleted, ["tinix-instagram-tmp/release-1/clip.mp4"])
+        self.assertEqual(delivery.created[0]["mime_type"], "video/mp4")
+
+    async def test_reel_dry_run_validates_without_cloud_or_graph_calls(self) -> None:
+        video, media = self._reel_setup()
+        api, delivery = ReelAPI(), Delivery()
+        publisher = InstagramOfficialPublisher(
+            Connections(), api, Media(self.image, {"clip.mp4": video}), delivery, poll_interval_seconds=0,
+        )
+        result = await publisher.publish(self._reel_context(media, dry_run=True, transitions=[], requests=[]))
+        self.assertEqual(result.outcome, PublishOutcome.DRY_RUN_READY)
+        self.assertEqual(api.calls, [])
+        self.assertEqual(delivery.created, [])
+
+    def test_reel_validation_requires_one_mp4_within_limit(self) -> None:
+        _, media = self._reel_setup()
+        ok = {"content_format": "reel", "caption": "c", "media": media}
+        self.assertEqual(InstagramOfficialPublisher.validate(ok, {}), [])
+        as_photo = {"content_format": "reel", "caption": "c", "media": [{
+            "type": "image", "relative_path": "photo.jpg", "mime_type": "image/jpeg",
+            "size_bytes": 10, "sha256": self.digest}]}
+        self.assertTrue(InstagramOfficialPublisher.validate(as_photo, {}))
+        too_big = {"content_format": "reel", "caption": "c", "media": [{**media[0], "size_bytes": 100_000_001}]}
+        self.assertTrue(any("100 MB" in e for e in InstagramOfficialPublisher.validate(too_big, {})))
+        two = {"content_format": "reel", "caption": "c", "media": media * 2}
+        self.assertTrue(InstagramOfficialPublisher.validate(two, {}))
 
     def test_validation_rejects_media_over_8_mb_before_r2_upload(self) -> None:
         payload = {

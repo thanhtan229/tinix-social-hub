@@ -55,13 +55,13 @@ class PlatformCatalogTests(unittest.TestCase):
         self.assertNotIn("community_post", transport.content_formats)
 
     def test_catalog_only_exposes_formats_implemented_by_the_active_transport(self) -> None:
-        self.assertEqual(get_platform("instagram").content_formats, ("image", "carousel"))
+        self.assertEqual(get_platform("instagram").content_formats, ("image", "carousel", "reel"))
         self.assertEqual(get_platform("tiktok").content_formats, ("short_video",))
         self.assertEqual(get_platform("youtube").content_formats, ("video", "short"))
 
     def test_instagram_official_photo_publisher_is_review_gated_until_live_acceptance(self) -> None:
         transport = get_platform("instagram").transport("official_api")
-        self.assertEqual(transport.content_formats, ("image", "carousel"))
+        self.assertEqual(transport.content_formats, ("image", "carousel", "reel"))
         self.assertEqual(transport.authentication, "review_required")
         self.assertEqual(transport.publishing, "review_required")
         self.assertEqual(transport.readiness, "review_required")
