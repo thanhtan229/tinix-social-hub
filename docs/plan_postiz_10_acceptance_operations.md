@@ -1,6 +1,6 @@
 # Giai đoạn 10 — Nghiệm thu vận hành và hoàn thiện tài liệu
 
-Trạng thái: **Facebook một ảnh, album hai/ba ảnh, video Page thường và Reel đã live-verified trên Page Tinix. Instagram publishing và album 4–10 ảnh còn nghiệm thu.** Ngày cập nhật: 29-09-2026.  
+Status: 10B fixture/UI/backup-restore accepted; live multi-Page Facebook text and Instagram one-image, two-image carousel, and Reel accepted within stated account and format limits. Updated 2026-10-29.
 Thuộc [kế hoạch tổng](plan_postiz.md), bổ sung bước đóng từng đợt phát hành.
 
 ## Mục tiêu và điều kiện
@@ -70,26 +70,39 @@ Giai đoạn này áp dụng sau mỗi đợt lớn và khi đóng toàn bộ ph
 
 Backup/migration được kiểm tra bằng test trên database cô lập/bản sao. Không khôi phục dữ liệu test vào database người dùng. Trong lượt cập nhật này, `BUILD.bat --no-bump` đạt **100%**, full suite có **300 tests**; focused Meta/catalog/routing có **81 tests**. Backend cũ đã được thay bằng PID **43588** từ workspace; `/api/health` trả `ok`, version **1.0.43**, database `ok`, worker idle, scheduler chạy, không warnings. `/api/platforms` công khai các Facebook format mới và composer JS trả HTTP 200. Không đăng Facebook thật.
 
-Phạm vi fixture/code đã rà gồm 01–05, 06A (một ảnh), 07 (Reel và video Page thường), 09 và kết nối identity 08. 06B album ảnh đã được thêm sau mốc build này; lúc đó Instagram publishing còn mở. Live acceptance Facebook vẫn cần Page/App có quyền phù hợp và chỉ thị bài thử cụ thể. Instagram publishing vẫn cần URL media HTTPS công khai và lựa chọn storage.
+### Kiểm tra mục tiêu tiếp theo — 28-10-2026
 
-### Bổ sung nghiệm thu live — 28-09-2026
+Tám kiểm thử mục tiêu chạy lại qua `unittest` đều PASS: batch scheduling API/idempotency, atomic multi-account schedule, per-target format/settings, bulk reschedule, frozen plan/release/job, plan state aggregation, recovery sau commit và scheduler bounded refresh. UI smoke PASS; full suite `unittest` PASS **367 tests** trên Python 3.13. Không chạy build vì chỉ cập nhật tài liệu, không chạy live publish. Runtime được xác minh riêng là version **1.0.44**, health/database `ok`, worker idle; Giai đoạn 10B vẫn cần acceptance toàn luồng trên môi trường test và kiểm tra backup/restore/restart theo phạm vi đã chọn.
 
-Theo chỉ thị của người dùng, đã đăng thử ảnh và video Page thường trên Page Tinix (`1106784475845782`). [Bài ảnh](https://www.facebook.com/122132248658779083/posts/122132248592779083) được Tinix xác minh tự động; [video](https://www.facebook.com/reel/1433112448754530/) được Graph xác nhận `publish_status=published` và đã finalize thủ công trong Tinix sau khi xử lý `unknown_result`. Video đi qua Page Videos API, dù Meta trả permalink `/reel/`. Lỗi live phát hiện ở preflight MIME và việc không giữ video ID từ bước start đã được sửa cùng regression tests. Tự xác minh video sau bản sửa mới đạt fixture; chưa tạo bài live thứ hai để chứng minh.
+### Bổ sung nghiệm thu fixture 10B — 28-10-2026
 
-### Bổ sung triển khai album ảnh Facebook — 28-09-2026
+Hai mươi sáu kiểm thử `unittest` mục tiêu PASS trên Python 3.13: lập lịch nhiều Page nguyên tử/idempotent, format/settings theo target, snapshot release/job, tổng hợp trạng thái plan, reschedule nhóm, phục hồi queue, checkpoint upload/restart không đăng trùng, backup/restore database, recovery bundle mã hóa gồm media/profile/environment và khôi phục tham chiếu media. Hai Playwright smoke PASS cho tải các tab không lỗi console và xem/reschedule release trên lịch. Các fixture dùng dữ liệu cô lập; không chạy live publish. Phiên UI acceptance toàn luồng được ghi ở mục tiếp theo; migration trên bản sao dữ liệu thực được nghiệm thu ở mục sau.
 
-Đã triển khai 06B và fixture-test upload ảnh unpublished theo thứ tự, gắn chúng vào một feed post, hủy/khôi phục và chống retry mù khi timeout. 128 targeted tests và `BUILD.bat --no-bump` đạt; backend PID 52504, version 1.0.43, health/database `ok`, worker idle. Tại mốc triển khai này, capability chưa live-verified và chưa có bài thử album công khai.
 
-### Nghiệm thu album ảnh — 28-09-2026
+### Preserved Facebook live acceptance history - September 2026
 
-Theo chỉ thị của người dùng, đã đăng [một album hai ảnh](https://www.facebook.com/122132248658779083/posts/122132264210779083) trên Page Tinix. Preflight/dry-run đạt, job `47372f00-d520-4d75-8821-963b5e3f32c1` kết thúc `succeeded`. Graph xác nhận post thuộc Page `1106784475845782`, attachment type `album` có đúng hai ảnh `122132263586779083` và `122132264180779083` theo thứ tự. Lỗi chuyển `uploading` lặp ở ảnh thứ hai được phát hiện qua live run và đã sửa, kèm regression test trạng thái.
+The previously recorded Facebook one-photo post and Page video on Page Tinix remain part of the acceptance history. The photo permalink was https://www.facebook.com/122132248658779083/posts/122132248592779083; the video permalink was https://www.facebook.com/reel/1433112448754530/. The video was verified by Graph as published and finalized manually in Tinix after an `unknown_result`; preflight MIME and video-ID checkpoint issues were corrected with regression tests. No second live video run was made after that correction.
 
-Sau bản sửa, 90 tests Meta/state machine đạt và `BUILD.bat --no-bump` đạt 100%. Backend mới PID 53912 trả `/api/health` `ok` (v1.0.43), database `ok`, worker idle, không warning.
+Facebook album support was implemented for 2 to 10 unpublished photos attached to one feed post, including ordering, cancellation/recovery, and safe handling of timeout. The 128 targeted tests and `BUILD.bat --no-bump` passed at implementation. Later, an album of two photos was live-verified on Page Tinix: job `47372f00-d520-4d75-8821-963b5e3f32c1` succeeded, and Graph confirmed the Page owner and both photo attachments in order. The 90 Meta/state-machine tests and build passed after the state-transition fix.
 
-### Nghiệm thu Reel — 29-09-2026
+A Facebook Reel was live-verified on Page Tinix on 2026-09-29 at https://www.facebook.com/reel/1329975209041799/. Job `c944e4e0-b3d0-4d68-ac11-d6c37f9cd20b` succeeded; Graph confirmed the Page, completed processing, `published` status, caption, and permalink. An initial upload attempt ended in HTTP 400 before finish and was reconciled as failure; no duplicate was published. Verification, content length handling, and diagnostics were reviewed; 94 targeted tests and build passed.
 
-Theo chỉ thị của người dùng, đã đăng [Reel thử](https://www.facebook.com/reel/1329975209041799/) trên Page Tinix qua `video_reels`. Job `c944e4e0-b3d0-4d68-ac11-d6c37f9cd20b` kết thúc `succeeded` một attempt; Graph xác nhận đúng Page, upload/processing complete, publish_status `published`, caption và permalink. Session thử đầu RUpload HTTP 400, không gửi finish; job đã đối soát `permanent_failure`. Review bổ sung kiểm tra owner/published/permalink, `Content-Length` upload và giữ diagnostic trong job `unknown_result`. 94 targeted tests và `BUILD.bat --no-bump` đạt 100%; backend PID 40096 health/database `ok`, worker idle, không warning sau đối soát.
+Meta analytics were also verified for the Reel and Page. Reel metrics used `views` after Graph rejected `shares`; reported likes/comments/views and Page followers/page_likes were all zero. Analytics scheduler was not enabled. A three-photo Facebook album was also verified on Page Tinix at https://www.facebook.com/122132248658779083/posts/122132332970779083 (job `49060e3f-ab23-4e22-bb24-38eadc474c7f`). Four-to-ten-photo albums remain unverified live.
 
-Nghiệm thu analytics bổ sung: Graph từ chối `shares` trên Reel nên collector dùng `views` cho video/Reel, giữ `shares` cho post/ảnh. Sau sửa, fetch Reel live trả `succeeded`, lưu likes/comments/views đều 0 theo Meta và URL đầy đủ; fetch Page Tinix trả `succeeded`, lưu followers/page_likes đều 0. Targeted tests và full `BUILD.bat --no-bump` đạt 100%; backend PID 18992 health/database `ok`, worker idle, không warning. Chưa bật lịch fetch analytics tự động, chưa nghiệm thu live các nhánh album 4–10 ảnh và Instagram publishing.
+### Facebook live multi-Page text acceptance - 2026-10-29
 
-Album ba ảnh cũng đã đăng thử trên Page Tinix sau preflight/dry-run. Job `49060e3f-ab23-4e22-bb24-38eadc474c7f` thành công trong một attempt; Graph xác nhận đúng Page và attachment album có ba ảnh theo thứ tự. [Permalink album thử](https://www.facebook.com/122132248658779083/posts/122132332970779083). Không có thay đổi code trong lượt nghiệm thu này. Album 4–10 ảnh, scheduler Meta tự động và Instagram publishing vẫn còn mở.
+A user-approved plan published a text post through `official_api_only` to two Tini Pages after preflight and dry-run. Both jobs succeeded and Graph verified their post IDs and Page owners. The baby photography Page post was https://www.facebook.com/122339557136030346/posts/122339557100030346 (job `12406a1d-4744-4fd0-878a-b3077f8ddd10`, Page `131419466718163`). The family photography Page post was https://www.facebook.com/1140719948353725/posts/1140719911687062 (job `cc338d60-5078-4f99-a244-a0d93fea491c`, Page `106946975052940`). Plan `c9edbd8d-ff0f-44cc-87b7-68e6d94541ed`; approval `0c7dfbff-79ac-425a-92ec-7d821abbccca`. This acceptance applies only to text on these Pages/account.
+
+### Instagram live acceptance and Facebook test-post removal status - 2026-10-29
+
+Instagram R2 bucket access (`HeadBucket`) and OAuth identity/scope were verified for `@tannguyen3569` (`17841425556322045`). Preflight was ready; dry-run completed as `dry_run_ready`. The live one-image Official API job `50506fdd-294c-49ed-a337-7275fe6b3a37` succeeded; Graph confirmed media ID `18040813607844996`, type `IMAGE`, and [permalink](https://www.instagram.com/p/DfD2C-mGG_y/). Scope is limited to this account and one JPEG. No source code, build, or restart changed in this operational acceptance.
+
+For the two previously published Facebook test posts, subsequent Graph GET/DELETE calls returned an ambiguous object-not-found/permission response. Their final deletion state could not be independently distinguished by Graph; do not repost them.
+
+### Instagram two-image carousel acceptance - 2026-10-29
+
+On `@tannguyen3569`, preflight was ready and dry-run completed `dry_run_ready`. The live job `7ff70006-42ca-4bbe-b7fd-c4b530130833` succeeded; Graph verified media `18101582774437499` as `CAROUSEL_ALBUM`, with two IMAGE children in order, on Instagram account `17841425556322045`. [Carousel permalink](https://www.instagram.com/p/DfD3FAMCQzP/). No source code changed; build/restart were not applicable.
+
+### Instagram Reel acceptance - 2026-10-29
+
+On `@tannguyen3569`, preflight passed and dry-run completed `dry_run_ready`. The live job `ba9a41f1-5745-4ff1-aef7-de719c8d6b23` succeeded in one attempt. Graph verified media `17938602174125398` as `VIDEO` on account `17841425556322045`. [Reel permalink](https://www.instagram.com/reel/DfD3jxTnSTF/). This confirms the Reel path on the selected account only. No source code changed; build/restart were not applicable.

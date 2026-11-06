@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager, ExitStack, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import psutil
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -117,6 +118,9 @@ class ProfileAutoCleanupSettings(BaseModel):
 class AnalyticsRefreshSettings(BaseModel):
     enabled: bool = False
     meta_enabled: bool = False
+    instagram_enabled: bool = False
+    tracked_posts_enabled: bool = False
+    tracked_posts_next_run_seconds: int = Field(default=0, ge=0, le=86400, strict=True)
     interval_hours: int = Field(default=24, ge=6, le=48)
     days: int = Field(default=30, ge=7, le=90)
     posts_per_run: int = Field(default=10, ge=1, le=50)
@@ -239,6 +243,14 @@ class JobHistoryCleanup(BaseModel):
 class ReleaseConnect(BaseModel):
     external_url: str = Field(min_length=10, max_length=2000)
     note: str = Field(default="Kết nối thủ công từ WebUI", min_length=1, max_length=2000)
+    confirm_target_identity: bool = False
+    confirm_post_identity: bool = False
+
+
+class ExistingPostTrackCreate(BaseModel):
+    target_id: str = Field(min_length=1, max_length=100)
+    external_url: str = Field(min_length=16, max_length=2000)
+    title: str = Field(default="", max_length=240)
     confirm_target_identity: bool = False
     confirm_post_identity: bool = False
 
@@ -1323,6 +1335,8 @@ async def collect_release_metrics(
                 return await svc.api_analytics_collector.collect_release(release_id, days)
         if release["platform"] == "facebook" and method == "api":
             return await svc.meta_analytics_collector.collect_release(release_id, days)
+        if release["platform"] == "instagram" and method == "api":
+            return await svc.instagram_analytics_collector.collect_release(release_id, days)
         return await svc.analytics_collector.collect(release_id)
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy release.") from exc
@@ -1343,6 +1357,8 @@ async def collect_channel_metrics(
             raise KeyError(target_id)
         if target.get("platform") == "facebook":
             return await svc.meta_analytics_collector.collect_channel(target_id, days)
+        if target.get("platform") == "instagram":
+            return await svc.instagram_analytics_collector.collect_channel(target_id, days)
         return await svc.api_analytics_collector.collect_channel(target_id, days)
     except KeyError as exc:
         raise HTTPException(404, "Không tìm thấy channel đích.") from exc
@@ -1446,6 +1462,70 @@ async def release_metrics(release_id: str, request: Request) -> dict[str, Any]:
         asyncio.to_thread(services(request).analytics.runs, release_id),
     )
     return {"metrics": metrics, "fetch_runs": runs}
+
+
+@router.get("/analytics/tracked-posts")
+async def list_tracked_posts(request: Request, target_id: str | None = None) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(services(request).analytics.list_tracked_posts, target_id)
+
+
+@router.post("/analytics/tracked-posts", status_code=201)
+async def add_tracked_post(body: ExistingPostTrackCreate, request: Request) -> dict[str, Any]:
+    if not body.confirm_target_identity or not body.confirm_post_identity:
+        raise HTTPException(422, "Xác nhận đúng Page và đúng bài viết trước khi thêm theo dõi.")
+    svc = services(request)
+    target = await asyncio.to_thread(svc.targets.get, body.target_id)
+    if not target:
+        raise HTTPException(404, "Không tìm thấy Page đích.")
+    if target.get("platform") != "facebook":
+        raise HTTPException(422, "Theo dõi bài viết có sẵn hiện chỉ hỗ trợ Facebook Page.")
+    from app.services.ui_analytics import AnalyticsCollectionError
+    try:
+        svc.analytics_collector._validate_url("facebook", body.external_url)
+        parsed = urlparse(body.external_url)
+        if not any(part in parsed.path.lower() for part in ("/posts/", "/permalink.php", "/photo.php", "/reel/")):
+            raise HTTPException(422, "URL cần trỏ trực tiếp đến một bài viết, ảnh hoặc Reel trên Facebook.")
+        return await asyncio.to_thread(
+            svc.analytics.add_tracked_post, body.target_id, "facebook", body.external_url, body.title,
+        )
+    except AnalyticsCollectionError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.delete("/analytics/tracked-posts/{post_id}")
+async def remove_tracked_post(post_id: str, request: Request) -> dict[str, bool]:
+    removed = await asyncio.to_thread(services(request).analytics.remove_tracked_post, post_id)
+    if not removed:
+        raise HTTPException(404, "Không tìm thấy bài đang theo dõi.")
+    return {"removed": True}
+
+
+@router.get("/analytics/tracked-posts/{post_id}/metrics")
+async def tracked_post_metrics(post_id: str, request: Request) -> dict[str, Any]:
+    post = await asyncio.to_thread(services(request).analytics.get_tracked_post, post_id)
+    if not post:
+        raise HTTPException(404, "Không tìm thấy bài đang theo dõi.")
+    analytics = services(request).analytics
+    metrics, runs = await asyncio.gather(
+        asyncio.to_thread(analytics.tracked_post_metrics, post_id),
+        asyncio.to_thread(analytics.tracked_post_runs, post_id),
+    )
+    return {"metrics": metrics, "fetch_runs": runs}
+
+
+@router.post("/analytics/tracked-posts/{post_id}/collect")
+async def collect_tracked_post_metrics(post_id: str, request: Request) -> dict[str, Any]:
+    from app.services.ui_analytics import AnalyticsCollectionError
+    try:
+        return await services(request).analytics_collector.collect_tracked_post(post_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Không tìm thấy bài đang theo dõi.") from exc
+    except AnalyticsCollectionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/analytics/summary")

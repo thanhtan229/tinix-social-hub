@@ -18,7 +18,7 @@ from app.db.repositories import AccountRepository, AppSettingsRepository, JobRep
 from app.services.api_analytics import APIAnalyticsError, YouTubeAPIAnalyticsCollector
 from app.services.analytics_scheduler import AnalyticsRefreshScheduler
 from app.services.scheduling import SchedulingService
-from app.services.ui_analytics import AnalyticsCollectionError, UIAnalyticsCollector, parse_visible_number
+from app.services.ui_analytics import AnalyticsCollectionError, UIAnalyticsCollector, parse_metric_value, parse_visible_number
 
 
 class AnalyticsTests(unittest.TestCase):
@@ -73,6 +73,25 @@ class AnalyticsTests(unittest.TestCase):
     def test_manual_connect_rejects_dry_run_release(self) -> None:
         with self.assertRaisesRegex(ValueError, "đã đăng"):
             self.analytics.connect_release(self.release_id,"https://facebook.com/p/posts/1","Not published")
+
+    def test_existing_post_tracking_keeps_metrics_separate_from_publication_releases(self) -> None:
+        target_id = self.publications.get_release(self.release_id)["target_id"]
+        post = self.analytics.add_tracked_post(target_id, "facebook", "https://www.facebook.com/p/posts/123", "Existing post")
+        self.assertEqual(post["target_id"], target_id)
+        with self.assertRaisesRegex(ValueError, "đã có"):
+            self.analytics.add_tracked_post(target_id, "facebook", "https://www.facebook.com/p/posts/123")
+        run_id = self.analytics.start_tracked_post_run(post["id"], "ui_chrome:facebook-web-v1")
+        with self.assertRaises(AnalyticsFetchInProgress):
+            self.analytics.start_tracked_post_run(post["id"], "ui_chrome:facebook-web-v1")
+        metrics = self.analytics.upsert_tracked_post(
+            post["id"], {"likes": 8}, metric_date=datetime.now(timezone.utc).date().isoformat(),
+            timezone_name="Asia/Bangkok", source="ui_chrome:facebook-web-v1",
+        )
+        self.analytics.finish_tracked_post_run(run_id, "succeeded", len(metrics))
+        self.assertEqual(len(self.analytics.list_tracked_posts(target_id)[0]["metrics"]), 1)
+        self.assertEqual(self.analytics.for_release(self.release_id), [])
+        self.assertTrue(self.analytics.remove_tracked_post(post["id"]))
+        self.assertEqual(self.analytics.list_tracked_posts(target_id), [])
 
     def test_snapshots_use_latest_value_instead_of_adding_daily_counts(self) -> None:
         with self.database.connection() as connection:
@@ -209,6 +228,19 @@ class AnalyticsTests(unittest.TestCase):
                 (self.release_id,),
             )
         target_id = self.publications.get_release(self.release_id)["target_id"]
+        class Protector:
+            @staticmethod
+            def protect_oauth(value): return "protected:" + value
+            @staticmethod
+            def unprotect_oauth(value): return value.removeprefix("protected:")
+
+        connections = ProviderConnectionRepository(self.database, Protector())
+        connection = connections.upsert(account_id=self.account_id, provider="meta", access_token="user-token")
+        target = TargetRepository(self.database).get(target_id)
+        ProviderTargetConnectionRepository(self.database, Protector()).upsert(
+            connection_id=connection["id"], target_id=target_id, provider="meta",
+            external_target_id=target["external_id"], access_token="page-token", tasks=["ANALYZE"],
+        )
         collector = FakeMetaCollector()
         scheduler = AnalyticsRefreshScheduler(AppSettingsRepository(self.database), self.analytics, None, collector)
         config = scheduler.configure({"meta_enabled": True, "enabled": False, "posts_per_run": 2, "channels_per_run": 2})
@@ -217,6 +249,102 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual((result["posts_attempted"], result["channels_attempted"]), (1, 1))
         self.assertEqual(collector.calls, [("post", self.release_id), ("channel", target_id)])
         self.assertEqual(self.analytics.due_release_ids(24, 10, "youtube", "api_youtube_data_v3"), [])
+
+    def test_tracked_facebook_posts_scheduler_is_opt_in_and_bounded(self) -> None:
+        target_id = self.publications.get_release(self.release_id)["target_id"]
+        post = self.analytics.add_tracked_post(
+            target_id, "facebook", "https://www.facebook.com/page/posts/123", "Tracked post",
+        )
+
+        class FakeTrackedCollector:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def collect_tracked_post(self, post_id: str) -> dict[str, str]:
+                self.calls.append(post_id)
+                run_id = self.analytics.start_tracked_post_run(post_id, "ui_chrome:fixture-v1")
+                self.analytics.finish_tracked_post_run(run_id, "succeeded", 1)
+                return {"status": "succeeded"}
+
+        collector = FakeTrackedCollector()
+        collector.analytics = self.analytics
+        scheduler = AnalyticsRefreshScheduler(
+            AppSettingsRepository(self.database), self.analytics, None,
+            tracked_posts_collector=collector,
+        )
+        self.assertFalse(scheduler.status()["tracked_posts_enabled"])
+        self.assertEqual(self.analytics.due_tracked_post_ids(24, 10), [post["id"]])
+        config = scheduler.configure({"tracked_posts_enabled": True, "enabled": False, "posts_per_run": 1})
+        self.assertIsNotNone(config["next_run_at"])
+        result = asyncio.run(scheduler._run_once(config))
+        self.assertEqual(result["posts_attempted"], 1)
+        self.assertEqual(result["succeeded"], 1)
+        self.assertEqual(collector.calls, [post["id"]])
+        self.assertEqual(result["providers"]["tracked_posts"]["posts_attempted"], 1)
+        self.assertEqual(self.analytics.due_tracked_post_ids(24, 10), [])
+        forced = asyncio.run(scheduler._run_once({**config, "force_tracked_posts": True}))
+        self.assertEqual(forced["posts_attempted"], 1)
+        self.assertEqual(collector.calls, [post["id"], post["id"]])
+
+    def test_one_shot_refresh_does_not_get_overwritten_by_empty_cycle(self) -> None:
+        target_id = self.publications.get_release(self.release_id)["target_id"]
+        post = self.analytics.add_tracked_post(
+            target_id, "facebook", "https://www.facebook.com/page/posts/456", "One-shot post",
+        )
+
+        class FakeTrackedCollector:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def collect_tracked_post(inner_self, post_id: str) -> dict[str, str]:
+                inner_self.calls += 1
+                run_id = self.analytics.start_tracked_post_run(post_id, "ui_chrome:fixture-v1")
+                self.analytics.finish_tracked_post_run(run_id, "succeeded", 1)
+                return {"status": "succeeded"}
+
+        async def scenario() -> None:
+            settings = AppSettingsRepository(self.database)
+            collector = FakeTrackedCollector()
+            scheduler = AnalyticsRefreshScheduler(
+                settings, self.analytics, None, tracked_posts_collector=collector,
+            )
+            scheduler.configure({
+                "tracked_posts_enabled": True,
+                "tracked_posts_next_run_seconds": 1,
+                "enabled": False,
+            })
+            await scheduler.start()
+            try:
+                deadline = asyncio.get_running_loop().time() + 5
+                last_run = None
+                while asyncio.get_running_loop().time() < deadline:
+                    last_run = await asyncio.to_thread(settings.get, scheduler.LAST_RUN_KEY)
+                    if last_run and last_run.get("providers", {}).get("tracked_posts", {}).get("posts_attempted"):
+                        break
+                    await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
+                last_run = await asyncio.to_thread(settings.get, scheduler.LAST_RUN_KEY)
+                self.assertEqual(collector.calls, 1)
+                self.assertEqual(last_run["providers"]["tracked_posts"]["posts_attempted"], 1)
+                self.assertEqual(last_run["providers"]["tracked_posts"]["succeeded"], 1)
+            finally:
+                await scheduler.stop()
+
+        asyncio.run(scenario())
+
+    def test_empty_scheduler_cycle_preserves_last_run_with_work(self) -> None:
+        settings = AppSettingsRepository(self.database)
+        previous = {"finished_at": "2026-10-30T12:00:00+00:00", "posts_attempted": 1}
+        settings.set(AnalyticsRefreshScheduler.LAST_RUN_KEY, previous)
+        scheduler = AnalyticsRefreshScheduler(settings, self.analytics, None)
+        asyncio.run(scheduler._run_once({
+            **scheduler.configuration(),
+            "enabled": False,
+            "meta_enabled": False,
+            "instagram_enabled": False,
+            "tracked_posts_enabled": False,
+        }))
+        self.assertEqual(settings.get(AnalyticsRefreshScheduler.LAST_RUN_KEY), previous)
 
     def test_youtube_analytics_rate_limit_is_reported_as_actionable_status(self) -> None:
         async def scenario() -> None:
@@ -332,6 +460,16 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(parse_visible_number("1,234,567 views"),1_234_567)
         self.assertEqual(parse_visible_number("1.234.567 lượt xem"),1_234_567)
         self.assertIsNone(parse_visible_number("Không hiển thị"))
+
+    def test_visible_number_parser_avoids_unrelated_and_malformed_numbers(self) -> None:
+        self.assertEqual(parse_visible_number("Published 2025 · 1.2K likes"), 1200)
+        self.assertEqual(parse_visible_number("1.234 lượt thích"), 1234)
+        self.assertEqual(parse_visible_number("2,5 triệu lượt xem"), 2_500_000)
+        self.assertEqual(parse_visible_number("Like this video: 1,234"), 1234)
+        self.assertIsNone(parse_visible_number("Post 2025"))
+        self.assertIsNone(parse_visible_number("1,23,4 views"))
+        self.assertEqual(parse_metric_value("Published 2025", "Like: 42"), 42)
+        self.assertIsNone(parse_metric_value("No count", "Post 2026"))
 
     def test_platform_url_validation_rejects_lookalike_hostnames(self) -> None:
         UIAnalyticsCollector._validate_url("facebook", "https://www.facebook.com/page/posts/1")

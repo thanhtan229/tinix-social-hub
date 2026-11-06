@@ -346,9 +346,9 @@ Bổ sung ngày 28-09-2026 theo yêu cầu tách file từng giai đoạn. Trạ
 | 05 | [Calendar và posting slots](plan_postiz_05_calendar_slots.md) | Phần calendar của M5 | Day/week/month/list, slot gợi ý và reschedule nhóm đạt; drag-drop hoãn |
 | 06 | [Facebook ảnh qua API](plan_postiz_06_facebook_photo_api.md) | Nhánh ảnh của M6 | 06A một ảnh và 06B album hai/ba ảnh live-verified trên Page Tinix; 4–10 ảnh chưa thử |
 | 07 | [Facebook video qua API](plan_postiz_07_facebook_video_api.md) | Nhánh video của M6 | Video Page thường và Reel đã live-verified trên Page Tinix |
-| 08 | [Instagram Official API](plan_postiz_08_instagram_api.md) | Nhánh Instagram của M6 | One-JPEG API publisher + private R2 delivery fixture-tested; chờ bucket/token, OAuth live và publish acceptance |
-| 09 | [Analytics định kỳ](plan_postiz_09_analytics_refresh.md) | Nhánh analytics của M6 | Đã có opt-in theo provider; Reel và Page Tinix đã thu thập thủ công qua API thật; scheduler tự động chưa bật/nghiệm thu live |
-| 10 | [Nghiệm thu vận hành và tài liệu](plan_postiz_10_acceptance_operations.md) | Đóng đợt core | Đã cập nhật ma trận bằng chứng, kết quả build/restart mới nhất và các blocker còn mở; không có live publish mới |
+| 08 | [Instagram Official API](plan_postiz_08_instagram_api.md) | M6 | One-image, two-image carousel, and Reel live-verified on @tannguyen3569; Story and other accounts remain unverified |
+| 09 | [Analytics định kỳ](plan_postiz_09_analytics_refresh.md) | Nhánh analytics của M6 | Scheduler Meta opt-in đã chạy live; ID Reel thiếu đã được đối soát, nhưng fetch hiện trả `meta_post_unavailable`; chưa có chu kỳ tự động thu metric bài đăng thành công được xác nhận |
+| 10 | [Operational acceptance and handoff](plan_postiz_10_acceptance_operations.md) | Core closeout | Fixture/UI/backup-restore accepted; live multi-Page Facebook text and one-image Instagram accepted within documented limits |
 
 ### Thứ tự giao đề xuất
 

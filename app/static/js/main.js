@@ -1,13 +1,13 @@
-import {api,toast} from "./api.js?v=1.0.44";
-import {refreshOverview} from "./overview.js?v=1.0.44";
-import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.44";
-import {initPosts,refreshPosts} from "./posts.js?v=1.0.44";
-import {initAnalytics,refreshAnalytics} from "./analytics.js?v=1.0.44";
-import {initAI,refreshBrands,refreshPromptTemplates} from "./ai.js?v=1.0.44";
-import {initCompose,refreshComposer} from "./compose.js?v=1.0.44";
-import {initJobs,refreshJobs} from "./jobs.js?v=1.0.44";
-import {initSettings,refreshProfileCleanupSettings} from "./settings.js?v=1.0.44";
-import {initIntegrations,refreshIntegrations} from "./integrations.js?v=1.0.44";
+import {api,toast} from "./api.js?v=1.0.50";
+import {refreshOverview} from "./overview.js?v=1.0.50";
+import {initAccounts,refreshAccounts} from "./accounts.js?v=1.0.50";
+import {initPosts,refreshPosts} from "./posts.js?v=1.0.50";
+import {initAnalytics,refreshAnalytics,refreshAnalyticsAfterScheduledRun} from "./analytics.js?v=1.0.50";
+import {initAI,refreshBrands,refreshPromptTemplates} from "./ai.js?v=1.0.50";
+import {initCompose,refreshComposer} from "./compose.js?v=1.0.50";
+import {initJobs,refreshJobs} from "./jobs.js?v=1.0.50";
+import {initSettings,refreshProfileCleanupSettings} from "./settings.js?v=1.0.50";
+import {initIntegrations,refreshIntegrations} from "./integrations.js?v=1.0.50";
 
 const refreshers={overview:refreshOverview,ai:async()=>{window.dispatchEvent(new Event("tinix:refresh-image-options"));await Promise.all([refreshBrands(),refreshPromptTemplates()]);},posts:refreshPosts,content:refreshPosts,compose:refreshComposer,jobs:async()=>{await refreshAccounts();await refreshJobs();},analytics:refreshAnalytics,accounts:refreshAccounts,settings:async()=>{await Promise.all([refreshOverview(),refreshProfileCleanupSettings(),refreshIntegrations()]);}};
 async function openTab(name){const targetTab=name==="content"||name==="media"?"posts":name;document.querySelectorAll(".tab").forEach(tab=>tab.classList.toggle("active",tab.id===`tab-${targetTab}`));document.querySelectorAll("#nav button").forEach(button=>button.classList.toggle("active",button.dataset.tab===targetTab));location.hash=targetTab;try{await refreshers[targetTab]?.();}catch(error){toast(error.message);}}
@@ -15,5 +15,5 @@ document.querySelectorAll("#nav button").forEach(button=>button.onclick=()=>open
 async function refreshShell(){try{const health=await api("/health");document.querySelector("#version").textContent=`v${health.version}`;const connection=document.querySelector("#connection");connection.className="connection ok";connection.textContent=`Backend ${health.version} · ${health.status}`;}catch(error){const connection=document.querySelector("#connection");connection.className="connection";connection.textContent="Mất kết nối backend";}}
 [initAccounts,initPosts,initAnalytics,initAI,initCompose,initJobs,initSettings,initIntegrations].forEach(fn=>{try{fn?.();}catch(err){console.error("Init module error:",err);}});
 refreshShell();openTab(location.hash.slice(1)||"overview");
-setInterval(()=>{const active=document.querySelector(".tab.active")?.id;if(active==="tab-overview")refreshOverview().catch(()=>{});if(active==="tab-jobs")refreshJobs().catch(()=>{});if(active==="tab-posts")refreshPosts().catch(()=>{});},10000);
+setInterval(()=>{const active=document.querySelector(".tab.active")?.id;if(active==="tab-overview")refreshOverview().catch(()=>{});if(active==="tab-jobs")refreshJobs().catch(()=>{});if(active==="tab-posts")refreshPosts().catch(()=>{});if(active==="tab-analytics")refreshAnalyticsAfterScheduledRun();},10000);
 

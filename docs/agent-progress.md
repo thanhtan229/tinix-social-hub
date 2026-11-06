@@ -1,6 +1,15 @@
 # Tiến độ agent — Tinix Social Hub
 
-Cập nhật: 28-10-2026. Bản ghi handoff ngắn theo TINIX V2.1 mục 14; không thay thế Git hay bằng chứng test.
+Cập nhật: 29-10-2026. Bản ghi handoff ngắn theo TINIX V2.1 mục 14; không thay thế Git hay bằng chứng test.
+
+## Current authoritative handoff - 2026-10-29
+
+The older dated notes below are retained as history; use this section for the current state.
+
+- Phase 10B fixture/UI/backup-restore acceptance is recorded complete in `docs/plan_postiz_10_acceptance_operations.md`. Live multi-Page text was verified for two Pages only; that does not extend acceptance to other formats or accounts.
+- Instagram Official API image, carousel, Reel, and Insights have live evidence for `@tannguyen3569`; Insights are point-in-time snapshots, not historical trends.
+- Read-only runtime check after the 2026-10-29 16:39 UTC restart: version 1.0.44, health/database OK, worker idle, scheduler running. Startup run attempted 0 posts and 0 channels with no failures; next scheduled run is 22:39 UTC.
+- A one-time read-only follow-up is scheduled for 22:55 UTC to inspect the Reel metrics and health after that run. No collection was triggered and no App Review request was sent.
 
 ## Milestone hiện tại
 Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Page (text, ảnh đơn, album 2–5 và 10 ảnh, video, Reel) và Instagram (ảnh đơn, carousel 2 và 5 ảnh, Reel). Git remote `origin` đã cấu hình và `master` đã push.
@@ -11,9 +20,10 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Instagram Login live: `@tannguyen3569` (Huong Vo). Ảnh đơn, carousel 2 và 5 ảnh, Reel (MP4 qua R2).
 - Publisher carousel Instagram (2–10 JPEG) có checkpoint khôi phục; publisher Reel (REELS, chờ xử lý theo khuyến nghị Meta: mỗi phút, tối đa 5 lần).
 - Làm mới token Instagram theo lịch: khi khởi động và mỗi 24 giờ, làm mới các token hết hạn trong 7 ngày. Token hiện tại hết hạn 26-12-2026.
-- Analytics Facebook: scheduler đã bật (24 giờ). Số người theo dõi Page đọc được. Bài thử mới đọc được likes/comments qua API.
+- Analytics scheduler: Meta và Instagram đã bật theo chu kỳ 6 giờ; xem mục Current authoritative handoff để biết lượt chạy kế tiếp.
 - AI: Gemini key mới trong app; key cũ đã thu hồi và xóa khỏi `.env`.
 - Build xác minh 28-10-2026: `BUILD.bat --no-bump` PASS 100%.
+- Xác minh lại 28-10-2026: full suite `unittest` PASS **367 tests** trên Python 3.13; 8 test mục tiêu và UI smoke cũng đã chạy riêng.
 
 ## Bài thử đã đăng (có thể xóa)
 - Album FB 5 ảnh: https://www.facebook.com/122132248658779083/posts/122137990040779083 (người dùng đã xóa; kiểm tra lại).
@@ -25,15 +35,16 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Reel IG: https://www.instagram.com/reel/DfBrpiNG402/
 
 ## Đang mở / chưa nghiệm thu
-- Analytics bài đăng cũ (album) vẫn `meta_permission_denied` / `meta_post_unavailable`; nguyên nhân chưa xác định. Chu kỳ scheduler đầu tiên (28-10 08:59) ghi 1 mục `needs_action`, chưa rõ lý do.
+- Analytics các bài cũ (album) vẫn có `meta_permission_denied` / `meta_post_unavailable`; snapshot đã lưu được giữ nguyên.
+- Đã đối soát release Facebook `b53a5db5-e01d-44a1-b20e-9a595656a98b` (Reel `1433112448754530`) bằng verification note lịch sử từ Graph API v26.0: video thuộc Page `1106784475845782`, `publish_status=published`, caption khớp. Đã ghi `external_release_id` bằng luồng `manual_connect`. Fetch metrics xác minh lại ngày 28-10 trả `meta_post_unavailable` (Graph code 100); không có metric mới và dữ liệu snapshot cũ được giữ. Release không còn đến hạn trong cooldown 24 giờ hiện tại.
 - Kết nối Đỗ Minh Duy: các Page đã thuộc Thanh229tan (chặn trùng binding là đúng). Kênh URL-based của Duy không phải Page số.
-- Đường thu Chrome (`method=chrome`): không đọc được số liệu bài; chưa dùng. Bộ chọn chưa khớp giao diện tiếng Việt.
+- Đường thu Chrome (`method=chrome`) đã đọc được metric trên bài ảnh của Page Tinix qua release `bb9278fe-295d-4374-8271-b8f6141f9a1e`: 1 metric likes, 1.900, source `ui_chrome:facebook-web-v1` (30-10-2026). Snapshot API trước đó cho cùng release trả likes=1 và comments=1; giữ nguồn/snapshot tách biệt, không cộng hoặc coi hai giá trị tương đương. Chưa xác minh thu comments/shares bằng Chrome.
 - Giới hạn Reel (dung lượng 100 MB, thời lượng) là giả định tự đặt, chưa xác minh từ tài liệu Meta.
 - Lỗi đã biết, chưa rõ nguyên nhân: lượt kết nối Instagram đầu bị `ig_exchange_token` trả code 100 "Unsupported request - method type: get"; lượt sau thành công.
 - Carousel IG 6–9 ảnh: chưa thử riêng (carousel 10 ảnh đã thành công).
-- Multi-Page (01): fixture/UI xong, chưa live. Giai đoạn 02–05: fixture/UI, chưa nghiệm thu live.
+- Multi-Page: fixture/UI và backup-restore acceptance được ghi nhận trong Giai đoạn 10B; live text post đã xác minh trên hai Page. Chưa suy rộng nghiệm thu sang định dạng hoặc account khác.
 - TikTok, X: scaffold, chưa bật.
-- NOT TESTED: lint/typecheck, CI Python 3.11, clean install, power loss, workload lớn.
+- Chưa kiểm tra: lint/typecheck, CI Python 3.11, clean install, power loss, workload lớn.
 
 ## Quyết định kỹ thuật
 - Test `test_snapshots_use_latest_value...`: ngày tương đối thay cho ngày cố định.
@@ -42,10 +53,20 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Làm mới token Instagram chỉ khi còn dưới 7 ngày; lỗi từng kết nối không dừng các kết nối khác.
 
 ## Runtime
-- Tinix đang chạy sau `START.bat` (health `ok`, version 1.0.44). Scheduler analytics Facebook đang BẬT.
+- Runtime hiện tại: xem mục Current authoritative handoff phía trên; PID và thời điểm scheduler là thông tin biến động, không giữ lại trong ghi chú lịch sử này.
 
 ## Bước tiếp theo đề xuất
-1. Theo dõi chu kỳ analytics Facebook tiếp theo (khoảng 28-10 08:59 +24 giờ) và kiểm tra `last_run`.
-2. Làm rõ nguyên nhân `meta_permission_denied` cho bài cũ, hoặc chấp nhận và bỏ qua bài cũ.
-3. Ghi lịch nhắc làm mới token Instagram trước 26-12-2026 (tự động đã có, nhưng cần kiểm tra kết nối vẫn "connected" trước đó).
-4. Tùy chọn, theo chỉ thị: carousel IG 6–10 ảnh; album FB 6–9 ảnh; Multi-Page live.
+1. Kiểm tra heartbeat sau chu kỳ Meta kế tiếp (17:39 UTC ngày 29-10); đối chiếu `last_run`, tình trạng fetch Reel và health. Không kích hoạt collection thủ công.
+2. Xác minh các bài cũ còn `meta_permission_denied`/`meta_post_unavailable`, hoặc chấp nhận giữ snapshot cũ không có metric mới.
+3. Giai đoạn 10B fixture/UI/backup-restore đã được ghi nhận; giữ giới hạn live acceptance ở hai Page đăng bài chữ cho đến khi có nhu cầu nghiệm thu thêm định dạng/account.
+4. Ghi lịch nhắc kiểm tra/làm mới token Instagram trước 26-12-2026 (tự động refresh đã có; cần xác minh kết nối vẫn `connected`).
+5. Tùy theo nhu cầu: carousel IG 6–9 ảnh, album FB 6–9 ảnh, kiểm tra giới hạn Reel theo tài liệu Meta và đường analytics Chrome. TikTok/X vẫn là scaffold.
+
+
+### Instagram Official API live acceptance - 2026-10-29
+
+In this continuation, the connected profile `@tannguyen3569` (`17841425556322045`) passed one-image, two-image carousel, and Reel live verification through Instagram Login Official API. New evidence: one image job `50506fdd-294c-49ed-a337-7275fe6b3a37`, permalink https://www.instagram.com/p/DfD2C-mGG_y/; carousel job `7ff70006-42ca-4bbe-b7fd-c4b530130833`, permalink https://www.instagram.com/p/DfD3FAMCQzP/; Reel job `ba9a41f1-5745-4ff1-aef7-de719c8d6b23`, permalink https://www.instagram.com/reel/DfD3jxTnSTF/. Graph verified corresponding media types and profile identity. Stories remain conditional: verify current Meta support for this Instagram Login flow and account entitlement before adding it.
+
+Instagram Insights was verified live on 2026-10-29 for `@tannguyen3569` (`17841425556322045`). The connected token includes `instagram_business_manage_insights`; a Reel fetch succeeded with reach=1, likes=2, comments=2, saved=0, shares=0, and total_interactions=4. Account Insights also succeeded with a reach snapshot of 0. These are point-in-time snapshots, not historical trends.
+
+Next: let the opted-in scheduler collect the remaining available releases; the one-shot check is scheduled after the next cycle. No App Review request was made.

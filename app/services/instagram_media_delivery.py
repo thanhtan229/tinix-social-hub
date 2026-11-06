@@ -83,7 +83,7 @@ class InstagramMediaDelivery:
         if size <= 0 or size > allowed[1]:
             if mime_type.lower() == "image/jpeg":
                 raise InstagramMediaDeliveryError("Ảnh Instagram phải lớn hơn 0 và không vượt 8 MB.")
-            raise InstagramMediaDeliveryError("Video Instagram phải lớn hơn 0 và không vượt 100 MB.")
+            raise InstagramMediaDeliveryError("Video Instagram phải lớn hơn 0 và không vượt giới hạn nội bộ 100 MB của Tinix.")
         digest = hashlib.sha256()
         with path.open("rb") as source:
             while chunk := source.read(1024 * 1024):

@@ -60,7 +60,7 @@ from app.services.platform_accounts import PlatformAccountService
 from app.services.profile_transfer import ChromeProfileTransferService
 from app.services.recovery_bundle import RecoveryBundleService
 from app.services.ui_analytics import UIAnalyticsCollector
-from app.services.api_analytics import MetaAPIAnalyticsCollector, YouTubeAPIAnalyticsCollector
+from app.services.api_analytics import InstagramAPIAnalyticsCollector, MetaAPIAnalyticsCollector, YouTubeAPIAnalyticsCollector
 from app.services.analytics_scheduler import AnalyticsRefreshScheduler
 from app.services.webhooks import WebhookDispatcher
 from app.services.instagram_media_delivery import InstagramMediaDelivery
@@ -114,6 +114,7 @@ class Services:
     analytics_collector: UIAnalyticsCollector
     api_analytics_collector: YouTubeAPIAnalyticsCollector
     meta_analytics_collector: MetaAPIAnalyticsCollector
+    instagram_analytics_collector: InstagramAPIAnalyticsCollector
     analytics_scheduler: AnalyticsRefreshScheduler
     webhook_dispatcher: WebhookDispatcher
     storage: ManagedStorage
@@ -194,8 +195,12 @@ def build_services(settings: Settings) -> Services:
     meta_analytics_collector = MetaAPIAnalyticsCollector(
         targets, publications, analytics, meta_accounts, provider_target_connections,
     )
+    instagram_analytics_collector = InstagramAPIAnalyticsCollector(
+        targets, publications, analytics, provider_connections, instagram_accounts,
+    )
     analytics_scheduler = AnalyticsRefreshScheduler(
         app_settings, analytics, api_analytics_collector, meta_analytics_collector,
+        instagram_analytics_collector, analytics_collector,
     )
     webhook_dispatcher = WebhookDispatcher(webhooks)
     ai_studio = AIContentStudioService(ai, ai_generations, brands, contents, prompts, media)
@@ -222,6 +227,7 @@ def build_services(settings: Settings) -> Services:
         analytics_collector=analytics_collector, webhook_dispatcher=webhook_dispatcher,
         api_analytics_collector=api_analytics_collector,
         meta_analytics_collector=meta_analytics_collector,
+        instagram_analytics_collector=instagram_analytics_collector,
         analytics_scheduler=analytics_scheduler,
         storage=storage, secrets=secret_store, media=media,
         ai_studio=ai_studio, image_generation=image_generation, scheduling=scheduling, profile_transfer=profile_transfer, recovery=recovery,

@@ -19,6 +19,13 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from app import __version__
+from app.core.secrets import SecretProtector
+from app.services.ui_analytics import (
+    FACEBOOK_METRIC_SCOPE_INDEX_SCRIPT,
+    METRIC_SELECTORS,
+    parse_metric_value,
+    parse_visible_number,
+)
 
 
 def find_chrome() -> Path | None:
@@ -29,7 +36,258 @@ def find_chrome() -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
+class FacebookMetricScopeTests(unittest.TestCase):
+    def test_reads_target_post_and_fails_closed_when_scope_is_missing(self) -> None:
+        chrome = find_chrome()
+        if not chrome:
+            self.skipTest("Google Chrome is not installed")
+
+        caption = "Tinix regression target post"
+        html = """
+        <div role="article">
+          <p>Unrelated feed post with many reactions</p>
+          <button aria-label="Like: 8.5K people">8.5K</button>
+          <button aria-label="Comment on unrelated post, 2 comments">2</button>
+        </div>
+        <div role="article">
+          <p>Tinix regression target post</p>
+          <button aria-label="Th\u00edch: 1 ng\u01b0\u1eddi">1</button>
+          <button aria-label="B\u00e0y t\u1ecf c\u1ea3m x\u00fac Th\u00edch v\u1ec1 b\u00e0i vi\u1ebft">Like</button>
+          <button aria-label="Like: 1 person">1</button>
+          <button aria-label="Comment on target post, 3 comments">3</button>
+        </div>
+        """
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(chrome))
+            try:
+                page = browser.new_page()
+                page.set_content(html)
+                scope_index = page.evaluate(FACEBOOK_METRIC_SCOPE_INDEX_SCRIPT, caption)
+                self.assertGreaterEqual(scope_index, 0)
+                scope = page.locator("div").nth(scope_index)
+                self.assertIn(caption, scope.inner_text())
+                self.assertNotIn("Unrelated feed post", scope.inner_text())
+                count = scope.locator(METRIC_SELECTORS["facebook"]["likes"]).first
+                text = " ".join(filter(None, (count.text_content(), count.get_attribute("aria-label"))))
+                self.assertEqual(parse_visible_number(text), 1)
+                comments = scope.locator(METRIC_SELECTORS["facebook"]["comments"]).first
+                comment_text = " ".join(filter(None, (comments.text_content(), comments.get_attribute("aria-label"))))
+                self.assertEqual(parse_visible_number(comment_text), 3)
+                self.assertEqual(page.evaluate(FACEBOOK_METRIC_SCOPE_INDEX_SCRIPT, "caption not present"), -1)
+            finally:
+                browser.close()
+
+    def test_target_post_scope_is_found_without_an_engagement_count(self) -> None:
+        chrome = find_chrome()
+        if not chrome:
+            self.skipTest("Google Chrome is not installed")
+
+        caption = "Tinix post with no visible engagement summary"
+        html = """
+        <main>
+          <div role="article">
+            <p>Unrelated feed post</p>
+            <button aria-label="Th\u00edch: 6 ng\u01b0\u1eddi">6</button>
+            <button aria-label="Comment on Gia Linh's post, 2 comments">2</button>
+          </div>
+          <div role="dialog">
+            <div>
+              <p>Tinix post with no visible engagement summary</p>
+              <button aria-label="B\u00e0y t\u1ecf c\u1ea3m x\u00fac Th\u00edch v\u1ec1 b\u00e0i vi\u1ebft">Like</button>
+              <p>Ch\u01b0a c\u00f3 b\u00ecnh lu\u1eadn n\u00e0o</p>
+            </div>
+          </div>
+        </main>
+        """
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(chrome))
+            try:
+                page = browser.new_page()
+                page.set_content(html)
+                scope_index = page.evaluate(FACEBOOK_METRIC_SCOPE_INDEX_SCRIPT, caption)
+                self.assertGreaterEqual(scope_index, 0)
+                scope = page.locator("div").nth(scope_index)
+                self.assertIn(caption, scope.inner_text())
+                self.assertNotIn("Gia Linh", scope.inner_text())
+                self.assertEqual(scope.locator(METRIC_SELECTORS["facebook"]["likes"]).count(), 0)
+                self.assertEqual(scope.locator(METRIC_SELECTORS["facebook"]["comments"]).count(), 0)
+            finally:
+                browser.close()
+
+    def test_facebook_share_count_parses_vietnamese_label_and_skips_action(self) -> None:
+        chrome = find_chrome()
+        if not chrome:
+            self.skipTest("Google Chrome is not installed")
+
+        caption = "Tinix share count regression post"
+        html = """
+        <div>
+          <p>Tinix share count regression post</p>
+          <button aria-label="Bày tỏ cảm xúc Thích về bài viết">Like</button>
+          <button aria-label="Chia sẻ, gửi nội dung này cho bạn bè">Chia sẻ</button>
+          <div aria-label="Chia sẻ, gửi nội dung này cho bạn bè">1</div>
+        </div>
+        """
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(chrome))
+            try:
+                page = browser.new_page()
+                page.set_content(html)
+                scope_index = page.evaluate(FACEBOOK_METRIC_SCOPE_INDEX_SCRIPT, caption)
+                self.assertGreaterEqual(scope_index, 0)
+                scope = page.locator("div").nth(scope_index)
+                shares = scope.locator(METRIC_SELECTORS["facebook"]["shares"])
+                parsed = None
+                for index in range(shares.count()):
+                    candidate = shares.nth(index)
+                    parsed = parse_metric_value(candidate.text_content(), candidate.get_attribute("aria-label"))
+                    if parsed is not None:
+                        break
+                self.assertEqual(parsed, 1)
+            finally:
+                browser.close()
+
+
+class MultiPlatformMetricSelectorTests(unittest.TestCase):
+    def test_supported_platform_selectors_find_their_expected_metrics(self) -> None:
+        chrome = find_chrome()
+        if not chrome:
+            self.skipTest("Google Chrome is not installed")
+
+        fixtures = {
+            "instagram": (
+                "<section><span>1,234 likes</span></section><ul><li role='menuitem'>25 comments</li></ul>",
+                {"likes": 1234, "comments": 25},
+            ),
+            "tiktok": (
+                "<strong data-e2e='like-count'>1.2K</strong>"
+                "<strong data-e2e='comment-count'>34</strong>"
+                "<strong data-e2e='share-count'>56</strong>"
+                "<strong data-e2e='video-views'>7.8K</strong>",
+                {"likes": 1200, "comments": 34, "shares": 56, "views": 7800},
+            ),
+            "youtube": (
+                "<div id='info'><span>9,876 views</span></div>"
+                "<div id='segmented-like-button'><button aria-label='Like this video: 432'>432</button></div>"
+                "<div id='count'><span class='count-text'>87 comments</span></div>",
+                {"views": 9876, "likes": 432, "comments": 87},
+            ),
+            "x": (
+                "<div data-testid='like'><span>123</span></div>"
+                "<div data-testid='reply'><span>45</span></div>"
+                "<div data-testid='retweet'><span>67</span></div>"
+                "<a href='/user/status/1/analytics'><span>8.9K</span></a>",
+                {"likes": 123, "comments": 45, "shares": 67, "views": 8900},
+            ),
+        }
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(chrome))
+            try:
+                page = browser.new_page()
+                for platform, (html, expected_metrics) in fixtures.items():
+                    with self.subTest(platform=platform):
+                        page.set_content(html)
+                        for metric, expected in expected_metrics.items():
+                            locator = page.locator(METRIC_SELECTORS[platform][metric]).first
+                            self.assertGreater(locator.count(), 0, f"{platform}.{metric} selector found no element")
+                            text = " ".join(filter(None, (locator.text_content(), locator.get_attribute("aria-label"))))
+                            self.assertEqual(parse_visible_number(text), expected, f"{platform}.{metric}")
+            finally:
+                browser.close()
+
+    def test_elements_without_numeric_counts_are_excluded(self) -> None:
+        chrome = find_chrome()
+        if not chrome:
+            self.skipTest("Google Chrome is not installed")
+
+        fixtures = {
+            "instagram": (
+                "<section><span>likes unavailable</span></section>"
+                "<ul><li role='menuitem'>comments unavailable</li></ul>",
+                ("likes", "comments"),
+            ),
+            "tiktok": (
+                "<i data-e2e='like-count'>Loading</i><i data-e2e='comment-count'>—</i>"
+                "<i data-e2e='share-count'>Share</i><i data-e2e='video-views'>Views unavailable</i>",
+                ("likes", "comments", "shares", "views"),
+            ),
+            "youtube": (
+                "<div id='info'><span>Views unavailable</span></div>"
+                "<div id='like-button'><button aria-label='Like this video'>Like</button></div>"
+                "<div id='comments-header'><span id='count'>Comments unavailable</span></div>",
+                ("views", "likes", "comments"),
+            ),
+            "x": (
+                "<div data-testid='like'><span>Like</span></div>"
+                "<div data-testid='reply'><span>Reply</span></div>"
+                "<div data-testid='retweet'><span>Repost</span></div>"
+                "<a href='/user/status/1/analytics'><span>Analytics</span></a>",
+                ("likes", "comments", "shares", "views"),
+            ),
+        }
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(chrome))
+            try:
+                page = browser.new_page()
+                for platform, (html, metrics) in fixtures.items():
+                    with self.subTest(platform=platform):
+                        page.set_content(html)
+                        values = {}
+                        for metric in metrics:
+                            locator = page.locator(METRIC_SELECTORS[platform][metric]).first
+                            self.assertGreater(locator.count(), 0, f"{platform}.{metric} selector found no element")
+                            value = parse_metric_value(locator.text_content(), locator.get_attribute("aria-label"))
+                            if value is not None:
+                                values[metric] = value
+                        self.assertEqual(values, {})
+            finally:
+                browser.close()
+
+
 class FrontendPlaywrightSmokeTests(unittest.TestCase):
+    def test_tracked_post_unsupported_is_distinct_from_zero_metrics(self) -> None:
+        tracked_posts = [
+            {
+                "id": "unsupported-post", "target_id": "page-1", "account_id": "account-1",
+                "platform": "facebook", "target_name": "Tinix Page", "title": "No metrics post",
+                "external_url": "https://www.facebook.com/example/posts/1/", "metrics": [],
+                "latest_run": {"status": "unsupported", "started_at": "2026-10-31T00:00:00Z",
+                               "message": "Facebook does not expose metrics for this post."},
+            },
+            {
+                "id": "zero-metrics-post", "target_id": "page-1", "account_id": "account-1",
+                "platform": "facebook", "target_name": "Tinix Page", "title": "Zero likes post",
+                "external_url": "https://www.facebook.com/example/posts/2/",
+                "metrics": [{"metric_key": "likes", "value": 0}],
+                "latest_run": {"status": "succeeded", "started_at": "2026-10-31T00:01:00Z",
+                               "metrics_count": 1},
+            },
+        ]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, executable_path=str(self.chrome))
+            try:
+                page = browser.new_page(viewport={"width": 1365, "height": 900})
+                page.route(
+                    "**/api/analytics/tracked-posts",
+                    lambda route: route.fulfill(
+                        status=200, content_type="application/json",
+                        body=json.dumps(tracked_posts, ensure_ascii=False),
+                    ),
+                )
+                response = page.goto(f"http://127.0.0.1:{self.port}/", wait_until="networkidle")
+                self.assertEqual(response.status, 200)
+                page.locator('#nav button[data-tab="analytics"]').click()
+                rows = page.locator("#trackedPosts .status-row")
+                rows.nth(0).get_by_text("Facebook không cung cấp metrics cho bài này", exact=False).wait_for()
+                self.assertIn("dữ liệu trống không có nghĩa là 0", rows.nth(0).inner_text())
+                self.assertIn("Facebook không hỗ trợ metrics bài này", rows.nth(0).inner_text())
+                self.assertIn("Lượt thích: 0", rows.nth(1).inner_text())
+                self.assertIn("Đã thu thập metrics", rows.nth(1).inner_text())
+            finally:
+                browser.close()
+
     def test_cross_origin_browser_form_cannot_create_backup(self) -> None:
         target = f"http://127.0.0.1:{self.port}"
         with urllib.request.urlopen(target + "/api/database/backups") as response:
@@ -314,15 +572,22 @@ class FrontendPlaywrightSmokeTests(unittest.TestCase):
                 "bundle_format": "tinix-profiles",
                 "format_version": 1,
                 "source_app": "Tinix UI regression test",
+                "contains_account_secrets": True,
+                "credential_protection": "windows_dpapi",
                 "accounts": [{
                     "account_name": "Imported UI Account",
                     "platform": "facebook",
                     "username": "ui-user",
                     "email": "ui@example.com",
-                    "password": "visible-password",
-                    "secret_2fa": "VISIBLE2FA",
-                    "email_pass": "visible-mail-password",
-                    "cookie": "visible-cookie",
+                    "credentials_protected": {
+                        key: SecretProtector().protect_secret(value)
+                        for key, value in {
+                            "password": "visible-password",
+                            "secret_2fa": "VISIBLE2FA",
+                            "email_pass": "visible-mail-password",
+                            "cookie": "visible-cookie",
+                        }.items()
+                    },
                     "profile_path": "profiles/0001",
                 }],
             }

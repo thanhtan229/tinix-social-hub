@@ -914,13 +914,42 @@ export async function refreshAccounts() {
     document.querySelectorAll("[data-profile-action]").forEach(button => button.disabled = button.dataset.profileAction !== "import" && !accounts.length);
     const helpEl = document.querySelector("#profileHelp");
     if (helpEl) {
-      helpEl.textContent = accounts.length ? "Export mặc định chỉ chứa thông tin account và phiên Chrome. Có thể chọn kèm credential được bảo vệ bằng Windows DPAPI của tài khoản hiện tại." : "Import file .tinix-profiles.zip để tạo toàn bộ account và phiên Chrome trong một lần.";
+      helpEl.textContent = accounts.length ? "Export mặc định chỉ chứa thông tin account và phiên Chrome. Có thể chọn kèm credential được mã hóa bằng mật khẩu gói và bảo vệ lại bằng Windows DPAPI trên máy đích." : "Import file .tinix-profiles.zip hoặc .tinix-profiles.enc để tạo account và phiên Chrome trong một lần.";
     }
     renderAccountList();
     renderTargetList();
   } catch (error) {
     console.error("Lỗi khi tải danh sách accounts:", error);
     toast(`Không thể tải accounts: ${error.message}`);
+  }
+}
+
+function resetProfileExportDialog() {
+  const dialog = document.querySelector("#profileExportDialog");
+  if (!dialog) return;
+  const form = dialog.querySelector("form");
+  if (form) form.reset();
+  const credsCheck = document.querySelector("#profileExportIncludeCredentials");
+  const passwordInput = document.querySelector("#profileExportPassword");
+  const passwordHint = document.querySelector("#profileExportPasswordHint");
+  const status = document.querySelector("#profileExportStatus");
+  if (credsCheck) {
+    credsCheck.checked = false;
+    credsCheck.disabled = false;
+  }
+  if (passwordInput) {
+    passwordInput.value = "";
+    passwordInput.disabled = false;
+    passwordInput.required = false;
+    passwordInput.removeAttribute("minlength");
+    passwordInput.removeAttribute("aria-invalid");
+    passwordInput.removeAttribute("aria-required");
+    passwordInput.setCustomValidity("");
+  }
+  if (passwordHint) passwordHint.textContent = "(tùy chọn)";
+  if (status) {
+    status.textContent = "";
+    status.className = "operation-status hidden";
   }
 }
 
@@ -937,7 +966,7 @@ async function runProfileAction(action, account = null) {
   if (action === "export") {
     if (!store.accounts.length) { toast("App chưa có account để Export."); return false; }
     const dialog = document.querySelector("#profileExportDialog");
-    dialog.querySelector("form").reset();
+    resetProfileExportDialog();
     dialog.showModal();
     setTimeout(() => document.querySelector("#profileExportPassword")?.focus(), 0);
     return false;
@@ -1268,30 +1297,115 @@ export function initAccounts() {
       passwordInput.disabled = false;
     }
   };
-  document.querySelector("#profileExportForm").onsubmit = async event => {
+  const exportDialog = document.querySelector("#profileExportDialog");
+  const exportForm = document.querySelector("#profileExportForm");
+  const exportCredsCheck = document.querySelector("#profileExportIncludeCredentials");
+  const exportPasswordInput = document.querySelector("#profileExportPassword");
+  const exportPasswordHint = document.querySelector("#profileExportPasswordHint");
+  const exportStatus = document.querySelector("#profileExportStatus");
+
+  if (exportCredsCheck) {
+    exportCredsCheck.onchange = () => {
+      if (exportStatus) {
+        exportStatus.textContent = "";
+        exportStatus.className = "operation-status hidden";
+      }
+      if (exportPasswordInput) {
+        exportPasswordInput.removeAttribute("aria-invalid");
+        exportPasswordInput.setCustomValidity("");
+        if (exportCredsCheck.checked) {
+          exportPasswordInput.required = true;
+          exportPasswordInput.minLength = 12;
+          exportPasswordInput.setAttribute("minlength", "12");
+          exportPasswordInput.setAttribute("aria-required", "true");
+        } else {
+          exportPasswordInput.required = false;
+          exportPasswordInput.removeAttribute("minlength");
+          exportPasswordInput.removeAttribute("aria-required");
+        }
+      }
+      if (exportPasswordHint) {
+        exportPasswordHint.textContent = exportCredsCheck.checked
+          ? "(bắt buộc khi kèm credential, tối thiểu 12 ký tự)"
+          : "(tùy chọn)";
+      }
+    };
+  }
+
+  if (exportPasswordInput) {
+    exportPasswordInput.oninput = () => {
+      exportPasswordInput.removeAttribute("aria-invalid");
+      exportPasswordInput.setCustomValidity("");
+      if (exportStatus && exportStatus.classList.contains("error")) {
+        exportStatus.textContent = "";
+        exportStatus.className = "operation-status hidden";
+      }
+    };
+  }
+
+  if (exportDialog) {
+    exportDialog.addEventListener("close", resetProfileExportDialog);
+  }
+
+  exportForm.onsubmit = async event => {
     event.preventDefault();
-    const dialog = document.querySelector("#profileExportDialog");
-    const includeCredentials = document.querySelector("#profileExportIncludeCredentials").checked;
-    const password = document.querySelector("#profileExportPassword").value;
+    const includeCredentials = !!exportCredsCheck?.checked;
+    const password = exportPasswordInput?.value || "";
     const submitButton = document.querySelector("#confirmProfileExport");
+    const cancelButton = document.querySelector("#cancelProfileExport");
     const actionButton = document.querySelector('[data-profile-action="export"]');
+
+    if (includeCredentials && (!password || password.trim().length < 12)) {
+      const errorMsg = !password
+        ? "Mật khẩu mã hóa là bắt buộc khi kèm credential (tối thiểu 12 ký tự)."
+        : "Mật khẩu mã hóa phải có ít nhất 12 ký tự khi kèm credential.";
+      if (exportStatus) {
+        exportStatus.className = "operation-status error";
+        exportStatus.textContent = errorMsg;
+      }
+      if (exportPasswordInput) {
+        exportPasswordInput.setAttribute("aria-invalid", "true");
+        exportPasswordInput.focus();
+      }
+      return;
+    }
+
+    if (exportStatus) {
+      exportStatus.textContent = "";
+      exportStatus.className = "operation-status hidden";
+    }
+
     const originalLabel = submitButton.textContent;
     submitButton.disabled = true;
     submitButton.textContent = "Đang Export…";
+    if (cancelButton) cancelButton.disabled = true;
+    if (exportCredsCheck) exportCredsCheck.disabled = true;
+    if (exportPasswordInput) exportPasswordInput.disabled = true;
     if (actionButton) actionButton.disabled = true;
     toast("Đang Export toàn bộ profile. Vui lòng chờ, không đóng app...");
     try {
       const result = await api("/profiles/export", {
-        method:"POST", body:JSON.stringify({include_credentials:includeCredentials, password:password || null}),
+        method: "POST",
+        body: JSON.stringify({
+          include_credentials: includeCredentials,
+          password: password || null,
+        }),
       });
-      dialog.close();
-      event.target.reset();
+      exportDialog.close();
+      resetProfileExportDialog();
       toast(`Đã Export ${result.accounts_exported} phiên (${formatBytes(result.bytes_copied)})${result.package_encrypted ? "; toàn bộ gói đã được mã hóa" : ""}${result.credentials_included ? "; credential đã được bảo vệ" : "; không kèm credential"} tới ${result.archive_path}`);
     } catch (error) {
+      if (exportStatus) {
+        exportStatus.className = "operation-status error";
+        exportStatus.textContent = `Export thất bại: ${error.message}`;
+      }
       toast(error.message);
     } finally {
       submitButton.disabled = false;
       submitButton.textContent = originalLabel;
+      if (cancelButton) cancelButton.disabled = false;
+      if (exportCredsCheck) exportCredsCheck.disabled = false;
+      if (exportPasswordInput) exportPasswordInput.disabled = false;
       if (actionButton) actionButton.disabled = !store.accounts.length;
     }
   };

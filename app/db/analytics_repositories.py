@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -414,18 +415,30 @@ class AnalyticsRepository:
         with self.db.connection() as connection:
             return [row[0] for row in connection.execute(
                 """SELECT r.id FROM publication_releases r
+                   JOIN publishing_targets t ON t.id=r.target_id
                    WHERE r.platform=?
                      AND r.status IN ('succeeded','unknown_result')
                      AND r.verification_status='verified'
                      AND (r.external_release_id IS NOT NULL OR r.external_url IS NOT NULL)
+                     AND (? != 'api_meta_graph' OR EXISTS (
+                         SELECT 1 FROM provider_target_connections b
+                         JOIN account_connections c ON c.id=b.connection_id
+                         WHERE b.target_id=t.id AND b.provider='meta' AND b.status='connected'
+                           AND b.external_target_id=t.external_id
+                           AND c.provider='meta' AND c.transport='official_api' AND c.status='connected'
+                     ))
                      AND NOT EXISTS (
                          SELECT 1 FROM analytics_fetch_runs f
                          WHERE f.release_id=r.id AND f.source=? AND f.started_at>=?
                      )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM analytics_fetch_runs f
+                         WHERE f.release_id=r.id AND f.source=? AND f.status='unavailable'
+                     )
                    ORDER BY COALESCE((SELECT MAX(f.started_at) FROM analytics_fetch_runs f WHERE f.release_id=r.id AND f.source=?),''),
                             COALESCE(r.published_at,r.updated_at) DESC
                    LIMIT ?""",
-                (platform, source, cutoff, source, max(1, min(limit, 50))),
+                (platform, source, source, cutoff, source, source, max(1, min(limit, 50))),
             )]
 
     def due_channel_target_ids(
@@ -437,13 +450,20 @@ class AnalyticsRepository:
             return [row[0] for row in connection.execute(
                 """SELECT t.id FROM publishing_targets t
                    WHERE t.platform=? AND t.enabled=1 AND t.access_status IN ('accessible','unknown')
+                     AND (? != 'api_meta_graph' OR EXISTS (
+                         SELECT 1 FROM provider_target_connections b
+                         JOIN account_connections c ON c.id=b.connection_id
+                         WHERE b.target_id=t.id AND b.provider='meta' AND b.status='connected'
+                           AND b.external_target_id=t.external_id
+                           AND c.provider='meta' AND c.transport='official_api' AND c.status='connected'
+                     ))
                      AND NOT EXISTS (
                          SELECT 1 FROM channel_analytics_fetch_runs f
                          WHERE f.target_id=t.id AND f.source=? AND f.started_at>=?
                      )
                    ORDER BY COALESCE((SELECT MAX(f.started_at) FROM channel_analytics_fetch_runs f WHERE f.target_id=t.id AND f.source=?),''),t.name
                    LIMIT ?""",
-                (platform, source, cutoff, source, max(1, min(limit, 50))),
+                (platform, source, source, cutoff, source, max(1, min(limit, 50))),
             )]
 
     def connect_release(
@@ -478,3 +498,137 @@ class AnalyticsRepository:
                 connection.execute("ROLLBACK"); raise
         with self.db.connection() as connection:
             return dict(connection.execute("SELECT * FROM publication_releases WHERE id=?", (release_id,)).fetchone())
+
+    def add_tracked_post(self, target_id: str, platform: str, external_url: str, title: str = "") -> dict[str, Any]:
+        post_id, now = str(uuid.uuid4()), utc_now()
+        with self.db.connection() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO tracked_posts(id,target_id,platform,external_url,title,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (post_id, target_id, platform, external_url, title.strip()[:240], now, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed" in str(exc):
+                    raise ValueError("Bài viết này đã có trong danh sách theo dõi của Page.") from exc
+                raise
+        return self.get_tracked_post(post_id)
+
+    def get_tracked_post(self, post_id: str) -> dict[str, Any] | None:
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT p.*,t.name AS target_name,t.account_id FROM tracked_posts p "
+                "JOIN publishing_targets t ON t.id=p.target_id WHERE p.id=?", (post_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_tracked_posts(self, target_id: str | None = None) -> list[dict[str, Any]]:
+        clauses, parameters = [], []
+        if target_id:
+            clauses.append("p.target_id=?")
+            parameters.append(target_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                "SELECT p.*,t.name AS target_name,t.account_id FROM tracked_posts p "
+                "JOIN publishing_targets t ON t.id=p.target_id" + where + " ORDER BY p.created_at DESC", parameters,
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["metrics"] = [dict(metric) for metric in connection.execute(
+                    "SELECT * FROM tracked_post_metrics WHERE tracked_post_id=? ORDER BY metric_date DESC,metric_key",
+                    (item["id"],),
+                )]
+                run = connection.execute(
+                    "SELECT * FROM tracked_post_fetch_runs WHERE tracked_post_id=? ORDER BY started_at DESC LIMIT 1",
+                    (item["id"],),
+                ).fetchone()
+                item["latest_run"] = dict(run) if run else None
+                result.append(item)
+        return result
+
+    def remove_tracked_post(self, post_id: str) -> bool:
+        with self.db.connection() as connection:
+            cursor = connection.execute("DELETE FROM tracked_posts WHERE id=?", (post_id,))
+            return cursor.rowcount > 0
+
+    def due_tracked_post_ids(self, cooldown_hours: int, limit: int) -> list[str]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)).isoformat()
+        bounded_limit = max(1, min(int(limit), 50))
+        with self.db.connection() as connection:
+            rows = connection.execute(
+                "SELECT p.id, MAX(r.started_at) AS last_run FROM tracked_posts p "
+                "LEFT JOIN tracked_post_fetch_runs r ON r.tracked_post_id=p.id "
+                "GROUP BY p.id HAVING last_run IS NULL OR last_run < ? "
+                "ORDER BY last_run IS NOT NULL, last_run, p.created_at LIMIT ?",
+                (cutoff, bounded_limit),
+            ).fetchall()
+        return [str(row["id"]) for row in rows]
+
+    def start_tracked_post_run(self, post_id: str, source: str) -> str:
+        run_id = str(uuid.uuid4())
+        stale_before = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if not connection.execute("SELECT 1 FROM tracked_posts WHERE id=?", (post_id,)).fetchone():
+                connection.execute("ROLLBACK")
+                raise KeyError(post_id)
+            try:
+                active = connection.execute(
+                    "SELECT 1 FROM tracked_post_fetch_runs WHERE tracked_post_id=? AND source=? AND status='running' AND started_at>=? LIMIT 1",
+                    (post_id, source, stale_before),
+                ).fetchone()
+                if active:
+                    raise AnalyticsFetchInProgress("Đang cập nhật metrics cho bài này; hãy đợi lượt đó hoàn tất.")
+                connection.execute(
+                    "INSERT INTO tracked_post_fetch_runs(id,tracked_post_id,status,source,started_at) VALUES(?,?,?,?,?)",
+                    (run_id, post_id, "running", source, utc_now()),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return run_id
+
+    def finish_tracked_post_run(self, run_id: str, status: str, count: int, message: str | None = None) -> None:
+        with self.db.connection() as connection:
+            connection.execute(
+                "UPDATE tracked_post_fetch_runs SET status=?,metrics_count=?,message=?,finished_at=? WHERE id=?",
+                (status, count, message, utc_now(), run_id),
+            )
+
+    def upsert_tracked_post(self, post_id: str, values: dict[str, float], *, metric_date: str,
+                            timezone_name: str, source: str) -> list[dict[str, Any]]:
+        now = utc_now()
+        with self.db.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if not connection.execute("SELECT 1 FROM tracked_posts WHERE id=?", (post_id,)).fetchone():
+                connection.execute("ROLLBACK")
+                raise KeyError(post_id)
+            try:
+                for key, value in values.items():
+                    connection.execute(
+                        "INSERT INTO tracked_post_metrics(id,tracked_post_id,metric_key,metric_date,timezone,value,source,fetched_at,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
+                        "ON CONFLICT(tracked_post_id,metric_key,metric_date,source) DO UPDATE SET timezone=excluded.timezone,value=excluded.value,fetched_at=excluded.fetched_at",
+                        (str(uuid.uuid4()), post_id, key, metric_date, timezone_name, float(value), source, now, now),
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        with self.db.connection() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM tracked_post_metrics WHERE tracked_post_id=? ORDER BY metric_date DESC,metric_key", (post_id,),
+            )]
+
+    def tracked_post_runs(self, post_id: str) -> list[dict[str, Any]]:
+        with self.db.connection() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM tracked_post_fetch_runs WHERE tracked_post_id=? ORDER BY started_at DESC LIMIT 20", (post_id,),
+            )]
+
+    def tracked_post_metrics(self, post_id: str) -> list[dict[str, Any]]:
+        with self.db.connection() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM tracked_post_metrics WHERE tracked_post_id=? ORDER BY metric_date DESC,metric_key", (post_id,),
+            )]

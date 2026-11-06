@@ -64,3 +64,18 @@ Tiếp theo: [giai đoạn 10](plan_postiz_10_acceptance_operations.md).
 - Ngày 29-09-2026, thu thập thủ công trên Reel thử của Page Tinix đã phát hiện Graph video từ chối trường `shares` (code 100). Collector nay phân nhánh theo format: post/ảnh dùng `shares`, video/Reel dùng `views`; cả hai dùng summary của likes/comments khi Meta trả. Không tạo giá trị 0 thay cho metric vắng mặt. Phản hồi chuẩn hóa permalink tương đối thành URL Facebook đầy đủ.
 - Sau sửa, live fetch Reel `1329975209041799` trả `succeeded`, lưu `likes=0`, `comments=0`, `views=0` với source `api_meta_graph`; đây là giá trị Meta trả tại thời điểm kiểm tra, không phải số lịch sử. Live fetch Page Tinix `1106784475845782` cũng `succeeded`, lưu `followers=0` và `page_likes=0`. Scheduler tự động vẫn mặc định opt-in, chưa bật trên Page người dùng.
 - Targeted regression tests và full `BUILD.bat --no-bump` đạt 100%; backend mới PID 18992, `/api/health` `ok`, database `ok`, worker idle, không warnings. Chưa nghiệm thu một chu kỳ scheduler live tự động.
+
+### Kiểm tra scheduler live — 28-10-2026
+
+- Runtime có `enabled=false`, `meta_enabled=true`, chu kỳ 24 giờ; scheduler Meta vì vậy đang opt-in. Lần chạy 08:59 UTC thử một bài và ghi `needs_action`.
+- Đối chiếu release `b53a5db5-e01d-44a1-b20e-9a595656a98b` với verification note đã lưu: Graph API v26.0 trước đó xác nhận Reel `1433112448754530` thuộc Page `1106784475845782`, published và caption khớp. Đã ghi `external_release_id=1433112448754530` qua `manual_connect`.
+- Fetch API mới nhất trả `meta_post_unavailable` (Graph code 100), không có metric mới. Query scheduler sau đó xác nhận release không còn đến hạn trong cooldown 24 giờ; kết quả cũ vẫn được giữ.
+- Tám kiểm thử mục tiêu cho batch scheduling, reschedule, frozen release/job, recovery sau commit và scheduler analytics đều PASS. Điều này xác minh các fixture tương ứng; chưa thay thế nghiệm thu toàn luồng Giai đoạn 10B hay một lần scheduled fetch thành công.
+- Full suite `unittest` hiện tại cũng PASS **367 tests** trên Python 3.13 ngày 28-10; scheduler Meta vẫn cần một chu kỳ tự động thu metric thành công để nghiệm thu live.
+
+### Instagram Insights live verification — 2026-10-29
+
+- The connected Instagram Login account `@tannguyen3569` (`17841425556322045`) has scope `instagram_business_manage_insights`.
+- A live Reel Insights request succeeded for media `17938602174125398`: reach=1, likes=2, comments=2, saved=0, shares=0, total_interactions=4. A profile Insights request also succeeded and returned reach=0.
+- These are point-in-time snapshots; the collector does not fetch a historical trend in this run. No content was created and no App Review request was made.
+- Runtime scheduler remains opt-in for Meta and Instagram at a 6-hour interval; automatic-cycle acceptance is still pending.

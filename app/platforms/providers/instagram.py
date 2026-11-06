@@ -12,7 +12,7 @@ from PIL import Image, UnidentifiedImageError
 
 from app.db.provider_repositories import ProviderConnectionRepository
 from app.domain.jobs import JobStatus
-from app.services.instagram_accounts import InstagramAccountService, InstagramGraphAPIError, INSTAGRAM_SCOPES
+from app.services.instagram_accounts import InstagramAccountService, InstagramGraphAPIError, INSTAGRAM_PUBLISH_SCOPES
 from app.services.instagram_media_delivery import InstagramMediaDelivery, InstagramMediaDeliveryError
 from app.services.media import MediaService, MediaValidationError
 from app.services.publishers import PublishContext, PublishOutcome, PublishResult, Publisher
@@ -96,7 +96,7 @@ class InstagramOfficialPublisher(Publisher):
         if size_bytes <= 0 or size_bytes > max_bytes:
             errors.append(
                 "Ảnh Instagram phải lớn hơn 0 và không vượt 8 MB." if expected_type == "image"
-                else "Video Instagram phải lớn hơn 0 và không vượt 100 MB."
+                else "Video Instagram phải lớn hơn 0 và không vượt giới hạn nội bộ 100 MB của Tinix."
             )
         if not re.fullmatch(r"[a-fA-F0-9]{64}", str(item.get("sha256") or "")):
             errors.append("Ảnh Instagram thiếu mã SHA-256 của bản đã lên lịch.")
@@ -170,7 +170,7 @@ class InstagramOfficialPublisher(Publisher):
         )
         if not connection:
             return PublishResult(PublishOutcome.LOGIN_REQUIRED, "Account chưa kết nối Instagram Login API.")
-        required = set(INSTAGRAM_SCOPES)
+        required = set(INSTAGRAM_PUBLISH_SCOPES)
         if not required.issubset(set(connection.get("scopes") or [])):
             return PublishResult(
                 PublishOutcome.LOGIN_REQUIRED,

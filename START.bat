@@ -81,6 +81,13 @@ echo [Tinix] Dang mo ung dung che do App Mode doc lap...
 set "APP_DATA_DIR=%~dp0data\app_browser_profile"
 if not exist "%APP_DATA_DIR%" mkdir "%APP_DATA_DIR%" 2>nul
 
+REM Neu cua so Tinix App Mode dung cung browser profile da mo, khong tao cua so trung lap.
+"%VENV_PY%" -c "import os,psutil,sys; p=os.path.normcase(os.path.abspath(os.environ['APP_DATA_DIR'])); found=any((x.info.get('name') or '').lower() in ('chrome.exe','msedge.exe') and any(a.lower().startswith('--user-data-dir=') and os.path.normcase(os.path.abspath(a.split('=',1)[1].strip(chr(34)))) == p for a in (x.info.get('cmdline') or [])) for x in psutil.process_iter(['name','cmdline'])); sys.exit(0 if found else 1)" >nul 2>nul
+if not errorlevel 1 (
+  echo [Tinix] Ung dung da mo san; bo qua mo cua so moi.
+  exit /b 0
+)
+
 if defined BROWSER_APP_EXE (
   start "" "%BROWSER_APP_EXE%" --app="http://127.0.0.1:%TINIX_PORT%" --user-data-dir="%APP_DATA_DIR%" --no-first-run --no-default-browser-check
 ) else (
@@ -97,8 +104,8 @@ echo [Tinix] Dang khoi dong may chu ngam (port %TINIX_PORT%)...
 set "TINIX_OPEN_BROWSER=false"
 start "" "%VENV_PYW%" -m app
 
-REM Cho server san sang toi da 30 giay
-for /l %%i in (1,1,30) do (
+REM Cho server san sang toi da 60 giay; lifespan may take longer while services initialize.
+for /l %%i in (1,1,60) do (
   "%VENV_PY%" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:%TINIX_PORT%/api/health', timeout=1)" >nul 2>nul
   if not errorlevel 1 (
     echo [Tinix] May chu ngam da san sang.

@@ -213,6 +213,25 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(duplicate.status_code, 422)
         self.assertEqual(self.client.get("/api/content-signatures").json(), saved.json())
 
+    def test_existing_facebook_post_tracking_api_requires_identity_confirmation(self) -> None:
+        account = self.services.accounts.create("Tracked post account", "facebook")
+        target = self.services.targets.sync(account["id"], "facebook", [{"external_id": "page-1", "name": "Page"}])[0]
+        self.services.analytics_collector = SimpleNamespace(_validate_url=lambda platform, url: None)
+        payload = {
+            "target_id": target["id"], "external_url": "https://www.facebook.com/page-1/posts/123",
+            "confirm_target_identity": True, "confirm_post_identity": True,
+        }
+        added = self.client.post("/api/analytics/tracked-posts", json=payload)
+        self.assertEqual(added.status_code, 201)
+        self.assertEqual(added.json()["external_url"], payload["external_url"])
+        self.assertEqual(len(self.client.get("/api/analytics/tracked-posts").json()), 1)
+        duplicate = self.client.post("/api/analytics/tracked-posts", json=payload)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(self.client.get(f"/api/analytics/tracked-posts/{added.json()['id']}/metrics").json()["metrics"], [])
+        removed = self.client.delete(f"/api/analytics/tracked-posts/{added.json()['id']}")
+        self.assertEqual(removed.status_code, 200)
+        self.assertEqual(self.client.get("/api/analytics/tracked-posts").json(), [])
+
     def test_target_group_api_persists_targets_and_defaults(self) -> None:
         account = self.services.accounts.create("Group account", "facebook")
         target = self.services.targets.sync(account["id"], "facebook", [{"external_id": "group-page", "name": "Page"}])[0]
@@ -664,11 +683,13 @@ class ApiTests(unittest.TestCase):
         initial=self.client.get("/api/analytics/refresh-settings")
         self.assertEqual(initial.status_code,200)
         self.assertFalse(initial.json()["enabled"])
+        self.assertFalse(initial.json()["tracked_posts_enabled"])
         updated=self.client.put("/api/analytics/refresh-settings",json={
-            "enabled":True,"interval_hours":12,"days":90,"posts_per_run":4,"channels_per_run":2,
+            "enabled":True,"tracked_posts_enabled":True,"interval_hours":12,"days":90,"posts_per_run":4,"channels_per_run":2,
         })
         self.assertEqual(updated.status_code,200)
         self.assertTrue(updated.json()["enabled"])
+        self.assertTrue(updated.json()["tracked_posts_enabled"])
         self.assertEqual(updated.json()["interval_hours"],12)
         invalid=self.client.put("/api/analytics/refresh-settings",json={
             "enabled":True,"interval_hours":8,"days":90,"posts_per_run":4,"channels_per_run":2,

@@ -209,7 +209,7 @@ class SchedulingService:
                 settings.setdefault("cta", variant["cta"])
                 settings.update(target_platform_settings.get(target["id"], {}))
                 validate_publication(account["platform"], target_format, caption, validation_media, settings)
-                if route.transport == "official_api" and route.provider == "meta":
+                if route.transport == "official_api" and route.provider in {"meta", "instagram"}:
                     errors = publisher.validate({"caption": caption, "media": validation_media,
                                                  "content_format": target_format}, settings)
                     if errors:
@@ -473,7 +473,7 @@ class SchedulingService:
                     validation_media, settings_for_target,
                 )
                 route = routes_by_target[target["id"]]
-                if route["transport"] == "official_api" and route["provider"] == "meta":
+                if route["transport"] == "official_api" and route["provider"] in {"meta", "instagram"}:
                     errors = route["publisher"].validate(
                         {"caption": validation_caption, "media": validation_media,
                          "content_format": content_format}, settings_for_target,

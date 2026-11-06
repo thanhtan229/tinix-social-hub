@@ -12,15 +12,32 @@ import httpx
 
 from app.automation.browser_session import BrowserSession
 from app.core.config import Settings
+from app.core.logging import secret_registry
 from app.db.provider_repositories import OAuthStateRepository, ProviderConnectionRepository, ProviderTargetConnectionRepository
 from app.db.repositories import AccountRepository, TargetRepository
 
 
 class MetaGraphAPIError(RuntimeError):
-    def __init__(self, status_code: int, code: str | None, message: str) -> None:
+    def __init__(
+        self, status_code: int, code: str | None, message: str, *,
+        error_subcode: str = "", error_type: str = "",
+        provider_message: str = "", fbtrace_id: str = "",
+    ) -> None:
         self.status_code = status_code
         self.graph_code = code
+        self.error_subcode = str(error_subcode)
+        self.error_type = str(error_type)
+        self.provider_message = str(provider_message)
+        self.fbtrace_id = str(fbtrace_id)
         super().__init__(message)
+
+
+class MetaGraphTransportError(RuntimeError):
+    """A transient network failure prevented a Meta Graph API request."""
+
+    def __init__(self, error_type: str) -> None:
+        self.error_type = str(error_type or "network_error")[:100]
+        super().__init__("Meta Graph API tạm thời không kết nối được; lượt analytics sẽ thử lại theo lịch.")
 
 
 class MetaAccountService:
@@ -145,29 +162,42 @@ class MetaAccountService:
         try:
             async with self.client_factory(timeout=self.settings.provider_timeout_seconds) as client:
                 response = await client.request(method, self._graph_url(app, path), params=request_params, data=request_data, headers=headers)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise MetaGraphTransportError(type(exc).__name__) from exc
         except httpx.HTTPError as exc:
             raise RuntimeError("Không kết nối được Meta Graph API.") from exc
         return self._parse_graph_response(response)
 
     @staticmethod
     def _parse_graph_response(response: Any) -> dict[str, Any]:
-        if response.status_code in {401, 403}:
-            raise MetaGraphAPIError(response.status_code, None, "Meta từ chối quyền. Hãy kiểm tra lại scope, Page task và trạng thái App.")
-        if response.status_code == 429:
-            raise MetaGraphAPIError(response.status_code, "rate_limited", "Meta đang giới hạn tần suất; hãy chờ rồi thử lại.")
-        if response.status_code >= 500:
-            raise MetaGraphAPIError(response.status_code, None, "Meta Graph API tạm thời không khả dụng.")
         try:
             body = response.json()
         except ValueError as exc:
             raise RuntimeError("Meta trả về phản hồi không hợp lệ.") from exc
-        if response.status_code >= 400 or (isinstance(body, dict) and body.get("error")):
-            error = body.get("error") if isinstance(body, dict) else {}
-            message = str((error or {}).get("message") or "Meta từ chối yêu cầu.")[:400]
-            code = str((error or {}).get("code") or "") or None
-            raise MetaGraphAPIError(response.status_code, code, f"Meta Graph API: {message}")
         if not isinstance(body, dict):
             raise RuntimeError("Meta trả về dữ liệu không hợp lệ.")
+        error = body.get("error")
+        if response.status_code >= 400 or error:
+            error = error if isinstance(error, dict) else {}
+            provider_message = str(error.get("message") or "Meta từ chối yêu cầu.")[:500]
+            raw_code = str(error.get("code") or "")
+            code = raw_code or None
+            if response.status_code == 429 and not code:
+                code = "rate_limited"
+            friendly = provider_message
+            if response.status_code in {401, 403} and not error.get("message"):
+                friendly = "Meta từ chối quyền. Hãy kiểm tra lại scope, Page task và trạng thái App."
+            elif response.status_code == 429 and not error.get("message"):
+                friendly = "Meta đang giới hạn tần suất; hãy chờ rồi thử lại."
+            elif response.status_code >= 500 and not error.get("message"):
+                friendly = "Meta Graph API tạm thời không khả dụng."
+            raise MetaGraphAPIError(
+                response.status_code, code, f"Meta Graph API: {friendly}",
+                error_subcode=str(error.get("error_subcode") or ""),
+                error_type=str(error.get("type") or ""),
+                provider_message=provider_message,
+                fbtrace_id=str(error.get("fbtrace_id") or ""),
+            )
         return body
 
     async def oauth_callback(self, code: str, state: str) -> dict[str, Any]:
@@ -769,6 +799,7 @@ class MetaAccountService:
             raise RuntimeError("Meta Page binding không khớp với connection đã đóng băng.")
         app = await asyncio.to_thread(self._app, connection.get("platform_app_id"))
         token = await asyncio.to_thread(self.target_connections.token, binding_id)
+        secret_registry.add(token)
         return await self._request(app, method, path, token, params=params, data=data)
 
     async def publish_local_photo(

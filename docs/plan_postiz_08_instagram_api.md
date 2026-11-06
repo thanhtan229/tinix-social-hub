@@ -1,6 +1,6 @@
 # Giai đoạn 08 — Instagram Official API theo phạm vi hẹp
 
-Trạng thái: **08A connection và 08B publisher một ảnh đã triển khai, fixture-tested; nghiệm thu live còn chờ Cloudflare R2 và OAuth/quyền Meta thật**. Ngày rà soát: 29-09-2026.  
+Status: One-image post, two-image carousel, and Reel are live-verified via Official API on @tannguyen3569; Instagram Story and other accounts remain unverified.
 Thuộc [kế hoạch tổng](plan_postiz.md), tách phần Instagram của M6.
 
 ## Mục tiêu và phụ thuộc
@@ -94,3 +94,17 @@ R2 Standard hiện có free tier theo tháng gồm 10 GB-month, 1 triệu Class 
 - 15 fixture tests Instagram đạt. Dry-run không tạo cloud/API side effect. Chưa chạy OAuth hay publish thật do R2 chưa cấu hình và chưa có quyền/token Instagram live; không ghi nhận phase là live-verified.
 - Rủi ro vận hành còn lại là request mất mạng trong lúc tạo container có thể để lại object mồ côi; lifecycle một ngày dọn phần còn lại. Sau khi container ID được lưu, Tinix resume poll mà không tạo container thứ hai.
 - Tiếp theo: người dùng tạo private R2 bucket/token theo checklist và cấu hình `.env`; Tinix reconnect để lấy scope publish, dry-run, sau đó yêu cầu xác nhận profile/nội dung ngay trước Instagram post thử thật.
+
+### Live acceptance: one Instagram image - 2026-10-29
+
+R2 bucket access (`HeadBucket`) and Instagram Login identity/scope were verified. The connected account resolved to `@tannguyen3569` (`17841425556322045`) with `instagram_business_content_publish`; token expiry reported 2026-12-26. Preflight for the approved one-image fixture was ready, and the dry-run job finished `dry_run_ready` without publishing.
+
+The live Official API job `50506fdd-294c-49ed-a337-7275fe6b3a37` finished `succeeded` in plan `7a78c5b0-06b7-411f-a5e3-ba7eff06983a`, release `18ff11fb-8d10-4ed1-a3d7-189430d76d9d`. Instagram Graph then confirmed media ID `18040813607844996`, type `IMAGE`, and permalink [https://www.instagram.com/p/DfD2C-mGG_y/](https://www.instagram.com/p/DfD2C-mGG_y/) on the same profile. This verifies one JPEG on this connected account only; no claim is made for other accounts or formats. No code changed; build/restart were not applicable.
+
+### Live acceptance: two-image carousel - 2026-10-29
+
+Preflight and dry-run passed for the approved two-JPEG fixture on `@tannguyen3569`. Dry-run job `00e26d35-5a89-488d-8985-c5e1ac786b94` completed `dry_run_ready` without publishing. Live job `7ff70006-42ca-4bbe-b7fd-c4b530130833` succeeded in plan `dffbb83e-14bb-4827-89f0-60ccf305110e`, release `5f5ec035-e8e5-42a8-b074-008e17a02d08`. Graph confirmed media ID `18101582774437499`, type `CAROUSEL_ALBUM`, two IMAGE children in order, and the same Instagram profile. [Open the carousel](https://www.instagram.com/p/DfD3FAMCQzP/). Evidence covers this account and a two-image carousel only; other account/format behavior remains unverified.
+
+### Live acceptance: Instagram Reel - 2026-10-29
+
+Preflight passed for the approved MP4 fixture on `@tannguyen3569`; dry-run completed `dry_run_ready` without publishing. Live job `ba9a41f1-5745-4ff1-aef7-de719c8d6b23` succeeded in one attempt in plan `a82ef92d-2341-45e8-8207-e33c270faa31`, release `0fa99085-67bb-4a69-9c04-cc21112d45a0`. Graph verified media ID `17938602174125398`, type `VIDEO`, and the same Instagram profile. [Open the Reel](https://www.instagram.com/reel/DfD3jxTnSTF/). Reel behavior is verified only for this account and fixture. Story and other accounts/formats remain unverified.

@@ -3516,6 +3516,13 @@ dialog h2 {
   padding-left: 20px;
 }
 
+.analytics-metrics-content {
+  max-height: min(55vh, 520px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .release-detail-content pre {
   max-height: 220px;
   overflow: auto;
@@ -4986,3 +4993,7 @@ dialog h2 {
     width: 100%;
   }
 }
+
+.analytics-provider-run-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 8px 0 16px; }
+.analytics-provider-run { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-bg-subtle); }
+.analytics-provider-run small { color: var(--color-text-muted); }

@@ -810,6 +810,46 @@ MIGRATIONS: list[tuple[int, str]] = [
     (25, """
     ALTER TABLE target_groups ADD COLUMN defaults_json TEXT NOT NULL DEFAULT '{}';
     """),
+    (26, """
+    CREATE TABLE tracked_posts (
+        id TEXT PRIMARY KEY,
+        target_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        external_url TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(target_id) REFERENCES publishing_targets(id) ON DELETE CASCADE,
+        UNIQUE(target_id,external_url)
+    );
+    CREATE INDEX idx_tracked_posts_target ON tracked_posts(target_id,created_at DESC);
+    CREATE TABLE tracked_post_metrics (
+        id TEXT PRIMARY KEY,
+        tracked_post_id TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        metric_date TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        value REAL NOT NULL,
+        source TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(tracked_post_id) REFERENCES tracked_posts(id) ON DELETE CASCADE,
+        UNIQUE(tracked_post_id,metric_key,metric_date,source)
+    );
+    CREATE INDEX idx_tracked_post_metrics_range ON tracked_post_metrics(metric_date,metric_key,tracked_post_id);
+    CREATE TABLE tracked_post_fetch_runs (
+        id TEXT PRIMARY KEY,
+        tracked_post_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        metrics_count INTEGER NOT NULL DEFAULT 0,
+        message TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(tracked_post_id) REFERENCES tracked_posts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_tracked_post_runs ON tracked_post_fetch_runs(tracked_post_id,started_at DESC);
+    """),
 ]
 
 

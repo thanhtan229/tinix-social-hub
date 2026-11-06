@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -10,11 +11,13 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.db.analytics_repositories import AnalyticsRepository
+from app.core.logging import secret_registry
 from app.db.provider_repositories import ProviderConnectionRepository
 from app.db.publication_repositories import PublicationRepository
 from app.db.repositories import AccountRepository, TargetRepository
-from app.services.meta_accounts import MetaGraphAPIError
+from app.services.meta_accounts import MetaGraphAPIError, MetaGraphTransportError
 from app.services.provider_accounts import ProviderAccountService
+from app.services.instagram_accounts import InstagramAccountService, InstagramGraphAPIError
 
 
 class APIAnalyticsError(RuntimeError):
@@ -361,6 +364,33 @@ class MetaAPIAnalyticsCollector:
         self.target_connections = target_connections
 
     @staticmethod
+    def _error_diagnostic(exc: MetaGraphAPIError, code: str) -> str:
+        def clean(value: str, limit: int) -> str:
+            result = " ".join(str(value).split())[:limit]
+            for secret in secret_registry.values():
+                result = result.replace(secret, "[REDACTED]")
+            return result
+
+        diagnostic = {
+            "code": code,
+            "http_status": exc.status_code,
+            "graph_code": clean(str(exc.graph_code or ""), 32),
+            "graph_subcode": clean(exc.error_subcode, 32),
+            "error_type": clean(exc.error_type, 100),
+            "provider_message": clean(exc.provider_message or str(exc), 500),
+            "fbtrace_id": clean(exc.fbtrace_id, 100),
+        }
+        return json.dumps(diagnostic, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _transport_diagnostic(exc: MetaGraphTransportError) -> str:
+        return json.dumps({
+            "code": "meta_network_error",
+            "transport_error": exc.error_type,
+            "provider_message": str(exc),
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
     def _summary(body: dict[str, Any], key: str) -> float | None:
         summary = ((body.get(key) or {}).get("summary") or {})
         value = summary.get("total_count")
@@ -441,13 +471,19 @@ class MetaAPIAnalyticsCollector:
         except APIAnalyticsError as exc:
             await asyncio.to_thread(self.analytics.finish_run, run_id, exc.status, 0, exc.code)
             return {"status": exc.status, "code": exc.code, "message": str(exc), "metrics": []}
+        except MetaGraphTransportError as exc:
+            diagnostic = self._transport_diagnostic(exc)
+            await asyncio.to_thread(self.analytics.finish_run, run_id, "retryable", 0, diagnostic)
+            return {"status": "retryable", "code": "meta_network_error", "message": str(exc), "metrics": []}
         except MetaGraphAPIError as exc:
             status, code, message = self._graph_error(exc, "post")
-            await asyncio.to_thread(self.analytics.finish_run, run_id, status, 0, code)
+            diagnostic = self._error_diagnostic(exc, code)
+            await asyncio.to_thread(self.analytics.finish_run, run_id, status, 0, diagnostic)
             return {"status": status, "code": code, "message": message, "metrics": []}
         except Exception:
             await asyncio.to_thread(self.analytics.finish_run, run_id, "failed", 0, "provider_error")
             raise
+
 
     async def collect_channel(self, target_id: str, days: int = 30) -> dict[str, Any]:
         target = await asyncio.to_thread(self.targets.get, target_id)
@@ -484,8 +520,174 @@ class MetaAPIAnalyticsCollector:
         except APIAnalyticsError as exc:
             await asyncio.to_thread(self.analytics.finish_channel_run, run_id, exc.status, 0, exc.code)
             return {"status": exc.status, "code": exc.code, "message": str(exc), "metrics": []}
+        except MetaGraphTransportError as exc:
+            diagnostic = self._transport_diagnostic(exc)
+            await asyncio.to_thread(self.analytics.finish_channel_run, run_id, "retryable", 0, diagnostic)
+            return {"status": "retryable", "code": "meta_network_error", "message": str(exc), "metrics": []}
         except MetaGraphAPIError as exc:
             status, code, message = self._graph_error(exc, "page")
+            diagnostic = self._error_diagnostic(exc, code)
+            await asyncio.to_thread(self.analytics.finish_channel_run, run_id, status, 0, diagnostic)
+            return {"status": status, "code": code, "message": message, "metrics": []}
+        except Exception:
+            await asyncio.to_thread(self.analytics.finish_channel_run, run_id, "failed", 0, "provider_error")
+            raise
+
+
+class InstagramAPIAnalyticsCollector:
+    """Read-only Insights snapshots for Instagram Login media and professional profiles."""
+
+    source = "api_instagram_graph"
+    insights_scope = "instagram_business_manage_insights"
+    media_metrics = ("reach", "likes", "comments", "saved", "shares", "total_interactions")
+    account_metrics = ("reach", "profile_views", "accounts_engaged", "total_interactions")
+
+    def __init__(
+        self, targets: TargetRepository, publications: PublicationRepository,
+        analytics: AnalyticsRepository, connections: ProviderConnectionRepository,
+        instagram_accounts: InstagramAccountService,
+    ) -> None:
+        self.targets = targets
+        self.publications = publications
+        self.analytics = analytics
+        self.connections = connections
+        self.instagram_accounts = instagram_accounts
+
+    def _connection_for_target(self, target: dict[str, Any]) -> dict[str, Any] | None:
+        for item in self.connections.list(account_id=target["account_id"], transport="official_api"):
+            if (item.get("provider") == "instagram" and item.get("status") == "connected"
+                    and str(item.get("external_account_id") or "") == str(target.get("external_id") or "")):
+                return item
+        return None
+
+    @staticmethod
+    def _metric_values(body: dict[str, Any]) -> tuple[dict[str, float], dict[str, str]]:
+        values: dict[str, float] = {}
+        names: dict[str, str] = {}
+        for item in body.get("data", []):
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                continue
+            name = item["name"]
+            entries = item.get("values")
+            value = entries[-1].get("value") if isinstance(entries, list) and entries and isinstance(entries[-1], dict) else None
+            if value is None:
+                value = (item.get("total_value") or {}).get("value")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values[name] = float(value)
+                names[name] = name
+        return values, names
+
+    @staticmethod
+    def _error(exc: InstagramGraphAPIError) -> tuple[str, str, str]:
+        code = str(exc.graph_code or "")
+        if code == "10":
+            return "needs_scope", "instagram_permission_denied", "Instagram chưa cấp quyền Insights cho ứng dụng. Hãy kết nối lại và cấp instagram_business_manage_insights."
+        if code == "190" or exc.status_code in {401, 403}:
+            return "needs_connection", "instagram_connection_required", "Kết nối Instagram đã hết hạn hoặc bị từ chối; hãy kết nối lại tài khoản."
+        if exc.status_code == 429 or code in {"4", "17", "32", "613"}:
+            return "rate_limited", "instagram_rate_limited", "Instagram đang giới hạn tần suất; hãy chờ rồi thử lại."
+        if code == "100":
+            return "unavailable", "instagram_media_unavailable", "Instagram không còn cho phép đọc bài này; snapshot đã lưu trước đó được giữ nguyên."
+        return "failed", "instagram_provider_error", "Instagram từ chối yêu cầu Insights."
+
+    @staticmethod
+    def _error_diagnostic(exc: InstagramGraphAPIError, code: str) -> str:
+        def clean(value: str, limit: int) -> str:
+            result = " ".join(str(value).split())[:limit]
+            for secret in secret_registry.values():
+                result = result.replace(secret, "[REDACTED]")
+            return result
+
+        diagnostic = {
+            "code": code,
+            "http_status": exc.status_code,
+            "graph_code": clean(exc.graph_code, 32),
+            "graph_subcode": clean(exc.graph_subcode, 32),
+            "error_type": clean(exc.error_type, 100),
+            "provider_message": clean(exc.provider_message, 500),
+            "fbtrace_id": clean(exc.fbtrace_id, 100),
+        }
+        return json.dumps(diagnostic, ensure_ascii=False, separators=(",", ":"))
+
+    async def collect_release(self, release_id: str, days: int = 30) -> dict[str, Any]:
+        del days
+        release = await asyncio.to_thread(self.publications.get_release, release_id)
+        if not release:
+            raise KeyError(release_id)
+        if release.get("platform") != "instagram" or release.get("status") != "succeeded":
+            return {"status": "unsupported", "message": "Chỉ hỗ trợ bài Instagram đã đăng thành công.", "metrics": []}
+        media_id = str(release.get("external_release_id") or "")
+        if not media_id:
+            return {"status": "needs_reconciliation", "message": "Release chưa có Instagram media ID để tra cứu.", "metrics": []}
+        target = await asyncio.to_thread(self.targets.get, release["target_id"])
+        if not target or target.get("platform") != "instagram" or target.get("account_id") != release.get("account_id"):
+            return {"status": "unsupported", "message": "Release không còn gắn với đúng profile Instagram.", "metrics": []}
+        connection = self._connection_for_target(target)
+        if not connection:
+            return {"status": "needs_connection", "message": "Hãy kết nối Instagram Login cho profile đã đăng bài.", "metrics": []}
+        if self.insights_scope not in set(connection.get("scopes") or []):
+            return {"status": "needs_scope", "message": "Kết nối Instagram cần quyền instagram_business_manage_insights.", "metrics": []}
+        run_id = await asyncio.to_thread(self.analytics.start_run, release_id, self.source)
+        try:
+            body = await self.instagram_accounts.graph_request(
+                connection["id"], "GET", f"{media_id}/insights",
+                params={"metric": ",".join(self.media_metrics)},
+            )
+            values, names = self._metric_values(body)
+            if not values:
+                await asyncio.to_thread(self.analytics.finish_run, run_id, "unsupported", 0, "metrics_empty")
+                return {"status": "unsupported", "message": "Instagram không trả metric Insights cho bài này.", "metrics": []}
+            observed = datetime.now(timezone.utc)
+            rows = await asyncio.to_thread(
+                self.analytics.upsert, release_id, values, metric_date=observed.date().isoformat(),
+                timezone_name="UTC", source=self.source, provider_metric_names=names,
+            )
+            await asyncio.to_thread(self.analytics.finish_run, run_id, "succeeded", len(values))
+            return {"status": "succeeded", "source": self.source, "metrics": rows}
+        except InstagramGraphAPIError as exc:
+            status, code, message = self._error(exc)
+            diagnostic = self._error_diagnostic(exc, code)
+            await asyncio.to_thread(self.analytics.finish_run, run_id, status, 0, diagnostic)
+            return {"status": status, "code": code, "message": message, "metrics": []}
+        except Exception:
+            await asyncio.to_thread(self.analytics.finish_run, run_id, "failed", 0, "provider_error")
+            raise
+
+    async def collect_channel(self, target_id: str, days: int = 30) -> dict[str, Any]:
+        del days
+        target = await asyncio.to_thread(self.targets.get, target_id)
+        if not target:
+            raise KeyError(target_id)
+        if target.get("platform") != "instagram":
+            return {"status": "unsupported", "message": "Instagram Insights không áp dụng cho nền tảng này.", "metrics": []}
+        run_id = await asyncio.to_thread(self.analytics.start_channel_run, target_id, self.source)
+        try:
+            connection = self._connection_for_target(target)
+            if not connection:
+                raise APIAnalyticsError("instagram_connection_required", "Hãy kết nối Instagram Login cho profile này.", "needs_connection")
+            if self.insights_scope not in set(connection.get("scopes") or []):
+                raise APIAnalyticsError("instagram_permission_denied", "Kết nối Instagram cần quyền instagram_business_manage_insights.", "needs_scope")
+            body = await self.instagram_accounts.graph_request(
+                connection["id"], "GET", f"{connection['external_account_id']}/insights",
+                params={"metric": ",".join(self.account_metrics), "period": "day"},
+            )
+            values, names = self._metric_values(body)
+            if not values:
+                raise APIAnalyticsError("metrics_empty", "Instagram không trả metric Insights cho profile này.", "unsupported")
+            observed = datetime.now(timezone.utc)
+            rows = await asyncio.to_thread(
+                self.analytics.upsert_channel, target_id, values,
+                metric_date=observed.date().isoformat(), timezone_name="UTC", source=self.source,
+                provider_metric_names=names,
+            )
+            await asyncio.to_thread(self.analytics.finish_channel_run, run_id, "succeeded", len(values))
+            return {"status": "succeeded", "source": self.source, "metrics": rows,
+                    "trend": {"status": "unsupported", "message": "Lượt này lưu snapshot Insights mới nhất; chưa tải chuỗi lịch sử."}}
+        except APIAnalyticsError as exc:
+            await asyncio.to_thread(self.analytics.finish_channel_run, run_id, exc.status, 0, exc.code)
+            return {"status": exc.status, "code": exc.code, "message": str(exc), "metrics": []}
+        except InstagramGraphAPIError as exc:
+            status, code, message = self._error(exc)
             await asyncio.to_thread(self.analytics.finish_channel_run, run_id, status, 0, code)
             return {"status": status, "code": code, "message": message, "metrics": []}
         except Exception:

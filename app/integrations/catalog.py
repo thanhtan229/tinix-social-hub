@@ -49,7 +49,7 @@ PLATFORM_APPS: dict[str, dict[str, Any]] = {
     "instagram": {
         "id": "instagram", "name": "Instagram Login (độc lập)", "client_label": "Instagram App ID",
         "secret_label": "Instagram App Secret", "default_redirect_path": "/api/oauth/instagram/callback",
-        "scopes": ["instagram_business_basic", "instagram_business_content_publish"],
+        "scopes": ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights"],
         "official_publisher": "review_required",
     },
     "tiktok": {

@@ -16,14 +16,25 @@ from app.db.provider_repositories import OAuthStateRepository, ProviderConnectio
 from app.db.repositories import AccountRepository
 
 logger = logging.getLogger(__name__)
-INSTAGRAM_SCOPES = ("instagram_business_basic", "instagram_business_content_publish")
+INSTAGRAM_PUBLISH_SCOPES = ("instagram_business_basic", "instagram_business_content_publish")
+INSTAGRAM_SCOPES = (
+    *INSTAGRAM_PUBLISH_SCOPES,
+    "instagram_business_manage_insights",
+)
 INSTAGRAM_USERNAME = re.compile(r"[A-Za-z0-9._]{1,30}\Z")
 
 
 class InstagramGraphAPIError(RuntimeError):
-    def __init__(self, status_code: int, graph_code: str = "") -> None:
+    def __init__(
+        self, status_code: int, graph_code: str = "", *, graph_subcode: str = "",
+        error_type: str = "", provider_message: str = "", fbtrace_id: str = "",
+    ) -> None:
         self.status_code = int(status_code)
         self.graph_code = str(graph_code)
+        self.graph_subcode = str(graph_subcode)
+        self.error_type = str(error_type)
+        self.provider_message = str(provider_message)
+        self.fbtrace_id = str(fbtrace_id)
         super().__init__("Instagram Graph API từ chối yêu cầu.")
 
 
@@ -83,7 +94,10 @@ class InstagramAccountService:
             raise RuntimeError("Instagram App chưa có App Secret.")
         configured_scopes = set(app.get("scopes") or INSTAGRAM_SCOPES)
         if not set(INSTAGRAM_SCOPES).issubset(configured_scopes):
-            raise RuntimeError("Instagram App cần scope instagram_business_basic và instagram_business_content_publish.")
+            raise RuntimeError(
+                "Instagram App cần scope instagram_business_basic, "
+                "instagram_business_content_publish và instagram_business_manage_insights."
+            )
         scopes = list(INSTAGRAM_SCOPES)
         state = self.oauth_states.create(
             account_id, self.provider, redirect_uri=app["redirect_uri"], platform_app_id=app["id"],
@@ -179,7 +193,13 @@ class InstagramAccountService:
         error = result.get("error") if isinstance(result, dict) else None
         if response.status_code >= 400 or not isinstance(result, dict) or error:
             code = error.get("code", "") if isinstance(error, dict) else ""
-            raise InstagramGraphAPIError(response.status_code, str(code))
+            raise InstagramGraphAPIError(
+                response.status_code, str(code),
+                graph_subcode=str(error.get("error_subcode", "")) if isinstance(error, dict) else "",
+                error_type=str(error.get("type", "")) if isinstance(error, dict) else "",
+                provider_message=str(error.get("message", "")) if isinstance(error, dict) else "",
+                fbtrace_id=str(error.get("fbtrace_id", "")) if isinstance(error, dict) else "",
+            )
         return result
 
     async def access_token(self, connection_id: str, account_id: str | None = None) -> str:

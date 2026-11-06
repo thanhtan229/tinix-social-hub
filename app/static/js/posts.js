@@ -48,6 +48,39 @@ function postStatusBadge(status, error) {
   return `<span class="badge ${item.cls}"${titleAttr}>${item.icon} ${item.label}</span>`;
 }
 
+function approvalAction(post, compact = false) {
+  const pending = post.approval_status === "pending_approval";
+  if (!pending && post.approval_status !== "draft") return "";
+  const action = pending ? "approve" : "request-approval";
+  const label = pending ? "Duyệt" : "Gửi duyệt";
+  const icon = pending ? "✓" : "↗";
+  const buttonClass = compact ? "btn-icon" : `btn btn-sm ${pending ? "btn-teal" : "btn-secondary"}`;
+  return `<button type="button" class="${buttonClass}" data-post-action="${action}" data-id="${esc(post.id)}" title="${label}" aria-label="${label}">${compact ? icon : label}</button>`;
+}
+
+async function handlePostApproval(id, action, button) {
+  button.disabled = true;
+  try {
+    if (action === "request-approval") {
+      await api(`/contents/${id}/request-approval`, {method: "POST"});
+      toast("Đã gửi nội dung chờ duyệt.");
+    } else {
+      const detail = await api(`/contents/${id}`);
+      if (!detail.latest_approval || detail.latest_approval.status !== "pending") {
+        throw new Error("Không tìm thấy yêu cầu duyệt đang chờ.");
+      }
+      await api(`/approvals/${detail.latest_approval.id}/decide`, {
+        method: "POST", body: JSON.stringify({approved: true}),
+      });
+      toast("Đã duyệt nội dung.");
+    }
+    await refreshPosts();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message);
+  }
+}
+
 export const PLATFORM_ICONS = {
   facebook: '<svg viewBox="0 0 24 24" class="platform-svg" aria-hidden="true" width="16" height="16"><path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.03 1.79-4.7 4.53-4.7 1.31 0 2.68.24 2.68.24v2.96h-1.51c-1.49 0-1.96.93-1.96 1.89v2.27h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07Z"/></svg>',
   instagram: '<svg viewBox="0 0 24 24" class="platform-svg" aria-hidden="true" width="16" height="16"><defs><linearGradient id="ig-pbadge-grad" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#FFD600"/><stop offset=".48" stop-color="#FF0169"/><stop offset="1" stop-color="#7638FA"/></linearGradient></defs><rect width="24" height="24" rx="6" fill="url(#ig-pbadge-grad)"/><circle cx="12" cy="12" r="4.4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="18.1" cy="5.9" r="1.25" fill="#fff"/></svg>',
@@ -239,6 +272,7 @@ function renderPostsGrid() {
         <div class="post-card-actions">
           <button type="button" class="btn btn-sm btn-secondary" data-post-action="edit" data-id="${esc(post.id)}" title="Chỉnh sửa bài viết">✏️ Sửa</button>
           <button type="button" class="btn btn-sm btn-secondary" data-post-action="duplicate" data-id="${esc(post.id)}" title="Tạo bản sao bài viết">📋 Nhân bản</button>
+          ${approvalAction(post)}
           <button type="button" class="btn btn-sm btn-teal" data-post-action="schedule" data-id="${esc(post.id)}" title="Lên lịch xuất bản">📅 Lên lịch</button>
           <button type="button" class="btn btn-sm btn-danger" data-post-action="delete" data-id="${esc(post.id)}" title="Xóa bài viết">🗑 Xóa</button>
         </div>
@@ -300,6 +334,7 @@ function renderPostsTable() {
           <div class="post-table-actions">
             <button type="button" class="btn-icon" data-post-action="edit" data-id="${esc(post.id)}" title="Sửa">✏️</button>
             <button type="button" class="btn-icon" data-post-action="duplicate" data-id="${esc(post.id)}" title="Nhân bản">📋</button>
+            ${approvalAction(post, true)}
             <button type="button" class="btn-icon" data-post-action="schedule" data-id="${esc(post.id)}" title="Lên lịch">📅</button>
             <button type="button" class="btn-icon text-danger" data-post-action="delete" data-id="${esc(post.id)}" title="Xóa">🗑</button>
           </div>
@@ -354,6 +389,7 @@ function bindPostCardEvents() {
       const action = btn.dataset.postAction;
       if (action === "edit") openPostEditor(id);
       else if (action === "duplicate") duplicatePost(id);
+      else if (action === "request-approval" || action === "approve") handlePostApproval(id, action, btn);
       else if (action === "schedule") openQuickSchedule(id);
       else if (action === "delete") deletePost(id);
     };
@@ -491,7 +527,7 @@ function getCheckedPlatformsInDialog() {
 function saveActiveVariantFromDom() {
   if (!activeVariantTab) return;
   const targetId = document.querySelector("#postTargetOverride")?.value || "";
-  if (targetId && !editingComposition.target_overrides[targetId]) return;
+  if (targetId && activeVariantTab !== "global" && !editingComposition.target_overrides[targetId]) return;
   if (activeVariantTab !== "global" && !targetId && !editingComposition.platform_overrides[activeVariantTab]) return;
   const cur = variantFromContent(activeVariantTab === "global"
     ? editingComposition.global_content
