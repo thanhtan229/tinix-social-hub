@@ -9,8 +9,8 @@
 
 ## Git worktree inventory (captured 2026-11-06)
 
-``text
+```text
 worktree D:/___TOOLS/__TINIX/Tinix-Social-Hub
 HEAD 12c9694412f2e1623de7009e261747c061885da1
 branch refs/heads/master
-``
+```
