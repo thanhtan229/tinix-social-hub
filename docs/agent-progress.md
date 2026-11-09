@@ -1,10 +1,17 @@
 # Tiến độ agent — Tinix Social Hub
 
-Cập nhật: 29-10-2026. Bản ghi handoff ngắn theo TINIX V2.1 mục 14; không thay thế Git hay bằng chứng test.
+Cập nhật: 09-11-2026. Bản ghi handoff ngắn theo TINIX V2.1 mục 14; không thay thế Git hay bằng chứng test.
 
 ## Current authoritative handoff - 2026-10-29
 
 The older dated notes below are retained as history; use this section for the current state.
+
+### Current verification — 2026-11-09
+
+- Local `master` contains checkpoint `22e6d83` plus handoff documentation commits; the worktree was clean before the current documentation update.
+- Targeted analytics/API/frontend tests passed 99/99; profile-transfer tests passed 16/16; `BUILD.bat --no-bump` passed with the full suite at 100% on version 1.0.50.
+- Runtime restart through `START.bat` was verified on port 8765: health/database OK, worker idle, scheduler running, frontend HTTP 200, and no warnings.
+- The latest bounded scheduler cycle attempted 19 posts and 10 channels with 0 failures. Expected provider states included `needs_connection` and `unsupported`; historical inaccessible posts retain their prior snapshots.
 
 - Phase 10B fixture/UI/backup-restore acceptance is recorded complete in `docs/plan_postiz_10_acceptance_operations.md`. Live multi-Page text was verified for two Pages only; that does not extend acceptance to other formats or accounts.
 - Instagram Official API image, carousel, Reel, and Insights have live evidence for `@tannguyen3569`; Insights are point-in-time snapshots, not historical trends.
