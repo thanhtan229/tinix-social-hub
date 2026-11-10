@@ -85,3 +85,11 @@ Next: let the opted-in scheduler collect the remaining available releases; the o
 - Preflight and dry-run passed. Live job `a0f7fed8-50d9-4daf-bad3-ab731d2e5798` finished `succeeded` with no retry or error; commit point was reached once.
 - Meta returned ten photo IDs and post ID `1106784475845782_122140968434779083`. Tinix marked release `515e7563-3477-4672-b4c8-9eeb726cb476` `verified` with permalink https://www.facebook.com/122132248658779083/posts/122140968434779083.
 - This extends live evidence to a ten-photo album on the selected Page/App only; it does not generalize acceptance to other Pages or Apps.
+
+### Instagram carousel 6-photo live acceptance — 2026-11-10
+
+- Created approved test content `9c3fbc64-5a1f-4cab-b638-4f5e0bd78e5a` with exactly six JPEG assets (`IGCAROUSEL10-1.jpg` through `IGCAROUSEL10-6.jpg`).
+- Target: connected profile `@tannguyen3569` (`17841425556322045`), account `Huong Vo`; routing `official_api_only`.
+- Preflight passed and dry-run job `d716e74f-2a21-4a62-98fa-69ccfc85c751` reached `dry_run_ready`.
+- Live job `a0344aac-8874-4df4-b520-23b1491de67a` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `50414e43-8743-474a-8aa8-045cdaf71be0` is `succeeded` and `verified`.
+- Instagram returned carousel media ID `18026268416929404`, six child media IDs, and [permalink](https://www.instagram.com/p/Dfi1vlJkhtm/). This extends live evidence to six-photo carousel publishing on the selected account/App only; it does not generalize acceptance to other accounts or formats.
