@@ -1,6 +1,6 @@
 # Giai đoạn 07 — Facebook Page Official API cho video
 
-Trạng thái: **Reel và video Page thường đã đăng thật trên Page Tinix; Reel tự xác minh `succeeded`, video thường đã đối soát thủ công.** Ngày cập nhật: 29-09-2026.  
+Trạng thái hiện tại (2026-11-10): **Reel và video Page thường đã live-verified trên Page Tinix; video format cũng đã live-verified trên Page `131419466718163` nhưng permalink Meta trả về có dạng `/reel/`.** Chỉ áp dụng cho các Page/App đã thử; phần dưới ghi lịch sử triển khai ban đầu.
 Thuộc [kế hoạch tổng](plan_postiz.md), tách phần video của M6.
 
 ## Mục tiêu và phụ thuộc

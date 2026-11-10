@@ -1,6 +1,6 @@
 # Giai đoạn 10 — Nghiệm thu vận hành và hoàn thiện tài liệu
 
-Status: 10B fixture/UI/backup-restore accepted; live multi-Page Facebook text and Instagram one-image, two-image carousel, and Reel accepted within stated account and format limits. Updated 2026-10-29.
+Status (reviewed 2026-11-10): 10B fixture/UI/backup-restore acceptance remains recorded complete. Live evidence now includes Facebook formats on two tested Pages and Instagram carousel sizes 2, 5–10 plus image/Reel on `@tannguyen3569`; see `docs/agent-progress.md` for dated evidence and scope limits. This does not establish acceptance for all accounts/providers or a production/VPS deployment.
 Thuộc [kế hoạch tổng](plan_postiz.md), bổ sung bước đóng từng đợt phát hành.
 
 ## Mục tiêu và điều kiện

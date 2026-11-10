@@ -1,17 +1,17 @@
 # HANDOFF_TO_ORCA
 
-- Status: checkpoint `22e6d83` is integrated on local `master`; handoff verification completed 2026-11-09.
-- Completed: analytics refresh and profile transfer implementation/docs/tests, runtime restart, health/version verification, and read-only scheduler heartbeat.
-- Verification: targeted analytics/API/frontend tests passed 99/99; profile-transfer tests passed 16/16; `BUILD.bat --no-bump` passed with the full suite at 100%; `git diff --check` passed.
-- Runtime: version 1.0.50, health/database OK, worker idle, scheduler running. The latest bounded scheduler cycle attempted 19 posts and 10 channels with 0 failures; provider results include expected `needs_connection`/`unsupported` states.
-- Open/issues: live analytics for inaccessible historical posts remains unavailable by provider permissions/object state; live album evidence is limited to the selected Page/App.
-- Continue: Instagram carousel 6–9 and Facebook album 6–9/10 are live-verified on Page Tinix; alternate Page `131419466718163` has verified photo, six-photo album, and video paths. Consider release-readiness review or another Page/App only when there is a specific acceptance goal.
-- Environment: Python app with local `.venv`; local and `origin/master` are synchronized after the documentation push.
+- Status: release-readiness documentation reconciled 2026-11-10; latest pushed baseline `bad0a5f` before this review.
+- Completed: analytics refresh/profile transfer implementation and checks; bounded live Official API acceptance for the accounts/Pages and formats listed below.
+- Verification evidence on file: targeted analytics/API/frontend tests 99/99, profile-transfer tests 16/16, `BUILD.bat --no-bump` full suite 100%, plus current local API health/database OK on version 1.0.50. These are recorded prior checks, not rerun as part of this docs-only review.
+- Live acceptance: Facebook Page Tinix album sizes 2–10 and existing text/photo/video/Reel paths; alternate Page `131419466718163` text, photo, six-photo album, and video-format path (returned `/reel/` permalink). Instagram `@tannguyen3569`: image, carousel sizes 2 and 5–10, Reel, and point-in-time Insights. These results do not generalize to other Pages, accounts, Apps, or formats.
+- Open/issues: inaccessible historical-post analytics may remain unavailable due to provider permissions/object state; TikTok and X remain scaffold. Broad account/provider coverage and deployment/restore readiness are not established by these live tests.
+- Recommended next: prioritize local Windows release gates (clean install/upgrade and backup-restore rehearsal, then Python 3.11 verification); do not create further live posts without a specific acceptance gap. VPS readiness is a separate, currently incomplete deployment scope.
+- Environment: Python app with local `.venv`; runtime observed healthy at review time. This handoff commit is local until separately approved for push.
 
-## Git worktree inventory (captured 2026-11-09)
+## Git worktree inventory (captured 2026-11-10)
 
 ```text
 worktree D:/___TOOLS/__TINIX/Tinix-Social-Hub
-HEAD f41aa3b
+HEAD bad0a5f (before this review's documentation commit)
 branch refs/heads/master
 ```

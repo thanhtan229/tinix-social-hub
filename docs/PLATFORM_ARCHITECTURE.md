@@ -1,5 +1,7 @@
 # Khung kiến trúc đa nền tảng
 
+> **Current acceptance status — 2026-11-10:** The capability descriptions below explain architecture and may include historical acceptance snapshots. Current live evidence is scoped to the tested Pages/accounts: Facebook Page Tinix album sizes 2–10; alternate Page `131419466718163` photo, six-photo album, and video-format path (returned `/reel/` permalink); Instagram `@tannguyen3569` image, carousel sizes 2 and 5–10, Reel, and point-in-time Insights. TikTok/X remain scaffold. See `README.md` and `docs/agent-progress.md` for the current evidence and remaining Windows release gates. Do not generalize these results to other accounts or Apps.
+
 Tài liệu này mô tả trạng thái release candidate. Các mục `review_required` đã có adapter nhưng cần dry-run trên UI thực; format bị khóa tuyệt đối không được báo đăng thành công.
 
 ## Kiến trúc dual transport

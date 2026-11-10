@@ -1,6 +1,6 @@
 # Giai đoạn 06 — Facebook Page Official API cho ảnh
 
-Trạng thái: **Một ảnh và album hai/ba ảnh đã live-verified trên Page Tinix; album 4–10 ảnh chưa thử live.** Ngày cập nhật: 29-09-2026.  
+Trạng thái hiện tại (2026-11-10): **Page Tinix đã live-verified album 2–10 ảnh; Page `131419466718163` đã live-verified ảnh đơn và album 6 ảnh.** Chỉ áp dụng cho các Page/App đã thử. Các nội dung phía dưới ghi lịch sử triển khai ban đầu.
 Thuộc [kế hoạch tổng](plan_postiz.md), tách phần ảnh của M6.
 
 ## Mục tiêu và phụ thuộc

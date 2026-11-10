@@ -1,25 +1,24 @@
 # Tiến độ agent — Tinix Social Hub
 
-Cập nhật: 09-11-2026. Bản ghi handoff ngắn theo TINIX V2.1 mục 14; không thay thế Git hay bằng chứng test.
+Cập nhật: 10-11-2026. Bản ghi handoff ngắn theo TINIX V2.1 mục 14; không thay thế Git hay bằng chứng test.
 
-## Current authoritative handoff - 2026-10-29
+## Current authoritative handoff - 2026-11-10
 
 The older dated notes below are retained as history; use this section for the current state.
 
-### Current verification — 2026-11-09
+### Current verification — 2026-11-10
 
-- Local `master` contains checkpoint `22e6d83` plus handoff documentation commits; the worktree was clean before the current documentation update.
-- Targeted analytics/API/frontend tests passed 99/99; profile-transfer tests passed 16/16; `BUILD.bat --no-bump` passed with the full suite at 100% on version 1.0.50.
-- Runtime restart through `START.bat` was verified on port 8765: health/database OK, worker idle, scheduler running, frontend HTTP 200, and no warnings.
-- The latest bounded scheduler cycle attempted 19 posts and 10 channels with 0 failures. Expected provider states included `needs_connection` and `unsupported`; historical inaccessible posts retain their prior snapshots.
+- Latest pushed baseline before this documentation reconciliation: `bad0a5f`; build remains version 1.0.50. Previously recorded checks: targeted analytics/API/frontend tests 99/99, profile-transfer tests 16/16, `BUILD.bat --no-bump` full suite 100%.
+- Read-only runtime health check during this review: API/database OK, worker idle, scheduler running, no queue-stuck/attention items; version 1.0.50. No code changed in this review, so no build/restart was needed.
+- Latest recorded bounded scheduler cycle attempted 19 posts and 10 channels with 0 failures. Expected provider states included `needs_connection` and `unsupported`; inaccessible historical posts retain prior snapshots.
 
-- Phase 10B fixture/UI/backup-restore acceptance is recorded complete in `docs/plan_postiz_10_acceptance_operations.md`. Live multi-Page text was verified for two Pages only; that does not extend acceptance to other formats or accounts.
-- Instagram Official API image, carousel, Reel, and Insights have live evidence for `@tannguyen3569`; Insights are point-in-time snapshots, not historical trends.
-- Read-only runtime check after the 2026-10-29 16:39 UTC restart: version 1.0.44, health/database OK, worker idle, scheduler running. Startup run attempted 0 posts and 0 channels with no failures; next scheduled run is 22:39 UTC.
-- A one-time read-only follow-up is scheduled for 22:55 UTC to inspect the Reel metrics and health after that run. No collection was triggered and no App Review request was sent.
+- Phase 10B fixture/UI/backup-restore acceptance remains recorded complete; it is not equivalent to a tested end-user clean-install or production deployment.
+- Facebook live evidence: Page Tinix formats include text, photo, album 2–10, video and Reel; alternate Page `131419466718163` has photo, six-photo album and video-format evidence. On the alternate Page, the video-format result carried a `/reel/` permalink.
+- Instagram Official API live evidence on `@tannguyen3569`: image, carousel counts 2 and 5–10, Reel, and point-in-time Insights. This does not prove other accounts, Apps, or formats.
+- Historical analytics for inaccessible objects can remain unavailable due to provider permissions/object state; TikTok/X remain scaffold.
 
 ## Milestone hiện tại
-Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Page (text, ảnh đơn, album 2–5 và 10 ảnh, video, Reel) và Instagram (ảnh đơn, carousel 2 và 5 ảnh, Reel). Git remote `origin` đã cấu hình và `master` đã push.
+Postiz 01–10 hoàn tất ở mức code/fixture. Live evidence hiện được giới hạn như mô tả trong Current authoritative handoff: Facebook trên hai Page đã thử và Instagram trên `@tannguyen3569`; không suy rộng sang các account/App khác. TikTok/X vẫn scaffold.
 
 ## Đã hoàn thành
 - Remediation FINAL_REVIEW F01–F08 (1.0.44).
@@ -48,8 +47,8 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Đường thu Chrome (`method=chrome`) đã đọc được metric trên bài ảnh của Page Tinix qua release `bb9278fe-295d-4374-8271-b8f6141f9a1e`: 1 metric likes, 1.900, source `ui_chrome:facebook-web-v1` (30-10-2026). Snapshot API trước đó cho cùng release trả likes=1 và comments=1; giữ nguồn/snapshot tách biệt, không cộng hoặc coi hai giá trị tương đương. Chưa xác minh thu comments/shares bằng Chrome.
 - Giới hạn Reel (dung lượng 100 MB, thời lượng) là giả định tự đặt, chưa xác minh từ tài liệu Meta.
 - Lỗi đã biết, chưa rõ nguyên nhân: lượt kết nối Instagram đầu bị `ig_exchange_token` trả code 100 "Unsupported request - method type: get"; lượt sau thành công.
-- Carousel IG 6–9 ảnh: chưa thử riêng (carousel 10 ảnh đã thành công).
-- Multi-Page: fixture/UI và backup-restore acceptance được ghi nhận trong Giai đoạn 10B; live text post đã xác minh trên hai Page. Chưa suy rộng nghiệm thu sang định dạng hoặc account khác.
+- Instagram carousel sizes 6–9 đã được live-verified; carousel sizes 2 and 5–10 are recorded for `@tannguyen3569`. Các account khác chưa được nghiệm thu.
+- Multi-Page: fixture/UI và backup-restore acceptance được ghi nhận trong Giai đoạn 10B; live acceptance hiện gồm nhiều format trên đúng hai Page đã thử, không suy rộng sang Page/account khác.
 - TikTok, X: scaffold, chưa bật.
 - Chưa kiểm tra: lint/typecheck, CI Python 3.11, clean install, power loss, workload lớn.
 
@@ -63,11 +62,10 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live đã có cho Facebook Pa
 - Runtime hiện tại: xem mục Current authoritative handoff phía trên; PID và thời điểm scheduler là thông tin biến động, không giữ lại trong ghi chú lịch sử này.
 
 ## Bước tiếp theo đề xuất
-1. Kiểm tra heartbeat sau chu kỳ Meta kế tiếp (17:39 UTC ngày 29-10); đối chiếu `last_run`, tình trạng fetch Reel và health. Không kích hoạt collection thủ công.
-2. Xác minh các bài cũ còn `meta_permission_denied`/`meta_post_unavailable`, hoặc chấp nhận giữ snapshot cũ không có metric mới.
-3. Giai đoạn 10B fixture/UI/backup-restore đã được ghi nhận; giữ giới hạn live acceptance ở hai Page đăng bài chữ cho đến khi có nhu cầu nghiệm thu thêm định dạng/account.
-4. Ghi lịch nhắc kiểm tra/làm mới token Instagram trước 26-12-2026 (tự động refresh đã có; cần xác minh kết nối vẫn `connected`).
-5. Tùy theo nhu cầu: carousel IG 6–9 ảnh, album FB 6–9 ảnh, kiểm tra giới hạn Reel theo tài liệu Meta và đường analytics Chrome. TikTok/X vẫn là scaffold.
+1. Ưu tiên release gates cho ứng dụng Windows PC-first: clean install/in-place upgrade và backup-restore rehearsal trên bản sao.
+2. Xác minh môi trường Python 3.11 (README yêu cầu 3.11+, các test lịch sử ghi nhận chạy Python 3.13); thêm CI/lint/typecheck nếu release process yêu cầu.
+3. Giữ unresolved analytics snapshot cũ, không tạo lại live post chỉ để lặp lại coverage đã có; xác minh giới hạn Reel bằng tài liệu Meta trước khi thay đổi validation.
+4. TikTok/X và VPS là phạm vi riêng, cần quyết định sản phẩm trước khi triển khai.
 
 
 ### Instagram Official API live acceptance - 2026-10-29

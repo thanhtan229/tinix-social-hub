@@ -1,6 +1,6 @@
 # Giai đoạn 08 — Instagram Official API theo phạm vi hẹp
 
-Status: One-image post, two-image carousel, and Reel are live-verified via Official API on @tannguyen3569; Instagram Story and other accounts remain unverified.
+Current status (2026-11-10): One-image post, carousel sizes 2 and 5–10, and Reel are live-verified via Official API on `@tannguyen3569`. Story and other accounts remain unverified; this evidence is account/App-specific.
 Thuộc [kế hoạch tổng](plan_postiz.md), tách phần Instagram của M6.
 
 ## Mục tiêu và phụ thuộc
