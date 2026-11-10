@@ -154,3 +154,11 @@ Next: let the opted-in scheduler collect the remaining available releases; the o
 - Preflight passed and dry-run job `487972c3-92ef-469d-9117-90db6987e86f` reached `dry_run_ready`.
 - Live job `08a7d422-322c-48e6-a841-3dd30b1377b6` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `dd436571-c66a-47f2-84a8-18a8ee0a0002` is `succeeded` and `verified`.
 - Meta returned six photo IDs and post ID `131419466718163_122342317424030346`; [album permalink](https://www.facebook.com/122339557136030346/posts/122342317424030346). This confirms the album path on a second Page, but does not generalize to all Pages or Apps.
+
+### Facebook alternate Page single-photo live acceptance — 2026-11-10
+
+- Created approved test content `37a83b42-b67b-49cf-bd9b-5de9d3ad6487` with one PNG asset (`FBALBUM10-1.png`).
+- Target: alternate Page `Tí Nị - Chụp Ảnh Cho Bé Yêu`, external Page ID `131419466718163`; routing `official_api_only`, format `photo`.
+- Preflight passed and dry-run job `12d9c7ae-c171-4519-8f2c-5504eaea6a1b` reached `dry_run_ready`.
+- Live job `2c3c4ad3-2e94-4368-9741-2f766d8635b4` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `264a97ec-3520-407b-9b8f-5e2b2d75a0d1` is `succeeded` and `verified`.
+- Meta returned photo ID `122342318096030346`, post ID `131419466718163_122342318114030346`, and [permalink](https://www.facebook.com/122339557136030346/posts/122342318114030346). This confirms the single-photo path on the second Page only.
