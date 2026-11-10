@@ -77,3 +77,11 @@ In this continuation, the connected profile `@tannguyen3569` (`17841425556322045
 Instagram Insights was verified live on 2026-10-29 for `@tannguyen3569` (`17841425556322045`). The connected token includes `instagram_business_manage_insights`; a Reel fetch succeeded with reach=1, likes=2, comments=2, saved=0, shares=0, and total_interactions=4. Account Insights also succeeded with a reach snapshot of 0. These are point-in-time snapshots, not historical trends.
 
 Next: let the opted-in scheduler collect the remaining available releases; the one-shot check is scheduled after the next cycle. No App Review request was made.
+
+### Facebook multi-photo live acceptance — 2026-11-09
+
+- Reused approved content `fe8d780d-4f96-4c4a-a587-30a04b3e3dd2` with `FBALBUM10-1.png` through `FBALBUM10-10.png`.
+- Target: Page Tinix, external Page ID `1106784475845782`; account `Thanh229tan`; routing `official_api_only`.
+- Preflight and dry-run passed. Live job `a0f7fed8-50d9-4daf-bad3-ab731d2e5798` finished `succeeded` with no retry or error; commit point was reached once.
+- Meta returned ten photo IDs and post ID `1106784475845782_122140968434779083`. Tinix marked release `515e7563-3477-4672-b4c8-9eeb726cb476` `verified` with permalink https://www.facebook.com/122132248658779083/posts/122140968434779083.
+- This extends live evidence to a ten-photo album on the selected Page/App only; it does not generalize acceptance to other Pages or Apps.

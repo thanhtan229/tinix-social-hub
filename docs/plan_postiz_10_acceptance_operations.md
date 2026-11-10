@@ -106,3 +106,7 @@ On `@tannguyen3569`, preflight was ready and dry-run completed `dry_run_ready`. 
 ### Instagram Reel acceptance - 2026-10-29
 
 On `@tannguyen3569`, preflight passed and dry-run completed `dry_run_ready`. The live job `ba9a41f1-5745-4ff1-aef7-de719c8d6b23` succeeded in one attempt. Graph verified media `17938602174125398` as `VIDEO` on account `17841425556322045`. [Reel permalink](https://www.instagram.com/reel/DfD3jxTnSTF/). This confirms the Reel path on the selected account only. No source code changed; build/restart were not applicable.
+
+### Facebook ten-photo album acceptance — 2026-11-09
+
+The approved content `fe8d780d-4f96-4c4a-a587-30a04b3e3dd2` used ten existing PNG assets (`FBALBUM10-1.png` through `FBALBUM10-10.png`) and was routed with `official_api_only` to Page Tinix (`1106784475845782`). Preflight and dry-run passed. Live job `a0f7fed8-50d9-4daf-bad3-ab731d2e5798` succeeded in one attempt with no error; Meta returned ten photo IDs and post ID `1106784475845782_122140968434779083`. Tinix marked release `515e7563-3477-4672-b4c8-9eeb726cb476` verified. [Ten-photo album permalink](https://www.facebook.com/122132248658779083/posts/122140968434779083). This confirms ten-photo album publishing for the selected Page/App only; it does not generalize to other Pages or Apps.
