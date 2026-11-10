@@ -16,6 +16,10 @@ The older dated notes below are retained as history; use this section for the cu
 - Facebook live evidence: Page Tinix formats include text, photo, album 2–10, video and Reel; alternate Page `131419466718163` has photo, six-photo album and video-format evidence. On the alternate Page, the video-format result carried a `/reel/` permalink.
 - Instagram Official API live evidence on `@tannguyen3569`: image, carousel counts 2 and 5–10, Reel, and point-in-time Insights. This does not prove other accounts, Apps, or formats.
 - Historical analytics for inaccessible objects can remain unavailable due to provider permissions/object state; TikTok/X remain scaffold.
+- Isolated staging rehearsal (2026-11-10, Python 3.11.9): started the tagged `v1.0.0-rc.20` app against a synthetic staging DB, retained a fixture account, then started current `1.0.50` against the same DB. Migration completed with integrity OK, preserved the fixture, and created pre-migration backup `tinix-pre-migration-v13-20261110-154510-832026.db`.
+- Recovery UI rehearsal on that staging DB: Settings UI export and restore returned HTTP 200. A post-export sentinel account was removed by restore, the pre-restore safety copy retained it, and the pre-export fixture remained. Export excluded `.env`. Staging files were isolated under the OS temp directory and removed afterward; the primary runtime was not modified.
+- Verification: Python 3.11 clean venv installed `requirements.txt`; fresh-data startup returned health/database OK and UI HTTP 200. Backup/recovery/profile-transfer tests passed 23/23 on Python 3.11; migration/state-machine tests passed 14/14 on the project venv (Python 3.13).
+- Limits: this was a staged source/database upgrade simulation, not a `BUILD.bat`/desktop-shortcut run or a same-directory in-place packaged upgrade. No independent Orca QA/reviewer was available in this session; do not call this Release PASS.
 
 ## Milestone hiện tại
 Postiz 01–10 hoàn tất ở mức code/fixture. Live evidence hiện được giới hạn như mô tả trong Current authoritative handoff: Facebook trên hai Page đã thử và Instagram trên `@tannguyen3569`; không suy rộng sang các account/App khác. TikTok/X vẫn scaffold.
@@ -62,8 +66,8 @@ Postiz 01–10 hoàn tất ở mức code/fixture. Live evidence hiện được
 - Runtime hiện tại: xem mục Current authoritative handoff phía trên; PID và thời điểm scheduler là thông tin biến động, không giữ lại trong ghi chú lịch sử này.
 
 ## Bước tiếp theo đề xuất
-1. Ưu tiên release gates cho ứng dụng Windows PC-first: clean install/in-place upgrade và backup-restore rehearsal trên bản sao.
-2. Xác minh môi trường Python 3.11 (README yêu cầu 3.11+, các test lịch sử ghi nhận chạy Python 3.13); thêm CI/lint/typecheck nếu release process yêu cầu.
+1. Chạy kiểm tra `BUILD.bat`/launcher và nâng cấp packaged in-place trên staging Windows riêng, xác minh shortcut/UI và dữ liệu; tránh chạy `BUILD.bat` trên app chính trong diễn tập.
+2. Bổ sung independent QA/reviewer và CI/lint/typecheck nếu cần để đóng release gate; Python 3.11 startup/dependency và backup/restore tests hiện đã có bằng chứng.
 3. Giữ unresolved analytics snapshot cũ, không tạo lại live post chỉ để lặp lại coverage đã có; xác minh giới hạn Reel bằng tài liệu Meta trước khi thay đổi validation.
 4. TikTok/X và VPS là phạm vi riêng, cần quyết định sản phẩm trước khi triển khai.
 
