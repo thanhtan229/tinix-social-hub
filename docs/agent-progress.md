@@ -162,3 +162,11 @@ Next: let the opted-in scheduler collect the remaining available releases; the o
 - Preflight passed and dry-run job `12d9c7ae-c171-4519-8f2c-5504eaea6a1b` reached `dry_run_ready`.
 - Live job `2c3c4ad3-2e94-4368-9741-2f766d8635b4` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `264a97ec-3520-407b-9b8f-5e2b2d75a0d1` is `succeeded` and `verified`.
 - Meta returned photo ID `122342318096030346`, post ID `131419466718163_122342318114030346`, and [permalink](https://www.facebook.com/122339557136030346/posts/122342318114030346). This confirms the single-photo path on the second Page only.
+
+### Facebook alternate Page video live acceptance — 2026-11-10
+
+- Reused approved content `b48d4c3a-4f64-4f80-a764-f652f7f9adfc` with one MP4 asset (`tinix-test-video.mp4`), format `video`.
+- Target: alternate Page `Tí Nị - Chụp Ảnh Cho Bé Yêu`, external Page ID `131419466718163`; routing `official_api_only`.
+- Preflight passed and dry-run job `ec302d9e-a50e-4045-91e3-1b6154e12c6a` reached `dry_run_ready`.
+- Live job `a09ea4e8-e75b-483c-8575-e2407cd3c196` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `61c2caa7-0e93-463e-8426-8055f8bf804a` is `succeeded` and `verified`.
+- Meta returned video ID `2016503212374207` and [permalink](https://www.facebook.com/reel/2016503212374207/). Tinix submitted this as Page `video`; Meta's permalink uses the `/reel/` URL form. This confirms the video publish path on the second Page only.
