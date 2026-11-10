@@ -130,3 +130,11 @@ Next: let the opted-in scheduler collect the remaining available releases; the o
 - Preflight passed and dry-run job `d199558a-1866-49c0-a2f1-31fecae3649c` reached `dry_run_ready`.
 - Live job `d0b2a911-6d0b-40a7-b36e-4e8d8d31032d` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `1af4ea2a-fa18-4ca7-bbc5-a5bed7255809` is `succeeded` and `verified`.
 - Meta returned seven photo IDs and post ID `1106784475845782_122141041706779083`; [album permalink](https://www.facebook.com/122132248658779083/posts/122141041706779083). This extends live album evidence through seven photos on the selected Page/App only.
+
+### Facebook eight-photo album live acceptance — 2026-11-10
+
+- Created approved test content `bc3e2e59-c33a-4e2d-975e-1acf8ec0961e` with exactly eight PNG assets (`FBALBUM10-1.png` through `FBALBUM10-8.png`).
+- Target: Page Tinix, external Page ID `1106784475845782`; routing `official_api_only`.
+- Preflight passed and dry-run job `c988ebcc-06a7-4385-9178-424534c10aff` reached `dry_run_ready`.
+- Live job `e90281ef-85a1-46f9-9a16-446511f9f971` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `ef84129b-bfc1-4eae-9a58-fbf0a9314123` is `succeeded` and `verified`.
+- Meta returned eight photo IDs and post ID `1106784475845782_122141057324779083`; [album permalink](https://www.facebook.com/122132248658779083/posts/122141057324779083). This extends live album evidence through eight photos on the selected Page/App only.
