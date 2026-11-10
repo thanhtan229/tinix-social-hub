@@ -4,6 +4,8 @@
 
 Tinix là ứng dụng desktop-local, PC-first cho một người dùng: quản lý nội dung, approval, lịch phát hành, Chrome profiles, đối soát và automation nội bộ. Chrome automation là transport mặc định; YouTube video/Short và Facebook Page post/ảnh đơn/album ảnh/video MP4/Reel có official API. Một ảnh, album hai ảnh, video Page thường và Reel đã được thử live trên Page Tinix. Cookie/session Chrome ở nguyên trong profile, còn credential API được bảo vệ bằng DPAPI trên Windows.
 
+Bằng chứng staging Windows local (2026-11-10): nâng cấp source/launcher cùng thư mục từ `v1.0.0-rc.20` lên `1.0.50` giữ fixture qua migration schema 12→26, SQLite integrity đạt và tạo pre-migration backup; build và launcher staging đều đạt health. Reviewer độc lập Gemini 4 Argon xác nhận Release PASS cho phạm vi local Windows PC-first source/launcher. Chưa thử installer/phân phối đóng gói riêng, production/VPS; TikTok/X và mức phủ live API rộng hơn nằm ngoài phạm vi kết luận.
+
 ## Luồng dữ liệu
 
 ```text

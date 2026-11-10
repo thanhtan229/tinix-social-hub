@@ -10,6 +10,8 @@ Official API có publisher YouTube video/Short cùng analytics theo video/kênh.
 
 Trạng thái runtime hiện tại: build `1.0.50` đã pass full suite, backend local đã restart và health/database đều `ok`. Scheduler analytics chạy opt-in; các trạng thái `needs_connection` hoặc `unsupported` phản ánh giới hạn connection/provider, không được coi là metric bằng 0.
 
+**Diễn tập Windows staging (2026-11-10):** `BUILD.bat --no-bump` và `START.bat` đạt trên staging cô lập. Nâng cấp source/launcher cùng thư mục từ `v1.0.0-rc.20` lên `1.0.50` giữ fixture schema 12, nâng lên schema 26, integrity đạt và tạo pre-migration backup. Lượt build đầu có hai lỗi Playwright thoáng qua; hai test mục tiêu đạt và lượt build đầy đủ tiếp theo đạt. Reviewer độc lập Gemini 4 Argon xác nhận Release PASS cho phạm vi local Windows PC-first source/launcher. Installer/phân phối đóng gói riêng và triển khai production/VPS chưa được thử.
+
 ## Cài đặt và Khởi động
 
 Yêu cầu:

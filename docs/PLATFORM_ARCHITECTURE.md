@@ -2,6 +2,8 @@
 
 > **Current acceptance status — 2026-11-10:** The capability descriptions below explain architecture and may include historical acceptance snapshots. Current live evidence is scoped to the tested Pages/accounts: Facebook Page Tinix album sizes 2–10; alternate Page `131419466718163` photo, six-photo album, and video-format path (returned `/reel/` permalink); Instagram `@tannguyen3569` image, carousel sizes 2 and 5–10, Reel, and point-in-time Insights. TikTok/X remain scaffold. See `README.md` and `docs/agent-progress.md` for the current evidence and remaining Windows release gates. Do not generalize these results to other accounts or Apps.
 
+Local Windows staging rehearsal (2026-11-10): Python 3.11.9 source/launcher upgrade in one directory from `v1.0.0-rc.20` to `1.0.50` passed after migration (schema 12→26, fixture retained, integrity `ok`, pre-migration backup present); `BUILD.bat --no-bump` and `START.bat` passed. Independent Gemini 4 Argon review on 2026-11-10 confirmed Release PASS for the local Windows PC-first source/launcher scope. A separate installer/packaged distribution and production/VPS deployment were not tested; TikTok/X and broader multi-account/App live API coverage remain outside this verdict.
+
 Tài liệu này mô tả trạng thái release candidate. Các mục `review_required` đã có adapter nhưng cần dry-run trên UI thực; format bị khóa tuyệt đối không được báo đăng thành công.
 
 ## Kiến trúc dual transport
