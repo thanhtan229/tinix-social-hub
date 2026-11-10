@@ -114,3 +114,11 @@ Next: let the opted-in scheduler collect the remaining available releases; the o
 - Preflight passed and dry-run job `893a1b13-397b-4ac5-ae5d-f084aa1b93c2` reached `dry_run_ready` for `@tannguyen3569` (`17841425556322045`).
 - Live job `bcb60243-2f0e-4705-9ff2-aacacf3a9d86` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `d3ad7369-41a7-4edd-8842-96c6c383d425` is `succeeded` and `verified`.
 - Instagram returned carousel media ID `18085640192345751`, nine child media IDs, and [permalink](https://www.instagram.com/p/Dfi5dlsGmZE/). This completes the 6–9 photo carousel evidence range on the selected account/App only.
+
+### Facebook six-photo album live acceptance — 2026-11-10
+
+- Created approved test content `9b8e5339-0919-4e84-be94-765d0df64ba6` with exactly six PNG assets (`FBALBUM10-1.png` through `FBALBUM10-6.png`).
+- Target: Page Tinix, external Page ID `1106784475845782`; routing `official_api_only`.
+- Preflight passed and dry-run job `f009add5-a6d0-4798-9fe4-5426b4739ec3` reached `dry_run_ready`.
+- Live job `317ddee7-8d3b-4caa-badb-cb22c38d90c3` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `601a7b11-02ad-4a8b-a7dc-2dd373d9df2b` is `succeeded` and `verified`.
+- Meta returned six photo IDs and post ID `1106784475845782_122141029778779083`; [album permalink](https://www.facebook.com/122132248658779083/posts/122141029778779083). This confirms six-photo album publishing on the selected Page/App only.
