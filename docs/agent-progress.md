@@ -93,3 +93,10 @@ Next: let the opted-in scheduler collect the remaining available releases; the o
 - Preflight passed and dry-run job `d716e74f-2a21-4a62-98fa-69ccfc85c751` reached `dry_run_ready`.
 - Live job `a0344aac-8874-4df4-b520-23b1491de67a` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `50414e43-8743-474a-8aa8-045cdaf71be0` is `succeeded` and `verified`.
 - Instagram returned carousel media ID `18026268416929404`, six child media IDs, and [permalink](https://www.instagram.com/p/Dfi1vlJkhtm/). This extends live evidence to six-photo carousel publishing on the selected account/App only; it does not generalize acceptance to other accounts or formats.
+
+### Instagram carousel 7-photo boundary acceptance — 2026-11-10
+
+- Created approved test content `bc592c19-61db-4d65-b8b5-31f33d4edad0` with exactly seven JPEG assets (`IGCAROUSEL10-1.jpg` through `IGCAROUSEL10-7.jpg`).
+- Preflight passed and dry-run job `200ce7aa-c7a3-4ab6-b8f7-5b881aeab5cb` reached `dry_run_ready` for `@tannguyen3569` (`17841425556322045`).
+- Live job `f46f1f47-7056-427e-acf6-2c64e0e885b4` succeeded in one attempt, reached its commit point once, and had no error. Tinix release `765339e8-4180-4278-8fb7-d18e48750199` is `succeeded` and `verified`.
+- Instagram returned carousel media ID `18099346670442388`, seven child media IDs, and [permalink](https://www.instagram.com/p/Dfi38EkGtFC/). This extends live evidence through seven-photo carousel publishing on the selected account/App only.
